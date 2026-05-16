@@ -1,0 +1,5 @@
+preview/
+scripts/
+docs/
+*.log
+supabase/.branches/

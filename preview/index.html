@@ -1,0 +1,895 @@
+<!doctype html>
+<html lang="es-CL">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cocina de Javier ERP - Preview</title>
+    <style>
+      :root {
+        --bg: #f6f7f4;
+        --surface: #ffffff;
+        --border: #dfe4dd;
+        --text: #18231c;
+        --muted: #5d665f;
+        --brand: #2f4d3b;
+        --soft: #edf2ee;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Arial, Helvetica, sans-serif;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        min-height: 100vh;
+      }
+
+      aside {
+        border-right: 1px solid var(--border);
+        background: var(--surface);
+        padding: 24px;
+      }
+
+      main {
+        padding: 32px;
+      }
+
+      .brand {
+        font-size: 19px;
+        font-weight: 700;
+        color: var(--brand);
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      nav {
+        display: grid;
+        gap: 8px;
+        margin-top: 32px;
+      }
+
+      nav a {
+        border-radius: 6px;
+        color: #344238;
+        padding: 10px 12px;
+        text-decoration: none;
+      }
+
+      nav a:hover {
+        background: var(--soft);
+      }
+
+      h1 {
+        margin: 8px 0 0;
+        color: var(--brand);
+        font-size: 34px;
+      }
+
+      h2 {
+        margin: 0 0 16px;
+        color: var(--brand);
+        font-size: 18px;
+      }
+
+      .eyebrow {
+        color: var(--brand);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .grid {
+        display: grid;
+        gap: 16px;
+      }
+
+      .cards {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        margin-top: 28px;
+      }
+
+      .modules {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 18px;
+      }
+
+      .value {
+        margin-top: 12px;
+        color: var(--brand);
+        font-size: 28px;
+        font-weight: 700;
+      }
+
+      .section {
+        margin-top: 32px;
+      }
+
+      .tag {
+        display: inline-block;
+        margin: 0 8px 8px 0;
+        border-radius: 6px;
+        background: var(--soft);
+        padding: 8px 10px;
+        color: var(--brand);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      ol {
+        margin: 0;
+        padding-left: 20px;
+      }
+
+      li {
+        margin: 10px 0;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--border);
+        padding: 12px 10px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--brand);
+        font-size: 12px;
+        text-transform: uppercase;
+      }
+
+      details {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        margin-top: 12px;
+        padding: 14px;
+      }
+
+      summary {
+        color: var(--brand);
+        cursor: pointer;
+        font-weight: 700;
+      }
+
+      .money {
+        font-weight: 700;
+        color: var(--brand);
+        white-space: nowrap;
+      }
+
+      .pdf-button {
+        display: inline-block;
+        border: 1px solid var(--brand);
+        border-radius: 6px;
+        background: var(--brand);
+        color: white;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 700;
+        margin: 2px;
+        padding: 8px 10px;
+      }
+
+      .secondary-button {
+        display: inline-block;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: white;
+        color: var(--brand);
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 700;
+        margin: 2px;
+        padding: 8px 10px;
+      }
+
+      @media (max-width: 900px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        aside {
+          position: static;
+        }
+
+        .cards,
+        .modules {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <aside>
+        <div class="brand">Cocina de Javier</div>
+        <nav>
+          <a href="#dashboard">Dashboard</a>
+          <a href="#compras">Compras</a>
+          <a href="#tesoreria">Tesoreria</a>
+          <a href="#rrhh">Recursos Humanos</a>
+        </nav>
+      </aside>
+      <main>
+        <section id="dashboard">
+          <h1>Detalle de compras</h1>
+          <p class="muted">
+            Resumen operativo de compras extraidas desde XML del buzon DTE.
+          </p>
+          <div class="grid cards">
+            <article class="card">
+              <div class="muted">Compras con IVA</div>
+              <div class="value">$864.183</div>
+              <div class="muted">Mayo 2026</div>
+            </article>
+            <article class="card">
+              <div class="muted">IVA compras</div>
+              <div class="value">$137.991</div>
+              <div class="muted">Credito fiscal estimado</div>
+            </article>
+            <article class="card">
+              <div class="muted">Notas de credito</div>
+              <div class="value">$12.662</div>
+              <div class="muted">Recibidas en mayo</div>
+            </article>
+            <article class="card">
+              <div class="muted">Facturas procesadas</div>
+              <div class="value">5</div>
+              <div class="muted">XML del buzon DTE</div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" id="compras">
+          <h2>Compras</h2>
+          <article class="card">
+            <h2>Facturas por mes - Mayo 2026</h2>
+            <p class="muted">
+              Se actualiza automaticamente desde los XML recibidos en
+              dte@lacocinadejavier.cl.
+            </p>
+            <div style="display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 16px 0">
+              <label>
+                <span class="muted">Mes</span>
+                <select style="width: 100%; margin-top: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 6px">
+                  <option>Mayo 2026</option>
+                  <option>Abril 2026</option>
+                  <option>Marzo 2026</option>
+                  <option>Febrero 2026</option>
+                  <option>Enero 2026</option>
+                </select>
+              </label>
+              <label>
+                <span class="muted">Dia</span>
+                <input type="date" value="2026-05-15" style="width: 100%; margin-top: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 6px" />
+              </label>
+              <label>
+                <span class="muted">Buscar documento</span>
+                <input placeholder="Folio, proveedor o producto" style="width: 100%; margin-top: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 6px" />
+              </label>
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px">
+              <a class="secondary-button" href="#busqueda-factura-94917208">Buscar factura 94917208</a>
+              <a class="secondary-button" href="#dia-2026-05-14">Compras 14-05-2026</a>
+              <a class="secondary-button" href="#mes-mayo-2026">Compras Mayo 2026</a>
+              <a class="secondary-button" href="#anio-2026">Compras Año 2026</a>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Razon social</th>
+                  <th>Documento</th>
+                  <th>Monto</th>
+                  <th>PDF</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>15-05-2026</td>
+                  <td>Embotelladora Andina S.A.</td>
+                  <td>Factura 94917208</td>
+                  <td class="money">$230.762</td>
+                  <td>
+                    <a class="pdf-button" href="/api/invoice-pdf?folio=94917208" target="_blank">Ver</a>
+                    <a class="pdf-button" href="/api/invoice-pdf?folio=94917208&download=1">Descargar</a>
+                  </td>
+                </tr>
+                <tr>
+                  <td>14-05-2026</td>
+                  <td>CARNES Y CECINAS ANDRES AYBAR EIRL</td>
+                  <td>Factura 18436</td>
+                  <td class="money">$181.089</td>
+                  <td>
+                    <a class="pdf-button" href="/api/invoice-pdf?folio=18436" target="_blank">Ver</a>
+                    <a class="pdf-button" href="/api/invoice-pdf?folio=18436&download=1">Descargar</a>
+                  </td>
+                </tr>
+                <tr>
+                  <td>14-05-2026</td>
+                  <td>MAGNERE &amp; MAGNERE LIMITADA</td>
+                  <td>Factura 52379</td>
+                  <td class="money">$278.399</td>
+                  <td>
+                    <a class="pdf-button" href="/api/invoice-pdf?folio=52379" target="_blank">Ver</a>
+                    <a class="pdf-button" href="/api/invoice-pdf?folio=52379&download=1">Descargar</a>
+                  </td>
+                </tr>
+                <tr>
+                  <td>13-05-2026</td>
+                  <td>Embotelladora Andina S.A.</td>
+                  <td>Nota credito 24791776</td>
+                  <td class="money">$12.662</td>
+                  <td><span class="muted">Documento de ajuste</span></td>
+                </tr>
+                <tr>
+                  <td>13-05-2026</td>
+                  <td>Embotelladora Andina S.A.</td>
+                  <td>Factura 94890425</td>
+                  <td class="money">$173.933</td>
+                  <td>
+                    <a class="pdf-button" href="/api/invoice-pdf?folio=94890425" target="_blank">Ver</a>
+                    <a class="pdf-button" href="/api/invoice-pdf?folio=94890425&download=1">Descargar</a>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </article>
+
+          <article class="card" id="busqueda-factura-94917208" style="margin-top: 16px">
+            <h2>Resultado de busqueda</h2>
+            <p class="muted">Factura 94917208 encontrada por numero, proveedor y producto.</p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Proveedor</th>
+                  <th>Producto</th>
+                  <th>Monto</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>15-05-2026</td>
+                  <td>Embotelladora Andina S.A.</td>
+                  <td>Whisky JW Blue Label 750Cc 40Gx1</td>
+                  <td class="money">$230.762</td>
+                </tr>
+              </tbody>
+            </table>
+          </article>
+
+          <article class="card" id="dia-2026-05-14" style="margin-top: 16px">
+            <h2>Compras del dia 14-05-2026</h2>
+            <table>
+              <thead>
+                <tr><th>Proveedor</th><th>Documento</th><th>Monto</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>CARNES Y CECINAS ANDRES AYBAR EIRL</td><td>Factura 18436</td><td class="money">$181.089</td></tr>
+                <tr><td>MAGNERE &amp; MAGNERE LIMITADA</td><td>Factura 52379</td><td class="money">$278.399</td></tr>
+              </tbody>
+            </table>
+          </article>
+
+          <article class="card" id="mes-mayo-2026" style="margin-top: 16px">
+            <h2>Historial de compras por mes</h2>
+            <table>
+              <thead>
+                <tr><th>Mes</th><th>Facturas</th><th>Total con IVA</th><th>Notas de credito</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Mayo 2026</td><td>5</td><td class="money">$864.183</td><td class="money">$12.662</td></tr>
+                <tr><td>Abril 2026</td><td>Por cargar desde XML</td><td class="money">-</td><td class="money">-</td></tr>
+                <tr><td>Marzo 2026</td><td>Por cargar desde XML</td><td class="money">-</td><td class="money">-</td></tr>
+                <tr><td>Febrero 2026</td><td>Por cargar desde XML</td><td class="money">-</td><td class="money">-</td></tr>
+                <tr><td>Enero 2026</td><td>Por cargar desde XML</td><td class="money">-</td><td class="money">-</td></tr>
+              </tbody>
+            </table>
+          </article>
+
+          <article class="card" id="anio-2026" style="margin-top: 16px">
+            <h2>Historial año 2026</h2>
+            <p class="muted">El historial completo se alimenta con el proceso automatico que recorre XML del buzon DTE y guarda cada factura con idempotencia.</p>
+          </article>
+
+          <details open>
+            <summary>Detalle Factura 94917208 - Embotelladora Andina S.A.</summary>
+            <table>
+              <thead>
+                <tr>
+                  <th>Producto</th>
+                  <th>Cantidad</th>
+                  <th>Precio unitario</th>
+                  <th>Total linea</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Whisky JW Blue Label 750Cc 40Gx1</td>
+                  <td>1</td>
+                  <td class="money">$152.840</td>
+                  <td class="money">$153.460</td>
+                </tr>
+              </tbody>
+            </table>
+          </details>
+
+          <details>
+            <summary>Detalle Factura 18436 - CARNES Y CECINAS ANDRES AYBAR EIRL</summary>
+            <table>
+              <thead>
+                <tr>
+                  <th>Producto</th>
+                  <th>Cantidad</th>
+                  <th>Precio unitario</th>
+                  <th>Total linea</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>PERNIL CURADO</td>
+                  <td>25,405</td>
+                  <td class="money">$5.990</td>
+                  <td class="money">$152.176</td>
+                </tr>
+              </tbody>
+            </table>
+          </details>
+
+          <details>
+            <summary>Detalle Factura 52379 - MAGNERE &amp; MAGNERE LIMITADA</summary>
+            <table>
+              <thead>
+                <tr>
+                  <th>Producto</th>
+                  <th>Cantidad</th>
+                  <th>Precio unitario</th>
+                  <th>Total linea</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Yemita Huevo Liquido Bidon 5kg</td>
+                  <td>8</td>
+                  <td class="money">$19.160</td>
+                  <td class="money">$153.277</td>
+                </tr>
+                <tr>
+                  <td>Yemita Yema Liquida Bidon 5kg</td>
+                  <td>2</td>
+                  <td class="money">$40.336</td>
+                  <td class="money">$80.672</td>
+                </tr>
+              </tbody>
+            </table>
+          </details>
+
+          <details>
+            <summary>Detalle Factura 94890425 - Embotelladora Andina S.A.</summary>
+            <table>
+              <thead>
+                <tr>
+                  <th>Producto</th>
+                  <th>Cantidad</th>
+                  <th>Precio unitario</th>
+                  <th>Total linea</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Andina Frut Naranja PT1,5 x 6</td>
+                  <td>2</td>
+                  <td class="money">$7.333</td>
+                  <td class="money">$13.625</td>
+                </tr>
+                <tr>
+                  <td>Coca Cola Sin Azucar LT350cc x 6</td>
+                  <td>30</td>
+                  <td class="money">$4.233</td>
+                  <td class="money">$96.988</td>
+                </tr>
+                <tr>
+                  <td>Sprite Sin Azucar LT350cc x6</td>
+                  <td>8</td>
+                  <td class="money">$4.233</td>
+                  <td class="money">$25.864</td>
+                </tr>
+              </tbody>
+            </table>
+          </details>
+        </section>
+
+        <section class="section" id="tesoreria">
+          <h2>Tesoreria</h2>
+          <div class="grid cards">
+            <article class="card"><div class="muted">Pendientes del mes</div><div class="value">$690.250</div></article>
+            <article class="card"><div class="muted">Pagadas del mes</div><div class="value">$173.933</div></article>
+            <article class="card"><div class="muted">Vencidas</div><div class="value">$459.488</div></article>
+            <article class="card"><div class="muted">Facturas mes</div><div class="value">5</div></article>
+          </div>
+
+          <article class="card section">
+            <h2>Facturas del mes</h2>
+            <table>
+              <thead>
+                <tr><th>Fecha</th><th>Proveedor</th><th>Documento</th><th>Vencimiento</th><th>Monto</th><th>Estado</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>15-05-2026</td><td>Embotelladora Andina S.A.</td><td>94917208</td><td>14-06-2026</td><td class="money">$230.762</td><td>Pendiente</td></tr>
+                <tr><td>14-05-2026</td><td>CARNES Y CECINAS ANDRES AYBAR EIRL</td><td>18436</td><td>13-06-2026</td><td class="money">$181.089</td><td>Pendiente</td></tr>
+                <tr><td>14-05-2026</td><td>MAGNERE &amp; MAGNERE LIMITADA</td><td>52379</td><td>13-06-2026</td><td class="money">$278.399</td><td>Pendiente</td></tr>
+                <tr><td>13-05-2026</td><td>Embotelladora Andina S.A.</td><td>94890425</td><td>Pagada</td><td class="money">$173.933</td><td>Pagada</td></tr>
+              </tbody>
+            </table>
+          </article>
+
+          <article class="card section">
+            <h2>Generar pagos</h2>
+            <p class="muted">Selecciona facturas vencidas o por vencer para exportar al formato de pagos masivos del banco.</p>
+            <table>
+              <thead>
+                <tr><th></th><th>Proveedor</th><th>Factura</th><th>Vencimiento</th><th>Monto</th><th>Banco</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><input type="checkbox" checked /></td><td>CARNES Y CECINAS ANDRES AYBAR EIRL</td><td>18436</td><td>13-06-2026</td><td class="money">$181.089</td><td>Codigo banco pendiente</td></tr>
+                <tr><td><input type="checkbox" checked /></td><td>MAGNERE &amp; MAGNERE LIMITADA</td><td>52379</td><td>13-06-2026</td><td class="money">$278.399</td><td>Codigo banco pendiente</td></tr>
+              </tbody>
+            </table>
+            <p><a class="pdf-button" href="/api/payment-template">Generar pagos</a></p>
+          </article>
+
+          <article class="card section">
+            <h2>Datos proveedor</h2>
+            <table>
+              <thead>
+                <tr><th>Razon social</th><th>RUT</th><th>Mail</th><th>Contacto</th><th>Codigo banco</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Embotelladora Andina S.A.</td><td>91144000-8</td><td>recepciondte@koandina.com</td><td>Recepcion DTE</td><td>Pendiente</td></tr>
+                <tr><td>CARNES Y CECINAS ANDRES AYBAR EIRL</td><td>76173719-8</td><td>dteaybarandres@desis.cl</td><td>Proveedor</td><td>Pendiente</td></tr>
+                <tr><td>MAGNERE &amp; MAGNERE LIMITADA</td><td>78932640-1</td><td>no-responder@mg.kameone.cl</td><td>Proveedor</td><td>Pendiente</td></tr>
+              </tbody>
+            </table>
+          </article>
+        </section>
+
+        <section class="section" id="rrhh">
+          <h2>Recursos Humanos</h2>
+          <article class="card">
+            <h2>Personal</h2>
+            <p>
+              <button class="pdf-button">Agregar nuevo personal</button>
+              <button class="secondary-button">Exportar lista Excel</button>
+            </p>
+            <table>
+              <thead>
+                <tr><th>Nombre</th><th>Tipo</th><th>Fecha contrato</th><th>Tiempo empresa</th><th>Correo</th><th>Telefono</th><th>Documentos</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Persona ejemplo</td><td>Contratado</td><td>01-03-2026</td><td>2 meses</td><td>correo@ejemplo.cl</td><td>+56 9 0000 0000</td><td><button class="secondary-button">Ver PDF</button> <button class="secondary-button">Cargar</button></td></tr>
+              </tbody>
+            </table>
+          </article>
+
+          <div class="grid modules section">
+            <article class="card">
+              <h2>Anticipos</h2>
+              <table><tbody><tr><td>Mayo 2026</td><td class="money">$120.000</td></tr></tbody></table>
+            </article>
+            <article class="card">
+              <h2>Turnos extras</h2>
+              <table><tbody><tr><td>Extension horario</td><td class="money">$35.000</td></tr><tr><td>Domingo part time</td><td class="money">$45.000</td></tr></tbody></table>
+            </article>
+            <article class="card">
+              <h2>Resumen exportable</h2>
+              <p class="muted">Exportacion por persona, dia, mes y año en Excel.</p>
+              <button class="pdf-button">Exportar RRHH</button>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script>
+      const clp = new Intl.NumberFormat("es-CL", {
+        style: "currency",
+        currency: "CLP",
+        maximumFractionDigits: 0
+      });
+      const monthNames = [
+        "Enero",
+        "Febrero",
+        "Marzo",
+        "Abril",
+        "Mayo",
+        "Junio",
+        "Julio",
+        "Agosto",
+        "Septiembre",
+        "Octubre",
+        "Noviembre",
+        "Diciembre"
+      ];
+      const escapeHtml = (value) =>
+        String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      const monthLabel = (key) => {
+        const [year, month] = key.split("-");
+        return `${monthNames[Number(month) - 1]} ${year}`;
+      };
+      const dateLabel = (value) => {
+        const [year, month, day] = String(value).split("-");
+        return `${day}-${month}-${year}`;
+      };
+      const documentLabel = (invoice) =>
+        `${invoice.documentType} ${invoice.folio}`;
+
+      function invoiceMatches(invoice, query) {
+        if (!query) return true;
+        const normalized = query.toLowerCase();
+        return [
+          invoice.folio,
+          invoice.razonSocialEmisor,
+          invoice.rutEmisor,
+          ...(invoice.items ?? []).map((item) => item.description)
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalized);
+      }
+
+      function filterInvoices(data) {
+        const query = document.getElementById("purchase-search")?.value ?? "";
+        const period = document.getElementById("purchase-period")?.value ?? "month";
+        const selectedMonth = document.getElementById("purchase-month")?.value ?? "";
+        const selectedDay = document.getElementById("purchase-day")?.value ?? "";
+        const selectedYear = document.getElementById("purchase-year")?.value ?? "";
+
+        return data.invoices.filter((invoice) => {
+          if (!invoiceMatches(invoice, query)) return false;
+          if (period === "day") return invoice.fechaEmision === selectedDay;
+          if (period === "month") return invoice.fechaEmision.startsWith(selectedMonth);
+          if (period === "year") return invoice.fechaEmision.startsWith(selectedYear);
+          return true;
+        });
+      }
+
+      function totalsFor(invoices) {
+        return invoices.reduce(
+          (acc, invoice) => {
+            const sign = invoice.tipoDte === "61" ? -1 : 1;
+            acc.documents += 1;
+            acc.invoices += invoice.tipoDte === "61" ? 0 : 1;
+            acc.creditNotes += invoice.tipoDte === "61" ? 1 : 0;
+            acc.total += sign * Number(invoice.montoTotal || 0);
+            acc.iva += sign * Number(invoice.iva || 0);
+            return acc;
+          },
+          { documents: 0, invoices: 0, creditNotes: 0, total: 0, iva: 0 }
+        );
+      }
+
+      function renderDashboard(data) {
+        const currentMonth = data.summaries.byMonth[0]?.key ?? "2026-05";
+        const monthInvoices = data.invoices.filter((invoice) =>
+          invoice.fechaEmision.startsWith(currentMonth)
+        );
+        const totals = totalsFor(monthInvoices);
+        const paid = 0;
+        const pending = monthInvoices
+          .filter((invoice) => invoice.tipoDte !== "61")
+          .reduce((sum, invoice) => sum + Number(invoice.montoTotal || 0), 0);
+        const productCount = monthInvoices.reduce(
+          (sum, invoice) => sum + (invoice.items?.length ?? 0),
+          0
+        );
+        const topSupplier = data.summaries.suppliers[0];
+
+        document.getElementById("dashboard").innerHTML = `
+          <h1>Detalle de compras</h1>
+          <p class="muted">Resumen actualizado desde ${data.invoiceCount} XML DTE cargados del buzon.</p>
+          <div class="grid cards">
+            <article class="card"><div class="muted">Facturas pagadas</div><div class="value">${clp.format(paid)}</div><div class="muted">Tesoreria</div></article>
+            <article class="card"><div class="muted">Facturas pendientes</div><div class="value">${clp.format(pending)}</div><div class="muted">${monthLabel(currentMonth)}</div></article>
+            <article class="card"><div class="muted">Resumen facturacion</div><div class="value">${clp.format(totals.total)}</div><div class="muted">${totals.documents} documentos, ${totals.creditNotes} notas de credito</div></article>
+            <article class="card"><div class="muted">Compras realizadas</div><div class="value">${totals.invoices}</div><div class="muted">${monthLabel(currentMonth)}</div></article>
+          </div>
+          <div class="grid cards">
+            <article class="card"><div class="muted">Productos comprados</div><div class="value">${productCount}</div><div class="muted">Lineas con precio neto e IVA</div></article>
+            <article class="card"><div class="muted">Total productos</div><div class="value">${data.summaries.products.length}</div><div class="muted">Productos unicos detectados</div></article>
+            <article class="card"><div class="muted">IVA compras</div><div class="value">${clp.format(totals.iva)}</div><div class="muted">Credito fiscal estimado</div></article>
+            <article class="card"><div class="muted">Proveedor principal</div><div class="value" style="font-size:20px">${escapeHtml(topSupplier?.totalClp ?? "-")}</div><div class="muted">${escapeHtml(topSupplier?.razonSocial ?? "-")}</div></article>
+          </div>
+        `;
+      }
+
+      function renderRows(invoices) {
+        if (!invoices.length) {
+          return `<tr><td colspan="5" class="muted">No hay documentos para el filtro seleccionado.</td></tr>`;
+        }
+        return invoices
+          .map(
+            (invoice) => `
+              <tr>
+                <td>${dateLabel(invoice.fechaEmision)}</td>
+                <td>${escapeHtml(invoice.razonSocialEmisor)}</td>
+                <td>${escapeHtml(documentLabel(invoice))}</td>
+                <td class="money">${clp.format(invoice.montoTotal)}</td>
+                <td>
+                  ${
+                    invoice.tipoDte === "61"
+                      ? '<span class="muted">Nota de credito</span>'
+                      : `<a class="pdf-button" href="/api/invoice-pdf?folio=${encodeURIComponent(invoice.folio)}" target="_blank">Ver</a>
+                         <a class="pdf-button" href="/api/invoice-pdf?folio=${encodeURIComponent(invoice.folio)}&download=1">Descargar</a>`
+                  }
+                </td>
+              </tr>
+            `
+          )
+          .join("");
+      }
+
+      function renderDetails(invoices) {
+        return invoices
+          .slice(0, 25)
+          .map(
+            (invoice) => `
+              <details>
+                <summary>Detalle ${escapeHtml(documentLabel(invoice))} - ${escapeHtml(invoice.razonSocialEmisor)}</summary>
+                <table>
+                  <thead><tr><th>Producto</th><th>Cantidad</th><th>Precio unitario</th><th>Total linea</th></tr></thead>
+                  <tbody>
+                    ${(invoice.items ?? [])
+                      .map(
+                        (item) => `
+                          <tr>
+                            <td>${escapeHtml(item.description)}</td>
+                            <td>${Number(item.quantity || 0).toLocaleString("es-CL")}</td>
+                            <td class="money">${clp.format(item.unitPrice || 0)}</td>
+                            <td class="money">${clp.format(item.lineTotal || 0)}</td>
+                          </tr>
+                        `
+                      )
+                      .join("")}
+                  </tbody>
+                </table>
+              </details>
+            `
+          )
+          .join("");
+      }
+
+      function renderPurchases(data) {
+        const latestMonth = data.summaries.byMonth[0]?.key ?? "2026-05";
+        const latestDay = data.invoices[0]?.fechaEmision ?? "2026-05-16";
+        const years = [...new Set(data.invoices.map((invoice) => invoice.fechaEmision.slice(0, 4)))];
+        const months = data.summaries.byMonth.map((row) => row.key);
+
+        document.getElementById("compras").innerHTML = `
+          <h2>Compras</h2>
+          <article class="card">
+            <h2>Facturas por mes - ${monthLabel(latestMonth)}</h2>
+            <p class="muted">${data.invoiceCount} XML DTE cargados. Ultima actualizacion: ${new Date(data.generatedAt).toLocaleString("es-CL")}.</p>
+            <div style="display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 16px 0">
+              <label><span class="muted">Buscar</span><input id="purchase-search" placeholder="Folio, proveedor o producto" style="width:100%; margin-top:6px; padding:10px; border:1px solid var(--border); border-radius:6px" /></label>
+              <label><span class="muted">Periodo</span><select id="purchase-period" style="width:100%; margin-top:6px; padding:10px; border:1px solid var(--border); border-radius:6px"><option value="month">Mes</option><option value="day">Dia</option><option value="year">Ano</option><option value="all">Todo</option></select></label>
+              <label><span class="muted">Mes</span><select id="purchase-month" style="width:100%; margin-top:6px; padding:10px; border:1px solid var(--border); border-radius:6px">${months.map((month) => `<option value="${month}">${monthLabel(month)}</option>`).join("")}</select></label>
+              <label><span class="muted">Dia / Ano</span><input id="purchase-day" type="date" value="${latestDay}" style="width:100%; margin-top:6px; padding:10px; border:1px solid var(--border); border-radius:6px" /><select id="purchase-year" style="width:100%; margin-top:6px; padding:10px; border:1px solid var(--border); border-radius:6px">${years.map((year) => `<option>${year}</option>`).join("")}</select></label>
+            </div>
+            <div id="purchase-total-row" class="muted" style="margin-bottom: 12px"></div>
+            <table><thead><tr><th>Fecha</th><th>Razon social</th><th>Documento</th><th>Monto</th><th>PDF</th></tr></thead><tbody id="purchase-rows"></tbody></table>
+          </article>
+          <article class="card" style="margin-top: 16px">
+            <h2>Historial de compras por mes</h2>
+            <table>
+              <thead><tr><th>Mes</th><th>Documentos</th><th>Facturas</th><th>Notas credito</th><th>Total con IVA</th></tr></thead>
+              <tbody>${data.summaries.byMonth.map((row) => `<tr><td>${monthLabel(row.key)}</td><td>${row.documents}</td><td>${row.invoices}</td><td>${row.creditNotes}</td><td class="money">${escapeHtml(row.totalClp)}</td></tr>`).join("")}</tbody>
+            </table>
+          </article>
+          <article class="card" style="margin-top: 16px">
+            <h2>Productos mas comprados</h2>
+            <table>
+              <thead><tr><th>Producto</th><th>Cantidad</th><th>Ultimos precios</th><th>Total</th></tr></thead>
+              <tbody>${data.summaries.products.slice(0, 15).map((product) => `<tr><td>${escapeHtml(product.description)}</td><td>${Number(product.quantity || 0).toLocaleString("es-CL")}</td><td>${product.lastPrices.map((price) => `${dateLabel(price.date)} ${clp.format(price.unitPrice)}`).join("<br>")}</td><td class="money">${escapeHtml(product.totalClp)}</td></tr>`).join("")}</tbody>
+            </table>
+          </article>
+          <div id="purchase-details" style="margin-top: 16px"></div>
+        `;
+
+        const update = () => {
+          const invoices = filterInvoices(data);
+          const totals = totalsFor(invoices);
+          document.getElementById("purchase-rows").innerHTML = renderRows(invoices);
+          document.getElementById("purchase-details").innerHTML = renderDetails(invoices);
+          document.getElementById("purchase-total-row").textContent =
+            `${invoices.length} documentos encontrados | Total con IVA ${clp.format(totals.total)} | IVA ${clp.format(totals.iva)} | Notas de credito ${totals.creditNotes}`;
+        };
+
+        ["purchase-search", "purchase-period", "purchase-month", "purchase-day", "purchase-year"].forEach((id) => {
+          document.getElementById(id).addEventListener("input", update);
+          document.getElementById(id).addEventListener("change", update);
+        });
+        update();
+      }
+
+      function renderTreasury(data) {
+        const latestMonth = data.summaries.byMonth[0]?.key ?? "2026-05";
+        const invoices = data.invoices.filter((invoice) => invoice.fechaEmision.startsWith(latestMonth));
+        const payable = invoices.filter((invoice) => invoice.tipoDte !== "61");
+        const pending = payable.reduce((sum, invoice) => sum + Number(invoice.montoTotal || 0), 0);
+        const paid = 0;
+        document.getElementById("tesoreria").innerHTML = `
+          <h2>Tesoreria</h2>
+          <div class="grid cards">
+            <article class="card"><div class="muted">Pendientes del mes</div><div class="value">${clp.format(pending)}</div></article>
+            <article class="card"><div class="muted">Pagadas del mes</div><div class="value">${clp.format(paid)}</div></article>
+            <article class="card"><div class="muted">Facturas mes</div><div class="value">${payable.length}</div></article>
+            <article class="card"><div class="muted">Notas credito</div><div class="value">${invoices.filter((invoice) => invoice.tipoDte === "61").length}</div></article>
+          </div>
+          <article class="card section">
+            <h2>Facturas del mes - ${monthLabel(latestMonth)}</h2>
+            <table><thead><tr><th>Fecha</th><th>Proveedor</th><th>Documento</th><th>Vencimiento</th><th>Monto</th><th>Estado</th></tr></thead>
+            <tbody>${payable.map((invoice) => `<tr><td>${dateLabel(invoice.fechaEmision)}</td><td>${escapeHtml(invoice.razonSocialEmisor)}</td><td>${escapeHtml(invoice.folio)}</td><td>${dateLabel(invoice.fechaVencimiento)}</td><td class="money">${clp.format(invoice.montoTotal)}</td><td>${escapeHtml(invoice.paymentStatus)}</td></tr>`).join("")}</tbody></table>
+          </article>
+          <article class="card section">
+            <h2>Resumen por mes</h2>
+            <table><thead><tr><th>Mes</th><th>Pendientes</th><th>Pagadas</th><th>Total</th></tr></thead>
+            <tbody>${data.summaries.byMonth.map((row) => `<tr><td>${monthLabel(row.key)}</td><td>${row.invoices}</td><td>0</td><td class="money">${escapeHtml(row.totalClp)}</td></tr>`).join("")}</tbody></table>
+          </article>
+          <article class="card section">
+            <h2>Generar pagos</h2>
+            <p class="muted">Exporta facturas pendientes al formato de pagos masivos Santander basado en la planilla entregada.</p>
+            <table><thead><tr><th></th><th>Proveedor</th><th>Factura</th><th>Vencimiento</th><th>Monto</th><th>Banco</th></tr></thead>
+            <tbody>${payable.slice(0, 30).map((invoice) => `<tr><td><input type="checkbox" checked /></td><td>${escapeHtml(invoice.razonSocialEmisor)}</td><td>${escapeHtml(invoice.folio)}</td><td>${dateLabel(invoice.fechaVencimiento)}</td><td class="money">${clp.format(invoice.montoTotal)}</td><td>Codigo banco pendiente</td></tr>`).join("")}</tbody></table>
+            <p><a class="pdf-button" href="/api/payment-template">Generar pagos</a></p>
+          </article>
+          <article class="card section">
+            <h2>Datos proveedor</h2>
+            <table><thead><tr><th>Razon social</th><th>RUT</th><th>Mail</th><th>Contacto</th><th>Codigo banco</th></tr></thead>
+            <tbody>${data.summaries.suppliers.map((supplier) => `<tr><td>${escapeHtml(supplier.razonSocial)}</td><td>${escapeHtml(supplier.rut)}</td><td>Pendiente</td><td>Proveedor</td><td>Pendiente</td></tr>`).join("")}</tbody></table>
+          </article>
+        `;
+      }
+
+      fetch("dte-purchases-2026.json")
+        .then((response) => response.json())
+        .then((data) => {
+          renderDashboard(data);
+          renderPurchases(data);
+          renderTreasury(data);
+        })
+        .catch((error) => {
+          console.error(error);
+        });
+    </script>
+  </body>
+</html>
