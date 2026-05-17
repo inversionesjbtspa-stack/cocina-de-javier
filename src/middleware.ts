@@ -2,7 +2,12 @@ import { type NextRequest, NextResponse } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
 const publicRoutes = new Set(["/login"]);
-const publicAssets = new Set(["/logo-lcdj.svg", "/icon.svg", "/favicon.ico"]);
+const publicAssets = new Set([
+  "/logo-lcdj.gif",
+  "/logo-lcdj.svg",
+  "/icon.svg",
+  "/favicon.ico"
+]);
 
 export async function middleware(request: NextRequest) {
   if (publicAssets.has(request.nextUrl.pathname)) {
@@ -71,5 +76,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|logo-lcdj.svg|icon.svg).*)"]
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|logo-lcdj.gif|logo-lcdj.svg|icon.svg).*)"]
 };
