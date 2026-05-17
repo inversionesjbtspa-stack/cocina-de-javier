@@ -1,0 +1,10 @@
+<svg width="260" height="84" viewBox="0 0 260 84" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="260" height="84" rx="18" fill="#2B1018"/>
+  <circle cx="42" cy="42" r="24" fill="#6F1729"/>
+  <circle cx="42" cy="42" r="18" stroke="#B9975B" stroke-width="2"/>
+  <path d="M33 47c8-1 12-8 18-16M36 55c5-7 10-11 18-15" stroke="#FFF7EF" stroke-width="3" stroke-linecap="round"/>
+  <path d="M77 28h101" stroke="#B9975B" stroke-width="1.4" stroke-linecap="round"/>
+  <text x="76" y="48" fill="#FFF7EF" font-family="Georgia, serif" font-size="20" font-weight="700">La Cocina</text>
+  <text x="76" y="66" fill="#E9D8C6" font-family="Arial, sans-serif" font-size="14" font-weight="600">de Javier</text>
+  <text x="187" y="47" fill="#B9975B" font-family="Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="1.5">ERP</text>
+</svg>

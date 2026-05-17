@@ -77,6 +77,14 @@ export function parseDteXml({
   );
 
   const xmlSha256 = sha256(xml);
+  const references = asArray(documento?.Referencia).map(
+    (reference: Record<string, unknown>) => ({
+      referencedTipoDte: text(reference.TpoDocRef),
+      referencedFolio: text(reference.FolioRef),
+      referenceDate: text(reference.FchRef),
+      reason: text(reference.RazonRef)
+    })
+  );
 
   return {
     idempotencyKey: `${rutEmisor}:${tipoDte}:${folio}:${xmlSha256}`,
@@ -87,6 +95,8 @@ export function parseDteXml({
     rutReceptor,
     razonSocialReceptor: text(receptor?.RznSocRecep),
     fechaEmision,
+    fechaVencimiento: text(idDoc?.FchVenc) ?? null,
+    formaPago: text(idDoc?.FmaPago) ?? null,
     montoNeto: numberValue(totales?.MntNeto),
     montoExento: numberValue(totales?.MntExe),
     iva: numberValue(totales?.IVA),
@@ -95,6 +105,12 @@ export function parseDteXml({
     sourceMessageId,
     sourceAttachmentId,
     sourceFilename,
+    raw: {
+      trackId: text(envio.SetDTE?.Caratula?.TmstFirmaEnv ?? parsed?.EnvioDTE?.SetDTE?.Caratula?.TmstFirmaEnv),
+      ted: documento?.TED ?? null,
+      caf: documento?.TED?.DD?.CAF ?? null,
+      references
+    },
     items
   };
 }

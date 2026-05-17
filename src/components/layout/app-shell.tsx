@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { signOut } from "@/lib/auth/actions";
+import { BrandLogo } from "@/components/brand/logo";
 
 const navigation: Array<{
   href: Route;
@@ -36,12 +37,10 @@ const navigation: Array<{
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen">
-      <aside className="fixed inset-y-0 left-0 hidden w-72 border-r border-[#dfe4dd] bg-white/95 px-5 py-6 shadow-[12px_0_30px_rgba(24,48,36,0.04)] backdrop-blur lg:block">
-        <Link className="block" href="/">
-          <p className="text-lg font-semibold tracking-tight text-brand-900">
-            Cocina de Javier
-          </p>
-          <p className="mt-1 text-xs font-medium text-[#667068]">
+      <aside className="fixed inset-y-0 left-0 hidden w-72 border-r border-[#eadfd9] bg-white/95 px-5 py-6 shadow-[14px_0_36px_rgba(43,16,24,0.06)] backdrop-blur lg:block">
+        <Link className="block rounded-xl bg-brand-900 p-3 shadow-sm" href="/">
+          <BrandLogo compact />
+          <p className="mt-3 text-xs font-medium uppercase tracking-[0.18em] text-gold-100">
             ERP financiero cloud
           </p>
         </Link>
@@ -52,7 +51,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
             return (
               <Link
-                className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-[#344238] transition hover:bg-[#edf2ee] hover:text-brand-900"
+                className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-[#4d3f42] transition hover:bg-brand-100 hover:text-brand-900"
                 href={item.href}
                 key={item.href}
               >
@@ -65,22 +64,22 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <div className="lg:pl-72">
-        <header className="sticky top-0 z-10 border-b border-[#dfe4dd] bg-white/90 px-5 py-4 backdrop-blur">
+        <header className="sticky top-0 z-10 border-b border-[#eadfd9] bg-white/90 px-5 py-4 backdrop-blur">
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-sm font-semibold text-brand-900">
                 Control ejecutivo
               </p>
-              <p className="text-xs text-[#667068]">
-                Actualizado hace 5 minutos · Preview Vercel
+              <p className="text-xs text-[#6f6263]">
+                Actualizado hace 5 minutos · Preview Vercel · Supabase activo
               </p>
             </div>
-            <div className="hidden items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 md:flex">
-              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+            <div className="hidden items-center gap-2 rounded-md border border-brand-100 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700 md:flex">
+              <span className="h-2 w-2 rounded-full bg-brand-700" />
               Build cloud activo
             </div>
             <button
-              className="hidden items-center gap-2 rounded-md border border-[#dfe4dd] bg-white px-3 py-2 text-sm font-medium text-[#344238] hover:bg-[#edf2ee] md:flex"
+              className="hidden items-center gap-2 rounded-md border border-[#eadfd9] bg-white px-3 py-2 text-sm font-medium text-[#4d3f42] hover:bg-brand-50 md:flex"
               type="button"
             >
               <RefreshCw aria-hidden="true" className="h-4 w-4" />
@@ -88,7 +87,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
             <form action={signOut}>
               <button
-                className="rounded-md border border-[#dfe4dd] px-3 py-2 text-sm font-medium text-[#344238] hover:bg-[#edf2ee]"
+                className="rounded-md border border-[#eadfd9] px-3 py-2 text-sm font-medium text-[#4d3f42] hover:bg-brand-50"
                 type="submit"
               >
                 Salir

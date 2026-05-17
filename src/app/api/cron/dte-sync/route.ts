@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { fetchDteXmlAttachmentsViaImap } from "@/lib/dte/imap-client";
 import { parseDteXml } from "@/lib/dte/parser";
+import { persistExtractedDteInvoices } from "@/lib/dte/persist";
 
 export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization");
@@ -17,20 +18,23 @@ export async function GET(request: Request) {
   }
 
   const attachments = await fetchDteXmlAttachmentsViaImap();
-  const invoices = attachments.map((attachment) =>
-    parseDteXml({
+  const parsed = attachments.map((attachment) => ({
+    invoice: parseDteXml({
       xml: attachment.xml,
       sourceMessageId: attachment.messageId,
       sourceAttachmentId: attachment.attachmentId,
       sourceFilename: attachment.filename
-    })
-  );
+    }),
+    xml: attachment.xml
+  }));
+  const persisted = await persistExtractedDteInvoices(parsed);
 
   return NextResponse.json({
     ok: true,
     source: "dte@lacocinadejavier.cl",
     syncedAt: new Date().toISOString(),
-    count: invoices.length,
-    invoices
+    count: parsed.length,
+    persisted,
+    invoices: parsed.map((item) => item.invoice)
   });
 }

@@ -12,6 +12,7 @@ import {
   TrendingUp
 } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
+import { BrandLogo } from "@/components/brand/logo";
 import {
   currentMonth,
   currentMonthInvoices,
@@ -118,7 +119,11 @@ export default function HomePage() {
   return (
     <AppShell>
       <section className="space-y-8">
-        <div className="rounded-lg border border-[#dfe4dd] bg-white p-6 shadow-sm">
+        <div className="overflow-hidden rounded-lg border border-[#eadfd9] bg-white shadow-[0_18px_45px_rgba(43,16,24,0.06)]">
+          <div className="bg-brand-900 px-6 py-5">
+            <BrandLogo />
+          </div>
+          <div className="p-6">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <div className="flex flex-wrap items-center gap-3">
@@ -130,14 +135,14 @@ export default function HomePage() {
               <h1 className="mt-3 text-3xl font-semibold tracking-tight text-brand-900 lg:text-4xl">
                 Control financiero La Cocina de Javier
               </h1>
-              <p className="mt-3 max-w-4xl text-base leading-7 text-[#4e5a52]">
+              <p className="mt-3 max-w-4xl text-base leading-7 text-[#6f6263]">
                 Lectura ejecutiva basada en {purchasesData.invoiceCount} XML DTE
                 procesados. Corte operativo: {formatDate(operatingDate)}.
               </p>
             </div>
-            <div className="rounded-lg border border-[#dfe4dd] bg-[#f8faf8] p-4 text-sm">
+            <div className="rounded-lg border border-[#eadfd9] bg-brand-50 p-4 text-sm">
               <p className="font-semibold text-brand-900">Resumen en 10 segundos</p>
-              <p className="mt-2 text-[#5d665f]">
+              <p className="mt-2 text-[#6f6263]">
                 {overdue.length
                   ? "Existen pagos vencidos que requieren gestion inmediata."
                   : "No hay facturas vencidas en el corte operativo."}
@@ -146,6 +151,7 @@ export default function HomePage() {
                 Flujo 30 dias: {formatClp(flow)}
               </p>
             </div>
+          </div>
           </div>
         </div>
 

@@ -3,10 +3,10 @@
 @tailwind utilities;
 
 :root {
-  --background: #f3f5f2;
-  --foreground: #17221d;
-  --muted: #5d665f;
-  --border: #dfe4dd;
+  --background: #f6f2ef;
+  --foreground: #26141a;
+  --muted: #6f6263;
+  --border: #eadfd9;
   --surface: #ffffff;
 }
 
@@ -22,8 +22,9 @@ body {
 body {
   margin: 0;
   background:
-    radial-gradient(circle at 20% 0%, rgba(70, 111, 86, 0.08), transparent 32rem),
-    linear-gradient(180deg, #f7f8f5 0%, var(--background) 42%);
+    radial-gradient(circle at 18% 0%, rgba(111, 23, 41, 0.08), transparent 32rem),
+    radial-gradient(circle at 92% 12%, rgba(185, 151, 91, 0.12), transparent 26rem),
+    linear-gradient(180deg, #fffaf7 0%, var(--background) 48%);
   color: var(--foreground);
   font-family:
     Inter,
@@ -33,6 +34,11 @@ body {
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
+}
+
+::selection {
+  background: #6f1729;
+  color: #fffaf7;
 }
 
 a {

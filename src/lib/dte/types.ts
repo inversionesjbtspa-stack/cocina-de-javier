@@ -7,6 +7,8 @@ export type ExtractedDteInvoice = {
   rutReceptor: string;
   razonSocialReceptor: string | null;
   fechaEmision: string;
+  fechaVencimiento: string | null;
+  formaPago: string | null;
   montoNeto: number;
   montoExento: number;
   iva: number;
@@ -15,6 +17,12 @@ export type ExtractedDteInvoice = {
   sourceMessageId: string;
   sourceAttachmentId: string;
   sourceFilename: string;
+  raw: {
+    trackId: string | null;
+    ted: unknown;
+    caf: unknown;
+    references: ExtractedDteReference[];
+  };
   items: ExtractedDteItem[];
 };
 
@@ -25,4 +33,11 @@ export type ExtractedDteItem = {
   unit: string;
   unitPrice: number;
   lineTotal: number;
+};
+
+export type ExtractedDteReference = {
+  referencedTipoDte: string | null;
+  referencedFolio: string | null;
+  referenceDate: string | null;
+  reason: string | null;
 };

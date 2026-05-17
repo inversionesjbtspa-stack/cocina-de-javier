@@ -3,6 +3,7 @@ import { fetchDteXmlAttachments } from "@/lib/dte/gmail-client";
 import { dteInboxConfig, hasDteImapConfig, hasGoogleOAuthConfig } from "@/lib/dte/inbox";
 import { fetchDteXmlAttachmentsViaImap } from "@/lib/dte/imap-client";
 import { parseDteXml } from "@/lib/dte/parser";
+import { persistExtractedDteInvoices } from "@/lib/dte/persist";
 
 export async function POST(request: Request) {
   if (dteInboxConfig.authMethod === "imap" && !hasDteImapConfig()) {
@@ -39,19 +40,22 @@ export async function POST(request: Request) {
           maxResults: body.maxResults ?? 20
         });
 
-  const invoices = attachments.map((attachment) =>
-    parseDteXml({
+  const parsed = attachments.map((attachment) => ({
+    invoice: parseDteXml({
       xml: attachment.xml,
       sourceMessageId: attachment.messageId,
       sourceAttachmentId: attachment.attachmentId,
       sourceFilename: attachment.filename
-    })
-  );
+    }),
+    xml: attachment.xml
+  }));
+  const persisted = await persistExtractedDteInvoices(parsed);
 
   return NextResponse.json({
     ok: true,
     source: "dte@lacocinadejavier.cl",
-    count: invoices.length,
-    invoices
+    count: parsed.length,
+    persisted,
+    invoices: parsed.map((item) => item.invoice)
   });
 }
