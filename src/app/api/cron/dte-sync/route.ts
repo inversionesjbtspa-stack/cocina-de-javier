@@ -18,22 +18,36 @@ export async function GET(request: Request) {
   }
 
   const attachments = await fetchDteXmlAttachmentsViaImap();
-  const parsed = attachments.map((attachment) => ({
-    invoice: parseDteXml({
-      xml: attachment.xml,
-      sourceMessageId: attachment.messageId,
-      sourceAttachmentId: attachment.attachmentId,
-      sourceFilename: attachment.filename
-    }),
-    xml: attachment.xml
-  }));
-  const persisted = await persistExtractedDteInvoices(parsed);
+  const parsed = [];
+  const rejected = [];
+
+  for (const attachment of attachments) {
+    try {
+      parsed.push({
+        invoice: parseDteXml({
+          xml: attachment.xml,
+          sourceMessageId: attachment.messageId,
+          sourceAttachmentId: attachment.attachmentId,
+          sourceFilename: attachment.filename
+        }),
+        xml: attachment.xml
+      });
+    } catch (error) {
+      rejected.push({
+        filename: attachment.filename,
+        message: error instanceof Error ? error.message : "Unknown XML parse error"
+      });
+    }
+  }
+  const persisted = parsed.length ? await persistExtractedDteInvoices(parsed) : [];
 
   return NextResponse.json({
     ok: true,
     source: "dte@lacocinadejavier.cl",
     syncedAt: new Date().toISOString(),
+    found: attachments.length,
     count: parsed.length,
+    rejected,
     persisted,
     invoices: parsed.map((item) => item.invoice)
   });
