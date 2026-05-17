@@ -40,7 +40,11 @@ export async function requireUser() {
   const context = await getCurrentUserContext();
 
   if (!context) {
-    redirect("/login");
+    redirect("/login?error=session-required");
+  }
+
+  if (context.memberships.length === 0) {
+    redirect("/login?error=no-access");
   }
 
   return context;

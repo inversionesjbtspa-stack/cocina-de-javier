@@ -34,6 +34,8 @@ export const ROLE_PERMISSIONS: Record<AppRole, PermissionCode[]> = {
     "purchases.manage",
     "dte.manage",
     "accounts_payable.manage",
+    "payments.approve",
+    "payments.generate_file",
     "reports.export",
     "users.manage",
     "audit.read"
