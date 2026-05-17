@@ -5,6 +5,8 @@ build/
 .vercel/
 .tools/
 .git-home/
+.node-home/
+.npm-cache/
 $dir/
 
 .env
