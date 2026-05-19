@@ -1,5 +1,6 @@
-import { CheckCircle2, FileCheck2, FileText, RefreshCw, ShieldCheck, UploadCloud } from "lucide-react";
+import { CheckCircle2, FileCheck2, FileText, ShieldCheck, UploadCloud } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
+import { SyncXmlButton } from "@/components/dte/sync-xml-button";
 import { MetricCard, PremiumPanel, StatusPill } from "@/components/ui/enterprise";
 import { formatClp, formatDate, purchasesData } from "@/lib/dte/purchases-data";
 import { currentMonthInvoices } from "@/lib/finance/erp-metrics";
@@ -46,15 +47,7 @@ export default function FacturasPage() {
                   Representacion visual desde XML con acciones de PDF y XML original.
                 </p>
               </div>
-              <form action="/api/dte/inbox/sync" method="post">
-                <button
-                  className="inline-flex items-center gap-2 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-900"
-                  type="submit"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  Sincronizar XML
-                </button>
-              </form>
+              <SyncXmlButton />
             </div>
 
             <div className="mt-5 space-y-4">

@@ -7,12 +7,6 @@ export type ErpModule = {
 
 export const MODULES: ErpModule[] = [
   {
-    slug: "empresas",
-    name: "Empresas y sucursales",
-    description: "Tenants, razones sociales, sucursales y contexto operativo.",
-    stage: "Base"
-  },
-  {
     slug: "dashboard-ejecutivo",
     name: "Dashboard ejecutivo",
     description: "KPIs financieros, compras, cuentas por pagar y tendencias.",
