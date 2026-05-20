@@ -44,10 +44,14 @@ export type ExtractedDteInvoice = {
     ted: unknown;
     caf: unknown;
     frmt: string | null;
+    emitter: unknown;
+    receiver: unknown;
     parsedJson: unknown;
     references: ExtractedDteReference[];
     globalDiscounts: ExtractedDteGlobalDiscount[];
     taxes: ExtractedDteTax[];
+    parserWarnings: string[];
+    parserErrors: string[];
   };
   items: ExtractedDteItem[];
 };
@@ -58,6 +62,7 @@ export type ExtractedDteItem = {
   codeType: string | null;
   codeValue: string | null;
   name: string;
+  normalizedName: string;
   description: string;
   quantity: number;
   unit: string;
@@ -68,6 +73,9 @@ export type ExtractedDteItem = {
   surchargeAmount: number;
   additionalTaxCode: string | null;
   lineTotal: number;
+  validationStatus: "valid" | "warning" | "error";
+  validationErrors: string[];
+  priceConfidenceScore: number;
   raw: unknown;
 };
 

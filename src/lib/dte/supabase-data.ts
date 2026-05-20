@@ -26,11 +26,15 @@ type DteRow = {
   idempotency_key: string;
   dte_items?: Array<{
     line_number: number;
+    name: string | null;
     description: string;
+    item_description_raw: string | null;
     quantity: number;
     unit: string;
     unit_price: number;
     line_total: number;
+    item_validation_status: string | null;
+    price_confidence_score: number | null;
   }>;
 };
 
@@ -51,12 +55,16 @@ function toNumber(value: unknown) {
 
 function toInvoice(row: DteRow): DtePurchaseInvoice {
   const items: DtePurchaseItem[] = (row.dte_items ?? []).map((item) => ({
-    description: item.description,
+    description: item.name || item.description || "SIN DESCRIPCION XML",
+    detailDescription: item.item_description_raw,
     lineNumber: item.line_number,
     lineTotal: toNumber(item.line_total),
+    name: item.name ?? undefined,
+    priceConfidenceScore: toNumber(item.price_confidence_score),
     quantity: toNumber(item.quantity),
     unit: item.unit,
-    unitPrice: toNumber(item.unit_price)
+    unitPrice: toNumber(item.unit_price),
+    validationStatus: item.item_validation_status ?? "unchecked"
   }));
 
   return {
@@ -130,6 +138,9 @@ function summarize(invoices: DtePurchaseInvoice[]): DtePurchaseData["summaries"]
     suppliers.set(invoice.rutEmisor, supplier);
 
     for (const item of invoice.items) {
+      if (item.validationStatus && item.validationStatus !== "valid" && (item.priceConfidenceScore ?? 0) < 70) {
+        continue;
+      }
       const product = products.get(item.description) ?? {
         description: item.description,
         documents: 0,
@@ -175,7 +186,7 @@ export async function getDtePurchaseData(): Promise<DtePurchaseData> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("dte_documents")
-    .select("id,tipo_dte,folio,rut_emisor,razon_social_emisor,rut_receptor,razon_social_receptor,fecha_emision,fecha_vencimiento,monto_neto,monto_exento,iva,monto_total,idempotency_key,dte_items(line_number,description,quantity,unit,unit_price,line_total)")
+    .select("id,tipo_dte,folio,rut_emisor,razon_social_emisor,rut_receptor,razon_social_receptor,fecha_emision,fecha_vencimiento,monto_neto,monto_exento,iva,monto_total,idempotency_key,dte_items(line_number,name,description,item_description_raw,quantity,unit,unit_price,line_total,item_validation_status,price_confidence_score)")
     .order("fecha_emision", { ascending: false })
     .limit(1000);
 

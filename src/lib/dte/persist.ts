@@ -175,6 +175,11 @@ export async function persistExtractedDteInvoices(invoices: PersistInput) {
           monto_periodo: invoice.montoPeriodo,
           monto_total: invoice.montoTotal,
           raw_json: invoice.raw.parsedJson,
+          raw_emitter_json: invoice.raw.emitter,
+          raw_receiver_json: invoice.raw.receiver,
+          parser_version: "dte-parser-v2",
+          parser_warnings: invoice.raw.parserWarnings,
+          parser_errors: invoice.raw.parserErrors,
           razon_social_emisor: invoice.razonSocialEmisor,
           razon_social_receptor: invoice.razonSocialReceptor,
           rut_emisor: invoice.rutEmisor,
@@ -227,6 +232,7 @@ export async function persistExtractedDteInvoices(invoices: PersistInput) {
     await supabase.from("dte_references").delete().eq("dte_document_id", dte.id);
     await supabase.from("dte_taxes").delete().eq("dte_document_id", dte.id);
     await supabase.from("dte_global_discounts").delete().eq("dte_document_id", dte.id);
+    await supabase.from("product_price_history").delete().eq("source_entity_id", dte.id);
 
     if (invoice.items.length) {
       const { data: insertedItems, error: itemsError } = await supabase
@@ -242,9 +248,14 @@ export async function persistExtractedDteInvoices(invoices: PersistInput) {
             discount_pct: line.discountPct,
             dte_document_id: dte.id,
             item_code: line.itemCode,
+            item_description_raw: line.description,
+            item_name_normalized: line.normalizedName,
+            item_validation_errors: line.validationErrors,
+            item_validation_status: line.validationStatus,
             line_number: line.lineNumber,
             line_total: line.lineTotal,
             name: line.name,
+            price_confidence_score: line.priceConfidenceScore,
             quantity: line.quantity,
             raw_json: line.raw,
             surcharge_amount: line.surchargeAmount,

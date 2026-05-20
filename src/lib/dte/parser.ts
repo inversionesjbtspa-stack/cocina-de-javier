@@ -44,6 +44,57 @@ function sha256(value: string) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+function normalizeItemName(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
+function validateLine({
+  discountAmount,
+  lineTotal,
+  quantity,
+  surchargeAmount,
+  unitPrice
+}: {
+  discountAmount: number;
+  lineTotal: number;
+  quantity: number;
+  surchargeAmount: number;
+  unitPrice: number;
+}) {
+  const errors: string[] = [];
+  if (quantity <= 0) {
+    errors.push("QtyItem ausente o menor/igual a cero.");
+  }
+  if (unitPrice <= 0) {
+    errors.push("PrcItem ausente o menor/igual a cero.");
+  }
+  if (lineTotal < 0) {
+    errors.push("MontoItem negativo.");
+  }
+
+  const expected = quantity * unitPrice - discountAmount + surchargeAmount;
+  const tolerance = Math.max(10, Math.abs(lineTotal) * 0.03);
+  const diff = Math.abs(expected - lineTotal);
+  if (quantity > 0 && unitPrice > 0 && diff > tolerance) {
+    errors.push(
+      `QtyItem * PrcItem ajustado no calza con MontoItem. Esperado ${expected.toFixed(2)}, XML ${lineTotal.toFixed(2)}.`
+    );
+  }
+
+  const status: "valid" | "warning" = errors.length ? "warning" : "valid";
+  const confidence = errors.length ? Math.max(0, 100 - errors.length * 35 - Math.min(30, diff / 1000)) : 100;
+  return {
+    confidence: Number(confidence.toFixed(2)),
+    errors,
+    status
+  };
+}
+
 function firstDte(parsed: Record<string, unknown>) {
   const envio = (parsed.EnvioDTE ?? parsed) as Record<string, unknown>;
   const setDte = (envio.SetDTE ?? {}) as Record<string, unknown>;
@@ -109,22 +160,42 @@ export function parseDteXml({
     documento?.Detalle as Record<string, unknown> | Record<string, unknown>[] | undefined
   ).map((line, index) => {
     const code = itemCode(line);
-    const name = text(line.NmbItem) ?? "Item sin descripcion";
+    const parserErrors: string[] = [];
+    const name = text(line.NmbItem) ?? text(line.DscItem) ?? "SIN DESCRIPCION XML";
+    if (!text(line.NmbItem) && !text(line.DscItem)) {
+      parserErrors.push("Detalle sin NmbItem ni DscItem.");
+    }
+    const discountAmount = numberValue(line.DescuentoMonto);
+    const surchargeAmount = numberValue(line.RecargoMonto);
+    const quantity = numberValue(line.QtyItem) || 1;
+    const unitPrice = numberValue(line.PrcItem);
+    const lineTotal = numberValue(line.MontoItem);
+    const validation = validateLine({
+      discountAmount,
+      lineTotal,
+      quantity,
+      surchargeAmount,
+      unitPrice
+    });
     return {
       ...code,
       additionalTaxCode: text(line.CodImpAdic),
       description: text(line.DscItem) ?? name,
-      discountAmount: numberValue(line.DescuentoMonto),
+      discountAmount,
       discountPct: optionalNumber(line.DescuentoPct),
       lineNumber: numberValue(line.NroLinDet) || index + 1,
-      lineTotal: numberValue(line.MontoItem),
+      lineTotal,
       name,
-      quantity: numberValue(line.QtyItem) || 1,
+      normalizedName: normalizeItemName(name),
+      priceConfidenceScore: validation.confidence,
+      quantity,
       raw: line,
-      surchargeAmount: numberValue(line.RecargoMonto),
+      surchargeAmount,
       surchargePct: optionalNumber(line.RecargoPct),
       unit: text(line.UnmdItem) ?? "unidad",
-      unitPrice: numberValue(line.PrcItem)
+      unitPrice,
+      validationErrors: [...parserErrors, ...validation.errors],
+      validationStatus: parserErrors.length ? "error" : validation.status
     };
   });
 
@@ -203,9 +274,13 @@ export function parseDteXml({
     montoTotal: numberValue(totales.MntTotal),
     raw: {
       caf: ted && typeof ted === "object" ? (ted.DD as Record<string, unknown> | undefined)?.CAF ?? null : null,
+      emitter: emisor,
       frmt: ted && typeof ted === "object" ? text(ted.FRMT) : null,
       globalDiscounts,
       parsedJson: parsed,
+      parserErrors: items.flatMap((item) => item.validationStatus === "error" ? item.validationErrors : []),
+      parserWarnings: items.flatMap((item) => item.validationStatus === "warning" ? item.validationErrors : []),
+      receiver: receptor,
       references,
       taxes: [...totalTaxes, ...itemTaxes],
       ted,

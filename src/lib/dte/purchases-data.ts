@@ -2,11 +2,15 @@ import dtePurchases from "@/data/dte-purchases-2026.json";
 
 export type DtePurchaseItem = {
   lineNumber: number;
+  name?: string;
   description: string;
+  detailDescription?: string | null;
   quantity: number;
   unit: string;
   unitPrice: number;
   lineTotal: number;
+  validationStatus?: string;
+  priceConfidenceScore?: number;
 };
 
 export type DtePurchaseInvoice = {

@@ -172,7 +172,7 @@ async function getSupabaseInvoice(folio: string): Promise<PdfInvoice | null> {
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("dte_documents")
-    .select("*,dte_items(line_number,description,quantity,unit,unit_price,line_total),dte_references(id),dte_taxes(id),dte_global_discounts(id)")
+    .select("*,dte_items(line_number,name,description,item_description_raw,quantity,unit,unit_price,discount_amount,surcharge_amount,additional_tax_code,line_total,item_validation_status,price_confidence_score),dte_references(id),dte_taxes(id),dte_global_discounts(id)")
     .eq("folio", folio)
     .order("fecha_emision", { ascending: false })
     .limit(1)
@@ -188,7 +188,8 @@ async function getSupabaseInvoice(folio: string): Promise<PdfInvoice | null> {
     fechaVencimiento: data.fecha_vencimiento ?? data.fecha_emision,
     folio: data.folio,
     items: (data.dte_items ?? []).map((item: Record<string, unknown>) => ({
-      description: String(item.description ?? ""),
+      description: String(item.name ?? item.description ?? "SIN DESCRIPCION XML"),
+      detailDescription: item.item_description_raw ? String(item.item_description_raw) : null,
       lineNumber: Number(item.line_number ?? 0),
       lineTotal: Number(item.line_total ?? 0),
       quantity: Number(item.quantity ?? 0),
