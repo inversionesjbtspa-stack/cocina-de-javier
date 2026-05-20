@@ -46,12 +46,13 @@ export async function GET(request: Request) {
   if (!isAuthorized(request)) {
     return NextResponse.json(
       {
-        ok: false,
+        ok: publicConfigured && adminConfigured,
         publicConfigured,
         adminConfigured,
-        error: "unauthorized"
+        protected: true,
+        detail: "Full table, storage and write checks require server authorization."
       },
-      { status: 401 }
+      { status: publicConfigured && adminConfigured ? 200 : 503 }
     );
   }
 
