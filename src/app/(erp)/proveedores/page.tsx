@@ -1,4 +1,5 @@
 import { AlertTriangle, Building2, CreditCard, MailWarning, ShieldCheck } from "lucide-react";
+import { Suspense } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { SupplierMasterDirectory } from "@/components/suppliers/supplier-master-directory";
 import { MetricCard, PremiumPanel } from "@/components/ui/enterprise";
@@ -33,23 +34,27 @@ export default function ProveedoresPage() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard
             detail={`${suppliersMaster.stats.duplicateRuts.length} RUT duplicados detectados`}
+            href="/proveedores?filter=duplicados"
             label="Proveedores master"
             value={String(suppliersMaster.stats.total)}
           />
           <MetricCard
             detail={`${withDebt.length} proveedores con facturas XML`}
+            href="/proveedores?filter=deuda"
             label="Deuda abierta"
             tone={pending > 5_000_000 ? "warning" : "neutral"}
             value={formatClp(pending)}
           />
           <MetricCard
             detail="Requieren completar banco antes de pagar"
+            href="/proveedores?filter=sin-banco"
             label="Sin banco"
             tone={missingBank.length ? "critical" : "neutral"}
             value={String(missingBank.length)}
           />
           <MetricCard
             detail="Requieren correo para nomina"
+            href="/proveedores?filter=sin-email"
             label="Sin email"
             tone={missingEmail.length ? "warning" : "neutral"}
             value={String(missingEmail.length)}
@@ -75,7 +80,9 @@ export default function ProveedoresPage() {
           })}
         </div>
 
-        <SupplierMasterDirectory suppliers={suppliers} />
+        <Suspense fallback={<div className="rounded-2xl border border-[#eadfd9] bg-white p-6 text-sm text-[#6f6263]">Cargando proveedores...</div>}>
+          <SupplierMasterDirectory suppliers={suppliers} />
+        </Suspense>
       </section>
     </AppShell>
   );

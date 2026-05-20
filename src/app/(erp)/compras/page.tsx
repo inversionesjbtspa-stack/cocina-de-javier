@@ -1,13 +1,10 @@
 ﻿import {
   BarChart3,
-  Boxes,
-  CalendarDays,
-  Filter,
   PackageSearch,
-  Search,
   TrendingUp
 } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
+import { PurchaseSearchTable } from "@/components/purchases/purchase-search-table";
 import {
   categorySpend,
   currentMonth,
@@ -18,7 +15,6 @@ import {
 } from "@/lib/finance/erp-metrics";
 import {
   formatClp,
-  formatDate,
   formatMonth,
   purchasesData,
   totalsFor
@@ -201,123 +197,7 @@ export default function ComprasPage() {
             </div>
           </div>
 
-          <div className="mt-5 grid gap-3 lg:grid-cols-5">
-            <label className="block lg:col-span-2">
-              <span className="flex items-center gap-2 text-sm font-medium text-[#5d665f]">
-                <Search className="h-4 w-4" />
-                Busqueda rapida
-              </span>
-              <input
-                className="mt-2 w-full rounded-md border border-[#dfe4dd] bg-white px-3 py-2 text-sm"
-                placeholder="Folio, proveedor o producto"
-                type="search"
-              />
-            </label>
-            <label className="block">
-              <span className="flex items-center gap-2 text-sm font-medium text-[#5d665f]">
-                <CalendarDays className="h-4 w-4" />
-                Mes
-              </span>
-              <select className="mt-2 w-full rounded-md border border-[#dfe4dd] bg-white px-3 py-2 text-sm">
-                {purchasesData.summaries.byMonth.map((month) => (
-                  <option key={month.key}>{formatMonth(month.key)}</option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className="flex items-center gap-2 text-sm font-medium text-[#5d665f]">
-                <Filter className="h-4 w-4" />
-                Estado
-              </span>
-              <select className="mt-2 w-full rounded-md border border-[#dfe4dd] bg-white px-3 py-2 text-sm">
-                <option>Todos</option>
-                <option>Pendiente</option>
-                <option>Nota credito</option>
-              </select>
-            </label>
-            <label className="block">
-              <span className="flex items-center gap-2 text-sm font-medium text-[#5d665f]">
-                <Boxes className="h-4 w-4" />
-                Categoria
-              </span>
-              <select className="mt-2 w-full rounded-md border border-[#dfe4dd] bg-white px-3 py-2 text-sm">
-                <option>Todas</option>
-                {categories.map((category) => (
-                  <option key={category.category}>{category.category}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div className="mt-5 max-h-[560px] overflow-auto rounded-lg border border-[#e6ebe5]">
-            <table className="w-full border-collapse text-sm">
-              <thead className="sticky top-0 bg-[#f8faf8]">
-                <tr className="border-b border-[#dfe4dd] text-left text-xs uppercase text-brand-700">
-                  <th className="px-4 py-3">Fecha</th>
-                  <th className="px-4 py-3">Razon social</th>
-                  <th className="px-4 py-3">Documento</th>
-                  <th className="px-4 py-3 text-right">Neto</th>
-                  <th className="px-4 py-3 text-right">IVA</th>
-                  <th className="px-4 py-3 text-right">Total</th>
-                  <th className="px-4 py-3">Estado</th>
-                  <th className="px-4 py-3">PDF</th>
-                </tr>
-              </thead>
-              <tbody>
-                {invoices.map((invoice) => (
-                  <tr
-                    className="border-b border-[#edf2ee] bg-white hover:bg-[#f8faf8]"
-                    key={invoice.normalizedKey ?? `${invoice.rutEmisor}-${invoice.tipoDte}-${invoice.folio}`}
-                  >
-                    <td className="px-4 py-3 text-[#4e5a52]">
-                      {formatDate(invoice.fechaEmision)}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-brand-900">
-                      {invoice.razonSocialEmisor}
-                    </td>
-                    <td className="px-4 py-3 text-[#4e5a52]">
-                      {invoice.documentType} {invoice.folio}
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium text-[#4e5a52]">
-                      {formatClp(invoice.montoNeto)}
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium text-[#4e5a52]">
-                      {formatClp(invoice.iva)}
-                    </td>
-                    <td className="px-4 py-3 text-right font-semibold text-brand-700">
-                      {formatClp(invoice.montoTotal)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge severity={invoice.tipoDte === "61" ? "warning" : "healthy"}>
-                        {invoice.tipoDte === "61" ? "Nota credito" : invoice.paymentStatus}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3">
-                      {invoice.tipoDte === "61" ? (
-                        <span className="text-xs text-[#667068]">Ajuste</span>
-                      ) : (
-                        <div className="flex gap-2">
-                          <a
-                            className="rounded-md bg-brand-700 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-900"
-                            href={`/api/invoices/${invoice.folio}/pdf`}
-                            target="_blank"
-                          >
-                            Ver
-                          </a>
-                          <a
-                            className="rounded-md border border-brand-700 px-3 py-2 text-xs font-semibold text-brand-700 hover:bg-[#edf2ee]"
-                            href={`/api/invoices/${invoice.folio}/pdf?download=1`}
-                          >
-                            Descargar
-                          </a>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <PurchaseSearchTable invoices={purchasesData.invoices} />
         </article>
 
         <section className="grid gap-4 xl:grid-cols-2">

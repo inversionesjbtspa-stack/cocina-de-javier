@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, FileSpreadsheet } from "lucide-react";
+import { AlertTriangle, CalendarDays, FileSpreadsheet, Search } from "lucide-react";
 import { formatClp, formatDate, type DtePurchaseInvoice } from "@/lib/dte/purchases-data";
 
 type PaymentCandidate = {
@@ -16,12 +16,46 @@ type PaymentCandidate = {
 };
 
 export function PaymentNominaPanel({ candidates }: { candidates: PaymentCandidate[] }) {
-  const initial = candidates.filter((candidate) => candidate.ok).slice(0, 20).map((candidate) => candidate.invoice.folio);
-  const [selected, setSelected] = useState<string[]>(initial);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [query, setQuery] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [quick, setQuick] = useState("30");
+  const [status, setStatus] = useState("todos");
+
+  const filtered = useMemo(() => {
+    const needle = query.toLowerCase().trim();
+    const now = new Date();
+    const maxDate = new Date();
+    if (quick !== "custom") maxDate.setDate(now.getDate() + Number(quick));
+
+    return candidates.filter((candidate) => {
+      const due = new Date(`${candidate.invoice.fechaVencimiento}T00:00:00`);
+      const matchesQuick = quick === "custom" || due <= maxDate;
+      const matchesFrom = !from || candidate.invoice.fechaVencimiento >= from;
+      const matchesTo = !to || candidate.invoice.fechaVencimiento <= to;
+      const haystack = [
+        candidate.invoice.folio,
+        candidate.invoice.rutEmisor,
+        candidate.supplierName,
+        candidate.invoice.montoTotal,
+        candidate.email,
+        candidate.bankName
+      ]
+        .join(" ")
+        .toLowerCase();
+      const matchesStatus =
+        status === "todos" ||
+        (status === "validas" && candidate.ok) ||
+        (status === "incompletas" && !candidate.ok) ||
+        (status === "vencidas" && due < now);
+      return matchesQuick && matchesFrom && matchesTo && matchesStatus && (!needle || haystack.includes(needle));
+    });
+  }, [candidates, from, query, quick, status, to]);
 
   const selectedRows = useMemo(
-    () => candidates.filter((candidate) => selected.includes(candidate.invoice.folio)),
-    [candidates, selected]
+    () => filtered.filter((candidate) => selected.includes(candidate.invoice.folio)),
+    [filtered, selected]
   );
   const invalidSelected = selectedRows.filter((candidate) => !candidate.ok);
   const total = selectedRows.reduce((sum, row) => sum + row.invoice.montoTotal, 0);
@@ -31,6 +65,10 @@ export function PaymentNominaPanel({ candidates }: { candidates: PaymentCandidat
     setSelected((current) =>
       current.includes(folio) ? current.filter((item) => item !== folio) : [...current, folio]
     );
+  }
+
+  function selectAll() {
+    setSelected(filtered.filter((candidate) => candidate.ok).map((candidate) => candidate.invoice.folio));
   }
 
   return (
@@ -47,14 +85,20 @@ export function PaymentNominaPanel({ candidates }: { candidates: PaymentCandidat
             <span className="text-[#6f6263]">Seleccionado </span>
             <span className="font-semibold text-brand-900">{formatClp(total)}</span>
           </div>
-          {invalidSelected.length ? (
+          <button className="rounded-md border border-[#eadfd9] px-3 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50" onClick={selectAll} type="button">
+            Seleccionar todo
+          </button>
+          <button className="rounded-md border border-[#eadfd9] px-3 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50" onClick={() => setSelected([])} type="button">
+            Quitar seleccion
+          </button>
+          {invalidSelected.length || selected.length === 0 ? (
             <button
               className="inline-flex cursor-not-allowed items-center gap-2 rounded-md bg-[#d8d0cc] px-4 py-2 text-sm font-semibold text-white"
               disabled
               type="button"
             >
               <AlertTriangle className="h-4 w-4" />
-              Faltan datos
+              {selected.length === 0 ? "Seleccione facturas" : "Faltan datos"}
             </button>
           ) : (
             <a
@@ -66,6 +110,46 @@ export function PaymentNominaPanel({ candidates }: { candidates: PaymentCandidat
             </a>
           )}
         </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 lg:grid-cols-6">
+        <label className="block lg:col-span-2">
+          <span className="flex items-center gap-2 text-sm font-medium text-[#6f6263]">
+            <Search className="h-4 w-4" />
+            Buscar
+          </span>
+          <input className="mt-2 w-full rounded-md border border-[#eadfd9] px-3 py-2 text-sm" onChange={(event) => setQuery(event.target.value)} placeholder="Folio, proveedor, RUT o monto" type="search" value={query} />
+        </label>
+        <label>
+          <span className="text-sm font-medium text-[#6f6263]">Periodo</span>
+          <select className="mt-2 w-full rounded-md border border-[#eadfd9] px-3 py-2 text-sm" onChange={(event) => setQuick(event.target.value)} value={quick}>
+            <option value="0">Hoy</option>
+            <option value="7">7 dias</option>
+            <option value="15">15 dias</option>
+            <option value="30">30 dias</option>
+            <option value="custom">Rango</option>
+          </select>
+        </label>
+        <label>
+          <span className="flex items-center gap-2 text-sm font-medium text-[#6f6263]">
+            <CalendarDays className="h-4 w-4" />
+            Desde
+          </span>
+          <input className="mt-2 w-full rounded-md border border-[#eadfd9] px-3 py-2 text-sm" onChange={(event) => setFrom(event.target.value)} type="date" value={from} />
+        </label>
+        <label>
+          <span className="text-sm font-medium text-[#6f6263]">Hasta</span>
+          <input className="mt-2 w-full rounded-md border border-[#eadfd9] px-3 py-2 text-sm" onChange={(event) => setTo(event.target.value)} type="date" value={to} />
+        </label>
+        <label>
+          <span className="text-sm font-medium text-[#6f6263]">Estado</span>
+          <select className="mt-2 w-full rounded-md border border-[#eadfd9] px-3 py-2 text-sm" onChange={(event) => setStatus(event.target.value)} value={status}>
+            <option value="todos">Todos</option>
+            <option value="validas">Validas</option>
+            <option value="incompletas">Incompletas</option>
+            <option value="vencidas">Vencidas</option>
+          </select>
+        </label>
       </div>
 
       <div className="mt-5 overflow-x-auto rounded-xl border border-[#eadfd9]">
@@ -83,7 +167,7 @@ export function PaymentNominaPanel({ candidates }: { candidates: PaymentCandidat
             </tr>
           </thead>
           <tbody>
-            {candidates.map((candidate) => (
+            {filtered.map((candidate) => (
               <tr className="border-t border-[#f0e5df]" key={candidate.invoice.normalizedKey}>
                 <td className="px-3 py-3">
                   <input
@@ -122,6 +206,9 @@ export function PaymentNominaPanel({ candidates }: { candidates: PaymentCandidat
             ))}
           </tbody>
         </table>
+        {filtered.length === 0 ? (
+          <div className="p-8 text-center text-sm text-[#6f6263]">Sin facturas para el filtro activo.</div>
+        ) : null}
       </div>
     </section>
   );

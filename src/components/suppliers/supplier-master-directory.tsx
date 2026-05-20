@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { AlertTriangle, Building2, CreditCard, FileText, Search } from "lucide-react";
 import { formatClp } from "@/lib/dte/purchases-data";
 import type { enrichedSuppliers } from "@/lib/suppliers/master";
@@ -15,10 +16,16 @@ function normalize(value: string) {
 }
 
 export function SupplierMasterDirectory({ suppliers }: { suppliers: SupplierRow[] }) {
+  const searchParams = useSearchParams();
   const [query, setQuery] = useState("");
   const [bank, setBank] = useState("Todos");
-  const [risk, setRisk] = useState("Todos");
-  const [selectedRut, setSelectedRut] = useState(suppliers[0]?.rut ?? "");
+  const [risk, setRisk] = useState(searchParams.get("filter") === "deuda" ? "warning" : "Todos");
+  const [selectedRut, setSelectedRut] = useState(searchParams.get("rut") ?? suppliers[0]?.rut ?? "");
+  const initialQuery = searchParams.get("q") ?? "";
+
+  useEffect(() => {
+    if (initialQuery) setQuery(initialQuery);
+  }, [initialQuery]);
 
   const banks = useMemo(
     () => ["Todos", ...Array.from(new Set(suppliers.map((supplier) => supplier.bankName).filter(Boolean))).sort()],
@@ -44,10 +51,14 @@ export function SupplierMasterDirectory({ suppliers }: { suppliers: SupplierRow[
       })
       .filter((supplier) => bank === "Todos" || supplier.bankName === bank)
       .filter((supplier) => risk === "Todos" || supplier.risk === risk)
+      .filter((supplier) => searchParams.get("filter") !== "sin-banco" || !supplier.bankCode || !supplier.bankAccount)
+      .filter((supplier) => searchParams.get("filter") !== "sin-email" || !supplier.email)
+      .filter((supplier) => searchParams.get("filter") !== "deuda" || supplier.pending > 0)
       .slice(0, 80);
-  }, [bank, query, risk, suppliers]);
+  }, [bank, query, risk, suppliers, searchParams]);
 
   const selected = suppliers.find((supplier) => supplier.rut === selectedRut) ?? filtered[0] ?? suppliers[0];
+  const activeFilter = searchParams.get("filter");
 
   return (
     <section className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
@@ -96,6 +107,19 @@ export function SupplierMasterDirectory({ suppliers }: { suppliers: SupplierRow[
           <p className="mt-3 text-xs text-[#7b6f70]">
             {filtered.length} proveedores visibles desde master proveedores jesus.
           </p>
+          {activeFilter ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">
+                Filtro activo: {activeFilter}
+              </span>
+              <a className="text-xs font-semibold text-brand-700 hover:underline" href="/proveedores">
+                Limpiar filtro
+              </a>
+              <a className="text-xs font-semibold text-brand-700 hover:underline" href={`/api/exports/suppliers?filter=${encodeURIComponent(activeFilter)}`}>
+                Export Excel
+              </a>
+            </div>
+          ) : null}
         </div>
 
         <div className="max-h-[760px] divide-y divide-[#f0e5df] overflow-y-auto">
@@ -176,6 +200,12 @@ export function SupplierMasterDirectory({ suppliers }: { suppliers: SupplierRow[
                     <li key={alert}>{alert}</li>
                   ))}
                 </ul>
+                <a
+                  className="mt-4 inline-flex rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-900"
+                  href={`/proveedores?rut=${encodeURIComponent(selected.rut)}&accion=corregir-banco`}
+                >
+                  Corregir datos bancarios
+                </a>
               </div>
             ) : null}
           </div>

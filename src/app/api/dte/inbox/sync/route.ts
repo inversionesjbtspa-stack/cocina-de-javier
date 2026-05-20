@@ -92,12 +92,15 @@ export async function POST(request: Request) {
     }
 
     const persisted = parsed.length ? await persistExtractedDteInvoices(parsed) : [];
+    const uniqueKeys = new Set(parsed.map((item) => item.invoice.idempotencyKey));
+    const duplicated = Math.max(0, parsed.length - uniqueKeys.size);
 
     return NextResponse.json({
       ok: true,
       source: "dte@lacocinadejavier.cl",
       found: attachments.length,
       count: parsed.length,
+      duplicated,
       rejected,
       persisted: persisted.map((item) => ({
         folio: item.folio,

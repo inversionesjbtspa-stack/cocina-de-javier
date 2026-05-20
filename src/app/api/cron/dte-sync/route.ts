@@ -40,6 +40,7 @@ export async function GET(request: Request) {
     }
   }
   const persisted = parsed.length ? await persistExtractedDteInvoices(parsed) : [];
+  const uniqueKeys = new Set(parsed.map((item) => item.invoice.idempotencyKey));
 
   return NextResponse.json({
     ok: true,
@@ -47,8 +48,12 @@ export async function GET(request: Request) {
     syncedAt: new Date().toISOString(),
     found: attachments.length,
     count: parsed.length,
+    duplicated: Math.max(0, parsed.length - uniqueKeys.size),
     rejected,
-    persisted,
-    invoices: parsed.map((item) => item.invoice)
+    persisted: persisted.map((item) => ({
+      dteDocumentId: item.dteDocumentId,
+      folio: item.folio,
+      rutEmisor: item.rutEmisor
+    }))
   });
 }

@@ -11,6 +11,7 @@ import {
   ShieldAlert,
   TrendingUp
 } from "lucide-react";
+import Link from "next/link";
 import { AppShell } from "@/components/layout/app-shell";
 import { BrandLogo } from "@/components/brand/logo";
 import {
@@ -74,6 +75,7 @@ export default function HomePage() {
   const kpis = [
     {
       detail: "Salida proyectada a 30 dias",
+      href: "/tesoreria?filter=flujo-30",
       icon: CircleDollarSign,
       label: "Caja / flujo estimado",
       severity: Math.abs(flow) > 10_000_000 ? "critical" : Math.abs(flow) > 5_000_000 ? "warning" : "healthy",
@@ -81,6 +83,7 @@ export default function HomePage() {
     },
     {
       detail: `${pendingPayables.length} documentos pendientes`,
+      href: "/tesoreria?estado=pendiente",
       icon: ReceiptText,
       label: "Cuentas por pagar",
       severity: pendingPayables.length > 80 ? "critical" : pendingPayables.length > 40 ? "warning" : "healthy",
@@ -88,6 +91,7 @@ export default function HomePage() {
     },
     {
       detail: `${overdue.length} documentos fuera de plazo`,
+      href: "/tesoreria?estado=vencidas",
       icon: AlertTriangle,
       label: "Facturas vencidas",
       severity: overdue.length ? "critical" : "healthy",
@@ -95,6 +99,7 @@ export default function HomePage() {
     },
     {
       detail: formatMonth(currentMonth),
+      href: `/compras?mes=${currentMonth}`,
       icon: Banknote,
       label: "Compras del mes",
       severity: totals.total > 12_000_000 ? "warning" : "healthy",
@@ -102,6 +107,7 @@ export default function HomePage() {
     },
     {
       detail: "Contra mes anterior",
+      href: "/productos?filter=variacion",
       icon: variation >= 0 ? ArrowUpRight : ArrowDownRight,
       label: "Variacion mensual",
       severity: variation > 20 ? "critical" : variation > 8 ? "warning" : "healthy",
@@ -109,6 +115,7 @@ export default function HomePage() {
     },
     {
       detail: `${alerts.filter((alert) => alert.severity !== "healthy").length} alertas con atencion`,
+      href: "/auditoria?filter=alertas",
       icon: ShieldAlert,
       label: "Alertas criticas",
       severity: alertSeverity,
@@ -120,7 +127,7 @@ export default function HomePage() {
     <AppShell>
       <section className="space-y-8">
         <div className="overflow-hidden rounded-lg border border-[#eadfd9] bg-white shadow-[0_18px_45px_rgba(43,16,24,0.06)]">
-          <div className="bg-brand-900 px-6 py-5">
+          <div className="border-b border-[#eadfd9] bg-[#fffaf6] px-6 py-5">
             <BrandLogo />
           </div>
           <div className="p-6">
@@ -161,8 +168,9 @@ export default function HomePage() {
             const tone = statusTone(card.severity);
 
             return (
-              <article
+              <Link
                 className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm"
+                href={card.href}
                 key={card.label}
               >
                 <div className="flex items-start justify-between gap-4">
@@ -182,7 +190,7 @@ export default function HomePage() {
                 <div className="mt-5">
                   <StatusBadge severity={card.severity} />
                 </div>
-              </article>
+              </Link>
             );
           })}
         </div>

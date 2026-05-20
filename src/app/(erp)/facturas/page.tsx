@@ -30,10 +30,10 @@ export default function FacturasPage() {
         </PremiumPanel>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard detail="XML DTE procesados" label="Documentos" value={String(purchasesData.invoiceCount)} />
-          <MetricCard detail="Muestra mensual con IVA" label="Monto facturado" value={formatClp(total)} />
-          <MetricCard detail="Ajustes tributarios recibidos" label="Notas credito" tone={creditNotes.length ? "warning" : "neutral"} value={String(creditNotes.length)} />
-          <MetricCard detail="Lineas de detalle parseadas" label="Items XML" value={String(parsedItems)} />
+          <MetricCard detail="XML DTE procesados" href="/facturas?filter=documentos" label="Documentos" value={String(purchasesData.invoiceCount)} />
+          <MetricCard detail="Muestra mensual con IVA" href="/facturas?filter=monto" label="Monto facturado" value={formatClp(total)} />
+          <MetricCard detail="Ajustes tributarios recibidos" href="/facturas?tipo=61" label="Notas credito" tone={creditNotes.length ? "warning" : "neutral"} value={String(creditNotes.length)} />
+          <MetricCard detail="Lineas de detalle parseadas" href="/facturas?filter=items" label="Items XML" value={String(parsedItems)} />
         </div>
 
         <section className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
@@ -45,6 +45,9 @@ export default function FacturasPage() {
                 </h2>
                 <p className="mt-1 text-sm text-[#6f6263]">
                   Representacion visual desde XML con acciones de PDF y XML original.
+                </p>
+                <p className="mt-2 text-xs text-[#7b6f70]">
+                  Ultima sincronizacion: {new Date(purchasesData.generatedAt).toLocaleString("es-CL")} · Proxima: cron Vercel 08:00 diario
                 </p>
               </div>
               <SyncXmlButton />
@@ -122,6 +125,12 @@ export default function FacturasPage() {
                     </a>
                     <a className="rounded-md border border-brand-700 px-3 py-2 text-xs font-semibold text-brand-700" href={`/api/invoices/${invoice.folio}/pdf?download=1`}>
                       Descargar PDF
+                    </a>
+                    <a className="rounded-md border border-[#eadfd9] px-3 py-2 text-xs font-semibold text-brand-700" href={`/api/invoices/${invoice.folio}/xml`}>
+                      Descargar XML
+                    </a>
+                    <a className="rounded-md border border-[#eadfd9] px-3 py-2 text-xs font-semibold text-brand-700" href={`/api/invoices/${invoice.folio}/pdf`} target="_blank">
+                      Imprimir
                     </a>
                   </div>
                 </div>

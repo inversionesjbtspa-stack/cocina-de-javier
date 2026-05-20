@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
+import type { Route } from "next";
 
 export function PremiumPanel({
   children,
@@ -20,12 +22,14 @@ export function MetricCard({
   label,
   value,
   detail,
-  tone = "neutral"
+  tone = "neutral",
+  href
 }: {
   label: string;
   value: string;
   detail: string;
   tone?: "neutral" | "success" | "warning" | "critical";
+  href?: string;
 }) {
   const tones = {
     neutral: "border-[#eadfd9] bg-white",
@@ -34,8 +38,9 @@ export function MetricCard({
     critical: "border-red-200 bg-red-50/70"
   };
 
-  return (
-    <div className={`rounded-lg border p-4 ${tones[tone]}`}>
+  const className = `rounded-lg border p-4 transition ${tones[tone]} ${href ? "block hover:-translate-y-0.5 hover:shadow-[0_18px_42px_rgba(43,16,24,0.10)]" : ""}`;
+  const body = (
+    <>
       <p className="text-xs font-semibold uppercase tracking-wide text-[#7b6f70]">
         {label}
       </p>
@@ -43,7 +48,15 @@ export function MetricCard({
         {value}
       </p>
       <p className="mt-2 text-sm text-[#6f6263]">{detail}</p>
-    </div>
+    </>
+  );
+
+  return href ? (
+    <Link className={className} href={href as Route}>
+      {body}
+    </Link>
+  ) : (
+    <div className={className}>{body}</div>
   );
 }
 

@@ -67,7 +67,7 @@ function sheetDataWithRows(sheetXml: string, rows: PaymentRow[]) {
 export function selectedInvoicesFromFolios(folios: string[]) {
   const selected = folios.length
     ? purchasesData.invoices.filter((invoice) => folios.includes(invoice.folio))
-    : purchasesData.invoices.filter((invoice) => invoice.tipoDte !== "61").slice(0, 50);
+    : [];
 
   if (selected.length === 0) {
     return {

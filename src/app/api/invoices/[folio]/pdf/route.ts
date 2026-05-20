@@ -68,9 +68,10 @@ function generatePdf(invoice: DtePurchaseInvoice) {
     rect(38, 538, 536, 26, "0.43 0.09 0.16"),
     bold(48, 547, "Detalle de items XML", 10, "1 1 1"),
     text(48, 526, "Descripcion", 8),
-    text(330, 526, "Cant.", 8),
-    text(390, 526, "Precio", 8),
-    text(488, 526, "Total", 8),
+    text(300, 526, "Cant.", 8),
+    text(350, 526, "Unidad", 8),
+    text(410, 526, "Precio", 8),
+    text(500, 526, "Total", 8),
     line(38, 518, 574, 518)
   ];
 
@@ -80,9 +81,10 @@ function generatePdf(invoice: DtePurchaseInvoice) {
       ops.push(rect(38, y - 5, 536, 18, "0.995 0.985 0.965"));
     }
     ops.push(text(48, y, truncate(item.description, 54), 8));
-    ops.push(text(332, y, item.quantity.toLocaleString("es-CL"), 8));
-    ops.push(text(390, y, money(item.unitPrice), 8));
-    ops.push(text(488, y, money(item.lineTotal), 8));
+    ops.push(text(302, y, item.quantity.toLocaleString("es-CL"), 8));
+    ops.push(text(350, y, item.unit || "UN", 8));
+    ops.push(text(410, y, money(item.unitPrice), 8));
+    ops.push(text(500, y, money(item.lineTotal), 8));
     y -= 20;
   });
 
@@ -104,8 +106,10 @@ function generatePdf(invoice: DtePurchaseInvoice) {
     bold(48, 194, "Trazabilidad XML", 10),
     text(48, 176, `Clave idempotente: ${invoice.normalizedKey ?? `${invoice.rutEmisor}-${invoice.tipoDte}-${invoice.folio}`}`),
     text(48, 160, "Origen: Gmail DTE / Supabase Storage privado"),
-    text(48, 144, "Estado tributario: XML parseado y documento generado"),
-    text(48, 120, "Este PDF conserva la lectura operativa del XML. El XML original es el documento fuente auditable.", 7, "0.45 0.38 0.38")
+    text(48, 144, `Archivo XML original: ${invoice.tipoDte}-${invoice.folio}.xml`),
+    text(48, 128, "Resumen tributario: neto, exento, IVA y total extraidos desde XML"),
+    text(48, 112, "TED/CAF: conservados en XML original auditable cuando el DTE lo informa"),
+    text(48, 94, "Impuestos adicionales, descuentos, cargos, referencias y observaciones se mantienen en el XML fuente.", 7, "0.45 0.38 0.38")
   );
 
   const content = ops.join("\n");
