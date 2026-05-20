@@ -3,7 +3,7 @@
   "crons": [
     {
       "path": "/api/dte/inbox/sync",
-      "schedule": "*/10 * * * *"
+      "schedule": "0 8 * * *"
     }
   ]
 }
