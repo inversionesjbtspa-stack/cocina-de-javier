@@ -4,9 +4,37 @@ import { dteInboxConfig, hasDteImapConfig, hasGoogleOAuthConfig } from "@/lib/dt
 import { fetchDteXmlAttachmentsViaImap } from "@/lib/dte/imap-client";
 import { parseDteXml } from "@/lib/dte/parser";
 import { persistExtractedDteInvoices } from "@/lib/dte/persist";
+import { serverEnv } from "@/lib/env";
+import { createClient } from "@/lib/supabase/server";
+
+async function isAuthorized(request: Request) {
+  if (
+    serverEnv.CRON_SECRET &&
+    request.headers.get("authorization") === `Bearer ${serverEnv.CRON_SECRET}`
+  ) {
+    return true;
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  return Boolean(user);
+}
 
 export async function POST(request: Request) {
   try {
+    if (!(await isAuthorized(request))) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "unauthorized"
+        },
+        { status: 401 }
+      );
+    }
+
     if (dteInboxConfig.authMethod === "imap" && !hasDteImapConfig()) {
       return NextResponse.json(
         {
@@ -57,8 +85,8 @@ export async function POST(request: Request) {
         });
       } catch (error) {
         rejected.push({
-          filename: attachment.filename,
-          message: error instanceof Error ? error.message : "Unknown XML parse error"
+          fileName: attachment.filename,
+          reason: error instanceof Error ? error.message : "Unknown XML parse error"
         });
       }
     }
@@ -71,8 +99,11 @@ export async function POST(request: Request) {
       found: attachments.length,
       count: parsed.length,
       rejected,
-      persisted,
-      invoices: parsed.map((item) => item.invoice)
+      persisted: persisted.map((item) => ({
+        folio: item.folio,
+        rutEmisor: item.rutEmisor,
+        dteDocumentId: item.dteDocumentId
+      }))
     });
   } catch (error) {
     return NextResponse.json(
