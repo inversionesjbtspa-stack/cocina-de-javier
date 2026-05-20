@@ -10,6 +10,7 @@ import {
   WalletCards
 } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
+import { PaymentNominaPanel } from "@/components/payments/payment-nomina-panel";
 import {
   duplicateRiskInvoices,
   invoicesDueWithin,
@@ -24,6 +25,7 @@ import {
   totalAmount
 } from "@/lib/finance/erp-metrics";
 import { formatClp, formatDate } from "@/lib/dte/purchases-data";
+import { paymentValidation } from "@/lib/suppliers/master";
 
 function Badge({
   children,
@@ -50,6 +52,22 @@ export default function TesoreriaPage() {
   const criticalSuppliers = supplierSpend(6);
   const prepared = due30.slice(0, 12);
   const due7LastDate = due7.at(-1)?.fechaVencimiento;
+  const paymentCandidates = due30
+    .filter((invoice) => invoice.tipoDte !== "61")
+    .slice(0, 80)
+    .map((invoice) => {
+      const validation = paymentValidation(invoice);
+      return {
+        alerts: validation.alerts,
+        bankAccount: validation.supplier?.bankAccount ?? "",
+        bankCode: validation.supplier?.bankCode ?? "",
+        bankName: validation.supplier?.bankName ?? "",
+        email: validation.supplier?.email ?? "",
+        invoice,
+        ok: validation.ok,
+        supplierName: validation.supplier?.businessName ?? invoice.razonSocialEmisor
+      };
+    });
 
   const summary = [
     {
@@ -115,7 +133,7 @@ export default function TesoreriaPage() {
             </div>
             <a
               className="inline-flex items-center justify-center gap-2 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-900"
-              href="/api/payment-template"
+              href="#nomina-pagos"
             >
               <WalletCards className="h-4 w-4" />
               Generar pagos
@@ -324,6 +342,8 @@ export default function TesoreriaPage() {
             </article>
           </aside>
         </section>
+
+        <PaymentNominaPanel candidates={paymentCandidates} />
       </section>
     </AppShell>
   );

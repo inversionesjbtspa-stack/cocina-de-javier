@@ -15,7 +15,6 @@ import {
   ShoppingBasket,
   Users,
   UsersRound,
-  WalletCards
 } from "lucide-react";
 import { BrandLogo } from "@/components/brand/logo";
 
@@ -26,7 +25,6 @@ const navigation = [
   { href: "/facturas", label: "Facturas DTE", section: "Operacion", icon: FileText },
   { href: "/compras", label: "Compras", section: "Operacion", icon: Package },
   { href: "/tesoreria", label: "Tesoreria", section: "Finanzas", icon: Landmark },
-  { href: "/pagos", label: "Pagos", section: "Finanzas", icon: WalletCards },
   { href: "/recursos-humanos", label: "Recursos Humanos", section: "Gestion", icon: Users },
   { href: "/auditoria", label: "Auditoria", section: "Control", icon: ShieldCheck }
 ] as const;

@@ -1,77 +1,37 @@
 import { NextResponse } from "next/server";
-import { purchasesData } from "@/lib/dte/purchases-data";
+import { generateSantanderTemplate } from "@/lib/payments/santander-template";
 
-function escapeXml(value: string) {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
+export function GET(request: Request) {
+  const url = new URL(request.url);
+  const folios = url.searchParams
+    .get("folios")
+    ?.split(",")
+    .map((folio) => folio.trim())
+    .filter(Boolean) ?? [];
 
-export function GET() {
-  const rows = [
-    [
-      "Rut Empresa",
-      "",
-      "Banco",
-      "",
-      "Cuenta",
-      "Tipo",
-      "Rut Proveedor",
-      "Monto",
-      "Glosa",
-      "Email",
-      "Documento",
-      "Referencia",
-      "Detalle",
-      "",
-      "",
-      "Rut/Proveedor",
-      "Factura",
-      "Monto"
-    ],
-    ...purchasesData.invoices
-      .filter((invoice) => invoice.tipoDte !== "61")
-      .slice(0, 200)
-      .map((invoice) => [
-        "71068862",
-        "",
-        "",
-        "",
-        "",
-        "",
-        invoice.rutEmisor,
-        String(Math.round(invoice.montoTotal)),
-        `FACT ${invoice.folio}`,
-        "",
-        invoice.folio,
-        "",
-        `FACT ${invoice.folio} J. PASCUAL Y FAMILIA SPA`,
-        "",
-        "",
-        invoice.razonSocialEmisor,
-        invoice.folio,
-        String(Math.round(invoice.montoTotal))
-      ])
-  ];
+  const result = generateSantanderTemplate(folios);
 
-  const xmlRows = rows
-    .map(
-      (row) =>
-        `<Row>${row
-          .map((cell) => `<Cell><Data ss:Type="String">${escapeXml(cell)}</Data></Cell>`)
-          .join("")}</Row>`
-    )
-    .join("");
-  const workbook = `<?xml version="1.0"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
- <Worksheet ss:Name="Pagos">
-  <Table>${xmlRows}</Table>
- </Worksheet>
-</Workbook>`;
+  if (!result.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "payment_validation_failed",
+        invalid: result.invalid.map((item) => ({
+          alerts: item.alerts,
+          folio: item.invoice.folio,
+          proveedor: item.invoice.razonSocialEmisor,
+          rut: item.invoice.rutEmisor
+        }))
+      },
+      { status: 422 }
+    );
+  }
 
-  return new NextResponse(workbook, {
+  return new NextResponse(result.buffer, {
     headers: {
-      "Content-Disposition": 'attachment; filename="pagos-masivos-santander.xls"',
-      "Content-Type": "application/vnd.ms-excel"
+      "Content-Disposition": 'attachment; filename="Template Pagos JESUS - nomina ERP.xlsx"',
+      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "X-Payment-Rows": String(result.rows.length)
     }
   });
 }
