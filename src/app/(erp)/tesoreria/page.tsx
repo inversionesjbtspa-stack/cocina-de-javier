@@ -12,19 +12,12 @@ import {
 import { AppShell } from "@/components/layout/app-shell";
 import { PaymentNominaPanel } from "@/components/payments/payment-nomina-panel";
 import {
-  duplicateRiskInvoices,
-  invoicesDueWithin,
-  operatingDate,
-  overdueInvoices,
-  pendingPayables,
-  projectedCashFlow,
-  riskStatus,
+  createErpMetrics,
   severityLabel,
-  statusTone,
-  supplierSpend,
-  totalAmount
+  statusTone
 } from "@/lib/finance/erp-metrics";
 import { formatClp, formatDate } from "@/lib/dte/purchases-data";
+import { getDtePurchaseData } from "@/lib/dte/supabase-data";
 import { paymentValidation } from "@/lib/suppliers/master";
 
 function Badge({
@@ -41,15 +34,17 @@ function Badge({
   );
 }
 
-export default function TesoreriaPage() {
-  const today = invoicesDueWithin(0);
-  const due7 = invoicesDueWithin(7);
-  const due15 = invoicesDueWithin(15);
-  const due30 = invoicesDueWithin(30);
-  const overdue = overdueInvoices();
-  const duplicates = duplicateRiskInvoices();
-  const risk = riskStatus();
-  const criticalSuppliers = supplierSpend(6);
+export default async function TesoreriaPage() {
+  const dteData = await getDtePurchaseData();
+  const metrics = createErpMetrics(dteData);
+  const today = metrics.invoicesDueWithin(0);
+  const due7 = metrics.invoicesDueWithin(7);
+  const due15 = metrics.invoicesDueWithin(15);
+  const due30 = metrics.invoicesDueWithin(30);
+  const overdue = metrics.overdueInvoices();
+  const duplicates = metrics.duplicateRiskInvoices();
+  const risk = metrics.riskStatus();
+  const criticalSuppliers = metrics.supplierSpend(6);
   const prepared = due30.slice(0, 12);
   const due7LastDate = due7.at(-1)?.fechaVencimiento;
   const paymentCandidates = due30
@@ -75,21 +70,21 @@ export default function TesoreriaPage() {
       icon: Clock3,
       label: "Pagos hoy",
       severity: today.length ? "warning" : "healthy",
-      value: formatClp(totalAmount(today))
+      value: formatClp(metrics.totalAmount(today))
     },
     {
       detail: `${overdue.length} documentos vencidos`,
       icon: AlertTriangle,
       label: "Pagos vencidos",
       severity: overdue.length ? "critical" : "healthy",
-      value: formatClp(totalAmount(overdue))
+      value: formatClp(metrics.totalAmount(overdue))
     },
     {
       detail: `${prepared.length} documentos listos`,
       icon: FileSpreadsheet,
       label: "Pagos preparados",
       severity: prepared.length > 10 ? "warning" : "healthy",
-      value: formatClp(totalAmount(prepared))
+      value: formatClp(metrics.totalAmount(prepared))
     },
     {
       detail: "Control 4 ojos pendiente",
@@ -102,8 +97,8 @@ export default function TesoreriaPage() {
       detail: "Salida estimada 30 dias",
       icon: CircleDollarSign,
       label: "Flujo proyectado",
-      severity: Math.abs(projectedCashFlow()) > 10_000_000 ? "critical" : "warning",
-      value: formatClp(projectedCashFlow())
+      severity: Math.abs(metrics.projectedCashFlow()) > 10_000_000 ? "critical" : "warning",
+      value: formatClp(metrics.projectedCashFlow())
     },
     {
       detail: duplicates ? `${duplicates} alertas duplicado` : "Sin duplicados",
@@ -128,7 +123,7 @@ export default function TesoreriaPage() {
               </h1>
               <p className="mt-3 max-w-4xl text-base leading-7 text-[#4e5a52]">
                 Programacion de pagos, vencimientos, aprobaciones y riesgo
-                financiero. Corte operativo: {formatDate(operatingDate)}.
+                financiero. Corte operativo: {formatDate(metrics.operatingDate)}.
               </p>
             </div>
             <a
@@ -181,10 +176,10 @@ export default function TesoreriaPage() {
             </div>
             <div className="mt-5 grid gap-3 md:grid-cols-4">
               {[
-                ["Hoy", today.length, totalAmount(today), today.length ? "warning" : "healthy"],
-                ["7 dias", due7.length, totalAmount(due7), due7.length > 5 ? "warning" : "healthy"],
-                ["15 dias", due15.length, totalAmount(due15), due15.length > 10 ? "warning" : "healthy"],
-                ["30 dias", due30.length, totalAmount(due30), due30.length > 20 ? "critical" : "warning"]
+                ["Hoy", today.length, metrics.totalAmount(today), today.length ? "warning" : "healthy"],
+                ["7 dias", due7.length, metrics.totalAmount(due7), due7.length > 5 ? "warning" : "healthy"],
+                ["15 dias", due15.length, metrics.totalAmount(due15), due15.length > 10 ? "warning" : "healthy"],
+                ["30 dias", due30.length, metrics.totalAmount(due30), due30.length > 20 ? "critical" : "warning"]
               ].map(([label, count, amount, severity]) => (
                 <div
                   className={`rounded-lg border p-4 ${statusTone(severity as "healthy" | "warning" | "critical").panel}`}
@@ -247,12 +242,12 @@ export default function TesoreriaPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pendingPayables
+                  {metrics.pendingPayables
                     .slice()
                     .sort((a, b) => a.fechaVencimiento.localeCompare(b.fechaVencimiento))
                     .slice(0, 80)
                     .map((invoice) => {
-                      const isOverdue = invoice.fechaVencimiento < operatingDate;
+                      const isOverdue = invoice.fechaVencimiento < metrics.operatingDate;
                       const severity = isOverdue
                         ? "critical"
                         : due7LastDate && invoice.fechaVencimiento <= due7LastDate
@@ -337,7 +332,7 @@ export default function TesoreriaPage() {
                   : "No hay duplicados detectados por RUT, tipo DTE y folio."}
               </p>
               <p className="mt-3 text-sm font-semibold text-brand-700">
-                Cuentas por pagar: {formatClp(totalAmount(pendingPayables))}
+                Cuentas por pagar: {formatClp(metrics.totalAmount(metrics.pendingPayables))}
               </p>
             </article>
           </aside>

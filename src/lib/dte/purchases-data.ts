@@ -71,7 +71,7 @@ type RawDtePurchaseData = Omit<DtePurchaseData, "summaries"> & {
   };
 };
 
-type DtePurchaseData = {
+export type DtePurchaseData = {
   generatedAt: string;
   invoiceCount: number;
   invoices: DtePurchaseInvoice[];

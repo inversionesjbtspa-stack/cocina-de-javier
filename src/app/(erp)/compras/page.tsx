@@ -6,19 +6,15 @@
 import { AppShell } from "@/components/layout/app-shell";
 import { PurchaseSearchTable } from "@/components/purchases/purchase-search-table";
 import {
-  categorySpend,
-  currentMonth,
-  currentMonthInvoices,
-  priceIncreaseProducts,
+  createErpMetrics,
   statusTone,
-  supplierSpend
 } from "@/lib/finance/erp-metrics";
 import {
   formatClp,
   formatMonth,
-  purchasesData,
   totalsFor
 } from "@/lib/dte/purchases-data";
+import { getDtePurchaseData } from "@/lib/dte/supabase-data";
 import type { ReactNode } from "react";
 
 function Badge({
@@ -35,12 +31,14 @@ function Badge({
   );
 }
 
-export default function ComprasPage() {
-  const invoices = currentMonthInvoices;
+export default async function ComprasPage() {
+  const dteData = await getDtePurchaseData();
+  const metrics = createErpMetrics(dteData);
+  const invoices = metrics.currentMonthInvoices;
   const totals = totalsFor(invoices);
-  const categories = categorySpend();
-  const suppliers = supplierSpend(8);
-  const increases = priceIncreaseProducts(8);
+  const categories = metrics.categorySpend();
+  const suppliers = metrics.supplierSpend(8);
+  const increases = metrics.priceIncreaseProducts(8);
   const topCategory = categories[0];
   const topSupplier = suppliers[0];
 
@@ -57,7 +55,7 @@ export default function ComprasPage() {
                 Compras
               </h1>
               <p className="mt-3 max-w-4xl text-base leading-7 text-[#4e5a52]">
-                {purchasesData.invoiceCount} XML DTE cargados. Analisis mensual
+                {dteData.invoiceCount} XML DTE cargados. Analisis mensual
                 de gasto, proveedores, productos y variaciones de precio.
               </p>
             </div>
@@ -65,7 +63,7 @@ export default function ComprasPage() {
               <div className="rounded-lg border border-[#e6ebe5] bg-[#f8faf8] p-3">
                 <p className="text-[#667068]">Mes analizado</p>
                 <p className="mt-1 font-semibold text-brand-900">
-                  {formatMonth(currentMonth)}
+                  {formatMonth(metrics.currentMonth)}
                 </p>
               </div>
               <div className="rounded-lg border border-[#e6ebe5] bg-[#f8faf8] p-3">
@@ -182,7 +180,7 @@ export default function ComprasPage() {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-brand-900">
-                Facturas por mes - {formatMonth(currentMonth)}
+                Facturas por mes - {formatMonth(metrics.currentMonth)}
               </h2>
               <p className="mt-1 text-sm text-[#667068]">
                 Tabla enterprise con filtros visuales, montos CLP y acciones PDF.
@@ -197,7 +195,7 @@ export default function ComprasPage() {
             </div>
           </div>
 
-          <PurchaseSearchTable invoices={purchasesData.invoices} />
+          <PurchaseSearchTable invoices={dteData.invoices} />
         </article>
 
         <section className="grid gap-4 xl:grid-cols-2">
@@ -213,7 +211,7 @@ export default function ComprasPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {purchasesData.summaries.products.slice(0, 12).map((product) => (
+                  {dteData.summaries.products.slice(0, 12).map((product) => (
                     <tr className="border-b border-[#edf2ee]" key={product.description}>
                       <td className="py-3 pr-4 text-[#4e5a52]">
                         {product.description}
@@ -236,8 +234,8 @@ export default function ComprasPage() {
               Comparacion mensual
             </h2>
             <div className="mt-4 space-y-4">
-              {purchasesData.summaries.byMonth.map((month) => {
-                const max = purchasesData.summaries.byMonth[0]?.total ?? 1;
+              {dteData.summaries.byMonth.map((month) => {
+                const max = dteData.summaries.byMonth[0]?.total ?? 1;
                 const width = Math.max(5, (month.total / max) * 100);
 
                 return (

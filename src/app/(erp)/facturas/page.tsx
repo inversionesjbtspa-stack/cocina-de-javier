@@ -2,11 +2,14 @@ import { CheckCircle2, FileCheck2, FileText, ShieldCheck, UploadCloud } from "lu
 import { AppShell } from "@/components/layout/app-shell";
 import { SyncXmlButton } from "@/components/dte/sync-xml-button";
 import { MetricCard, PremiumPanel, StatusPill } from "@/components/ui/enterprise";
-import { formatClp, formatDate, purchasesData } from "@/lib/dte/purchases-data";
-import { currentMonthInvoices } from "@/lib/finance/erp-metrics";
+import { formatClp, formatDate } from "@/lib/dte/purchases-data";
+import { createErpMetrics } from "@/lib/finance/erp-metrics";
+import { getDtePurchaseData } from "@/lib/dte/supabase-data";
 
-export default function FacturasPage() {
-  const invoices = currentMonthInvoices.slice(0, 12);
+export default async function FacturasPage() {
+  const dteData = await getDtePurchaseData();
+  const metrics = createErpMetrics(dteData);
+  const invoices = metrics.currentMonthInvoices.slice(0, 12);
   const total = invoices.reduce((sum, invoice) => sum + invoice.montoTotal, 0);
   const creditNotes = invoices.filter((invoice) => invoice.tipoDte === "61");
   const parsedItems = invoices.reduce((sum, invoice) => sum + invoice.items.length, 0);
@@ -30,7 +33,7 @@ export default function FacturasPage() {
         </PremiumPanel>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard detail="XML DTE procesados" href="/facturas?filter=documentos" label="Documentos" value={String(purchasesData.invoiceCount)} />
+          <MetricCard detail="XML DTE procesados" href="/facturas?filter=documentos" label="Documentos" value={String(dteData.invoiceCount)} />
           <MetricCard detail="Muestra mensual con IVA" href="/facturas?filter=monto" label="Monto facturado" value={formatClp(total)} />
           <MetricCard detail="Ajustes tributarios recibidos" href="/facturas?tipo=61" label="Notas credito" tone={creditNotes.length ? "warning" : "neutral"} value={String(creditNotes.length)} />
           <MetricCard detail="Lineas de detalle parseadas" href="/facturas?filter=items" label="Items XML" value={String(parsedItems)} />
@@ -47,7 +50,7 @@ export default function FacturasPage() {
                   Representacion visual desde XML con acciones de PDF y XML original.
                 </p>
                 <p className="mt-2 text-xs text-[#7b6f70]">
-                  Ultima sincronizacion: {new Date(purchasesData.generatedAt).toLocaleString("es-CL")} · Proxima: cron Vercel 08:00 diario
+                  Ultima sincronizacion: {new Date(dteData.generatedAt).toLocaleString("es-CL")} · Proxima: cron Vercel cada 10 minutos
                 </p>
               </div>
               <SyncXmlButton />

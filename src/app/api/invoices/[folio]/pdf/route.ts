@@ -1,5 +1,30 @@
 import { NextResponse } from "next/server";
 import { formatClp, formatDate, purchasesData, type DtePurchaseInvoice } from "@/lib/dte/purchases-data";
+import { hasSupabaseAdminConfig } from "@/lib/env";
+import { createAdminClient } from "@/lib/supabase/admin";
+
+type PdfInvoice = DtePurchaseInvoice & {
+  metadata?: {
+    formaPago?: string | null;
+    termPagoGlosa?: string | null;
+    giroEmisor?: string | null;
+    dirOrigen?: string | null;
+    cmnaOrigen?: string | null;
+    ciudadOrigen?: string | null;
+    giroReceptor?: string | null;
+    dirReceptor?: string | null;
+    cmnaReceptor?: string | null;
+    ciudadReceptor?: string | null;
+    tasaIva?: number | null;
+    xmlSha256?: string | null;
+    sourceFilename?: string | null;
+    referenceCount?: number;
+    taxCount?: number;
+    globalDiscountCount?: number;
+    hasTed?: boolean;
+    hasCaf?: boolean;
+  };
+};
 
 function pdfEscape(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
@@ -29,7 +54,7 @@ function line(x1: number, y1: number, x2: number, y2: number, color = "0.88 0.82
   return `${color} RG 0.7 w ${x1} ${y1} m ${x2} ${y2} l S`;
 }
 
-function invoiceType(invoice: DtePurchaseInvoice) {
+function invoiceType(invoice: PdfInvoice) {
   if (invoice.tipoDte === "61") {
     return "NOTA DE CREDITO ELECTRONICA";
   }
@@ -39,7 +64,7 @@ function invoiceType(invoice: DtePurchaseInvoice) {
   return "FACTURA ELECTRONICA";
 }
 
-function generatePdf(invoice: DtePurchaseInvoice) {
+function generatePdf(invoice: PdfInvoice) {
   const ops: string[] = [
     rect(0, 760, 612, 82, "0.43 0.09 0.16"),
     rect(38, 672, 536, 70, "1 0.98 0.95"),
@@ -60,7 +85,7 @@ function generatePdf(invoice: DtePurchaseInvoice) {
     bold(48, 635, "Emisor", 10),
     text(48, 619, truncate(invoice.razonSocialEmisor, 42)),
     text(48, 605, `RUT: ${invoice.rutEmisor}`),
-    text(48, 591, `Forma pago: ${invoice.paymentStatus === "paid" ? "Pagada" : "Pendiente"}`),
+    text(48, 591, `Forma pago: ${invoice.metadata?.formaPago ?? (invoice.paymentStatus === "paid" ? "Pagada" : "Pendiente")}`),
     bold(329, 635, "Receptor", 10),
     text(329, 619, truncate(invoice.razonSocialReceptor, 42)),
     text(329, 605, `RUT: ${invoice.rutReceptor}`),
@@ -105,11 +130,12 @@ function generatePdf(invoice: DtePurchaseInvoice) {
     bold(488, 140, money(invoice.montoTotal), 10, "1 1 1"),
     bold(48, 194, "Trazabilidad XML", 10),
     text(48, 176, `Clave idempotente: ${invoice.normalizedKey ?? `${invoice.rutEmisor}-${invoice.tipoDte}-${invoice.folio}`}`),
-    text(48, 160, "Origen: Gmail DTE / Supabase Storage privado"),
-    text(48, 144, `Archivo XML original: ${invoice.tipoDte}-${invoice.folio}.xml`),
-    text(48, 128, "Resumen tributario: neto, exento, IVA y total extraidos desde XML"),
-    text(48, 112, "TED/CAF: conservados en XML original auditable cuando el DTE lo informa"),
-    text(48, 94, "Impuestos adicionales, descuentos, cargos, referencias y observaciones se mantienen en el XML fuente.", 7, "0.45 0.38 0.38")
+    text(48, 160, `Origen: Gmail DTE / ${invoice.metadata?.sourceFilename ?? "XML original en Supabase"}`),
+    text(48, 144, `Hash SHA-256: ${invoice.metadata?.xmlSha256 ?? invoice.normalizedKey ?? "registrado en XML"}`),
+    text(48, 128, `Referencias: ${invoice.metadata?.referenceCount ?? 0} · Impuestos adicionales: ${invoice.metadata?.taxCount ?? 0} · Desc/rec globales: ${invoice.metadata?.globalDiscountCount ?? 0}`),
+    text(48, 112, `TED: ${invoice.metadata?.hasTed ? "informado" : "no informado"} · CAF: ${invoice.metadata?.hasCaf ? "informado" : "no informado"} · Tasa IVA: ${invoice.metadata?.tasaIva ?? 19}%`),
+    text(48, 94, `Emisor: ${truncate([invoice.metadata?.giroEmisor, invoice.metadata?.dirOrigen, invoice.metadata?.cmnaOrigen].filter(Boolean).join(" / "), 86)}`, 7, "0.45 0.38 0.38"),
+    text(48, 80, `Receptor: ${truncate([invoice.metadata?.giroReceptor, invoice.metadata?.dirReceptor, invoice.metadata?.cmnaReceptor].filter(Boolean).join(" / "), 86)}`, 7, "0.45 0.38 0.38")
   );
 
   const content = ops.join("\n");
@@ -139,12 +165,76 @@ function generatePdf(invoice: DtePurchaseInvoice) {
   return Buffer.from(pdf);
 }
 
+async function getSupabaseInvoice(folio: string): Promise<PdfInvoice | null> {
+  if (!hasSupabaseAdminConfig()) {
+    return null;
+  }
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from("dte_documents")
+    .select("*,dte_items(line_number,description,quantity,unit,unit_price,line_total),dte_references(id),dte_taxes(id),dte_global_discounts(id)")
+    .eq("folio", folio)
+    .order("fecha_emision", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!data) {
+    return null;
+  }
+
+  return {
+    documentType: invoiceType({ tipoDte: data.tipo_dte } as PdfInvoice),
+    fechaEmision: data.fecha_emision,
+    fechaVencimiento: data.fecha_vencimiento ?? data.fecha_emision,
+    folio: data.folio,
+    items: (data.dte_items ?? []).map((item: Record<string, unknown>) => ({
+      description: String(item.description ?? ""),
+      lineNumber: Number(item.line_number ?? 0),
+      lineTotal: Number(item.line_total ?? 0),
+      quantity: Number(item.quantity ?? 0),
+      unit: String(item.unit ?? "UN"),
+      unitPrice: Number(item.unit_price ?? 0)
+    })),
+    metadata: {
+      cmnaOrigen: data.cmna_origen,
+      cmnaReceptor: data.cmna_receptor,
+      ciudadOrigen: data.ciudad_origen,
+      ciudadReceptor: data.ciudad_receptor,
+      dirOrigen: data.dir_origen,
+      dirReceptor: data.dir_receptor,
+      formaPago: data.forma_pago,
+      giroEmisor: data.giro_emisor,
+      giroReceptor: data.giro_receptor,
+      globalDiscountCount: data.dte_global_discounts?.length ?? 0,
+      hasCaf: Boolean(data.caf_json),
+      hasTed: Boolean(data.ted_json),
+      referenceCount: data.dte_references?.length ?? 0,
+      sourceFilename: data.gmail_filename,
+      tasaIva: data.tasa_iva,
+      taxCount: data.dte_taxes?.length ?? 0,
+      termPagoGlosa: data.term_pago_glosa,
+      xmlSha256: data.xml_sha256
+    },
+    montoExento: Number(data.monto_exento ?? 0),
+    montoNeto: Number(data.monto_neto ?? 0),
+    montoTotal: Number(data.monto_total ?? 0),
+    normalizedKey: data.idempotency_key,
+    paymentStatus: "Pendiente",
+    razonSocialEmisor: data.razon_social_emisor ?? data.rut_emisor,
+    razonSocialReceptor: data.razon_social_receptor ?? data.rut_receptor,
+    rutEmisor: data.rut_emisor,
+    rutReceptor: data.rut_receptor,
+    tipoDte: data.tipo_dte,
+    iva: Number(data.iva ?? 0)
+  };
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ folio: string }> }
 ) {
   const { folio } = await params;
-  const invoice = purchasesData.invoices.find((candidate) => candidate.folio === folio);
+  const invoice = await getSupabaseInvoice(folio) ?? purchasesData.invoices.find((candidate) => candidate.folio === folio);
 
   if (!invoice) {
     return NextResponse.json({ ok: false, error: "invoice_not_found" }, { status: 404 });

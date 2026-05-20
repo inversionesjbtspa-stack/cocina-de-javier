@@ -2,8 +2,12 @@ import { connect, type TLSSocket } from "node:tls";
 
 type ImapXmlAttachment = {
   messageId: string;
+  threadId: string | null;
   attachmentId: string;
   filename: string;
+  receivedAt: string | null;
+  sender: string | null;
+  subject: string | null;
   xml: string;
 };
 
@@ -171,6 +175,7 @@ class ImapSession {
 }
 
 function extractUids(searchResponse: string) {
+  const max = Number(process.env.DTE_IMAP_MAX_MESSAGES ?? 50);
   const line = searchResponse
     .split(/\r?\n/)
     .find((item) => item.startsWith("* SEARCH"));
@@ -184,7 +189,7 @@ function extractUids(searchResponse: string) {
     .trim()
     .split(/\s+/)
     .filter(Boolean)
-    .slice(-20);
+    .slice(-Math.max(1, max));
 }
 
 function extractLiteral(fetchResponse: string) {
@@ -204,7 +209,7 @@ export async function fetchDteXmlAttachmentsViaImap(): Promise<ImapXmlAttachment
 
   try {
     await session.command("SELECT INBOX");
-    const search = await session.command('UID SEARCH SUBJECT "documento"');
+    const search = await session.command('UID SEARCH NOT DELETED');
     const uids = extractUids(search);
     const attachments: ImapXmlAttachment[] = [];
 
@@ -212,6 +217,14 @@ export async function fetchDteXmlAttachmentsViaImap(): Promise<ImapXmlAttachment
       const fetch = await session.command(`UID FETCH ${uid} BODY.PEEK[]`);
       const rawMessage = extractLiteral(fetch);
       const parts = parseMultipart(rawMessage);
+      const [rawHeaders] = rawMessage.split(/\r?\n\r?\n/);
+      const messageHeaders = parseHeaders(rawHeaders);
+      const subject = decodeMimeWords(messageHeaders.subject ?? "");
+      const sender = decodeMimeWords(messageHeaders.from ?? "");
+      const receivedAt = messageHeaders.date
+        ? new Date(messageHeaders.date).toISOString()
+        : null;
+      const rawMessageId = messageHeaders["message-id"] ?? uid;
 
       for (const part of parts) {
         const filename = parseFilename(part.headers);
@@ -221,9 +234,13 @@ export async function fetchDteXmlAttachmentsViaImap(): Promise<ImapXmlAttachment
         }
 
         attachments.push({
-          messageId: uid,
-          attachmentId: filename,
+          attachmentId: `${uid}:${filename}`,
           filename,
+          messageId: rawMessageId,
+          receivedAt,
+          sender,
+          subject,
+          threadId: uid,
           xml: decodePartBody(part.headers, part.body)
         });
       }

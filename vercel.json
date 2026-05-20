@@ -2,8 +2,8 @@
   "framework": "nextjs",
   "crons": [
     {
-      "path": "/api/cron/dte-sync",
-      "schedule": "0 8 * * *"
+      "path": "/api/dte/inbox/sync",
+      "schedule": "*/10 * * * *"
     }
   ]
 }

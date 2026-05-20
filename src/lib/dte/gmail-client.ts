@@ -7,7 +7,10 @@ type GmailMessageListResponse = {
 
 type GmailMessageResponse = {
   id: string;
+  threadId?: string;
+  internalDate?: string;
   payload?: {
+    headers?: Array<{ name: string; value: string }>;
     parts?: GmailPart[];
   };
 };
@@ -27,8 +30,12 @@ type GmailAttachmentResponse = {
 
 export type GmailXmlAttachment = {
   messageId: string;
+  threadId: string | null;
   attachmentId: string;
   filename: string;
+  receivedAt: string | null;
+  sender: string | null;
+  subject: string | null;
   xml: string;
 };
 
@@ -55,6 +62,10 @@ function base64UrlDecode(value: string) {
 
 function flattenParts(parts: GmailPart[] = []): GmailPart[] {
   return parts.flatMap((part) => [part, ...flattenParts(part.parts)]);
+}
+
+function header(headers: Array<{ name: string; value: string }> | undefined, name: string) {
+  return headers?.find((item) => item.name.toLowerCase() === name.toLowerCase())?.value ?? null;
 }
 
 async function getAccessToken() {
@@ -141,6 +152,12 @@ export async function fetchDteXmlAttachments({
 
       attachments.push({
         messageId: message.id,
+        receivedAt: detail.internalDate
+          ? new Date(Number(detail.internalDate)).toISOString()
+          : header(detail.payload?.headers, "Date"),
+        sender: header(detail.payload?.headers, "From"),
+        subject: header(detail.payload?.headers, "Subject"),
+        threadId: detail.threadId ?? message.threadId ?? null,
         attachmentId,
         filename: part.filename,
         xml: base64UrlDecode(attachment.data)

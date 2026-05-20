@@ -8,8 +8,11 @@ type SyncResult = {
   ok: boolean;
   found?: number;
   count?: number;
+  processed?: number;
+  new?: number;
   duplicated?: number;
-  rejected?: Array<{ fileName?: string; reason?: string }>;
+  rejected?: number | Array<{ fileName?: string; reason?: string }>;
+  errors?: Array<{ fileName?: string; reason?: string }>;
   persisted?: unknown[];
   error?: string;
 };
@@ -46,10 +49,11 @@ export function SyncXmlButton() {
     }
   }
 
-  const rejected = result?.rejected?.length ?? 0;
-  const processed = result?.count ?? result?.persisted?.length ?? 0;
+  const rejected = Array.isArray(result?.rejected) ? result.rejected.length : result?.rejected ?? 0;
+  const processed = result?.processed ?? result?.count ?? result?.persisted?.length ?? 0;
   const found = result?.found ?? 0;
   const duplicated = result?.duplicated ?? Math.max(found - processed - rejected, 0);
+  const errors = result?.errors ?? (Array.isArray(result?.rejected) ? result.rejected : []);
 
   return (
     <>
@@ -140,7 +144,7 @@ export function SyncXmlButton() {
                 <div className="rounded-xl border border-amber-100 bg-amber-50 p-3">
                   <p className="text-sm font-semibold text-amber-950">XML rechazados</p>
                   <div className="mt-2 space-y-1">
-                    {result?.rejected?.slice(0, 4).map((item) => (
+                    {errors.slice(0, 4).map((item) => (
                       <p className="text-xs text-amber-900" key={`${item.fileName}-${item.reason}`}>
                         {item.fileName ?? "Adjunto"}: {item.reason ?? "No valido"}
                       </p>

@@ -1,4 +1,5 @@
 import {
+  type DtePurchaseData,
   type DtePurchaseInvoice,
   formatClp,
   purchasesData,
@@ -77,47 +78,42 @@ function dayDiff(fromDate: string, toDate: string) {
   return Math.ceil((to - from) / 86_400_000);
 }
 
-export const operatingDate = addDays(purchasesData.invoices[0]?.fechaEmision ?? "2026-05-16", 1);
+export function createErpMetrics(data: DtePurchaseData = purchasesData) {
+  const operatingDate = addDays(data.invoices[0]?.fechaEmision ?? "2026-05-16", 1);
+  const currentMonth = data.summaries.byMonth[0]?.key ?? "2026-05";
+  const currentMonthInvoices = data.invoices.filter((invoice) =>
+    invoice.fechaEmision.startsWith(currentMonth)
+  );
+  const payableInvoices = data.invoices.filter((invoice) => invoice.tipoDte !== "61");
+  const pendingPayables = payableInvoices.filter(
+    (invoice) => invoice.paymentStatus !== "Pagada"
+  );
 
-export const currentMonth = purchasesData.summaries.byMonth[0]?.key ?? "2026-05";
-
-export const currentMonthInvoices = purchasesData.invoices.filter((invoice) =>
-  invoice.fechaEmision.startsWith(currentMonth)
-);
-
-export const payableInvoices = purchasesData.invoices.filter(
-  (invoice) => invoice.tipoDte !== "61"
-);
-
-export const pendingPayables = payableInvoices.filter(
-  (invoice) => invoice.paymentStatus !== "Pagada"
-);
-
-export function invoicesDueWithin(days: number) {
+  function invoicesDueWithin(days: number) {
   return pendingPayables.filter((invoice) => {
     const diff = dayDiff(operatingDate, invoice.fechaVencimiento);
     return diff >= 0 && diff <= days;
   });
-}
+  }
 
-export function overdueInvoices() {
+  function overdueInvoices() {
   return pendingPayables.filter(
     (invoice) => dayDiff(operatingDate, invoice.fechaVencimiento) < 0
   );
-}
+  }
 
-export function totalAmount(invoices: DtePurchaseInvoice[]) {
+  function totalAmount(invoices: DtePurchaseInvoice[]) {
   return invoices.reduce((sum, invoice) => sum + invoice.montoTotal, 0);
-}
+  }
 
-export function projectedCashFlow() {
+  function projectedCashFlow() {
   const due30 = totalAmount(invoicesDueWithin(30));
   const overdue = totalAmount(overdueInvoices());
   return -(due30 + overdue);
-}
+  }
 
-export function previousMonthAverage() {
-  const previousMonths = purchasesData.summaries.byMonth.slice(1);
+  function previousMonthAverage() {
+  const previousMonths = data.summaries.byMonth.slice(1);
   if (!previousMonths.length) {
     return 0;
   }
@@ -125,18 +121,18 @@ export function previousMonthAverage() {
     previousMonths.reduce((sum, month) => sum + month.total, 0) /
     previousMonths.length
   );
-}
+  }
 
-export function monthlyCostVariation() {
-  const previous = purchasesData.summaries.byMonth[1]?.total ?? 0;
-  const current = purchasesData.summaries.byMonth[0]?.total ?? 0;
+  function monthlyCostVariation() {
+  const previous = data.summaries.byMonth[1]?.total ?? 0;
+  const current = data.summaries.byMonth[0]?.total ?? 0;
   if (!previous) {
     return 0;
   }
   return ((current - previous) / previous) * 100;
-}
+  }
 
-export function budgetStatus() {
+  function budgetStatus() {
   const budget = previousMonthAverage() * 1.08;
   const spent = totalsFor(currentMonthInvoices).total;
   const usage = budget > 0 ? (spent / budget) * 100 : 0;
@@ -149,9 +145,9 @@ export function budgetStatus() {
     usage,
     severity
   };
-}
+  }
 
-export function riskStatus() {
+  function riskStatus() {
   const overdue = overdueInvoices();
   const due7 = invoicesDueWithin(7);
   const cashFlow = projectedCashFlow();
@@ -163,9 +159,9 @@ export function riskStatus() {
     return "warning" as const;
   }
   return "healthy" as const;
-}
+  }
 
-export function categorySpend() {
+  function categorySpend() {
   const rows = new Map<string, number>();
 
   for (const invoice of currentMonthInvoices) {
@@ -184,9 +180,9 @@ export function categorySpend() {
   return [...rows.entries()]
     .map(([category, total]) => ({ category, total, totalClp: formatClp(total) }))
     .sort((a, b) => b.total - a.total);
-}
+  }
 
-export function supplierSpend(limit = 8) {
+  function supplierSpend(limit = 8) {
   const rows = new Map<string, { supplier: string; total: number; documents: number }>();
 
   for (const invoice of currentMonthInvoices) {
@@ -208,10 +204,10 @@ export function supplierSpend(limit = 8) {
     .map((row) => ({ ...row, totalClp: formatClp(row.total) }))
     .sort((a, b) => b.total - a.total)
     .slice(0, limit);
-}
+  }
 
-export function priceIncreaseProducts(limit = 8) {
-  return purchasesData.summaries.products
+  function priceIncreaseProducts(limit = 8) {
+  return data.summaries.products
     .map((product) => {
       const latest = product.lastPrices[0];
       const oldest = product.lastPrices[product.lastPrices.length - 1];
@@ -232,18 +228,18 @@ export function priceIncreaseProducts(limit = 8) {
     .filter((product) => product.variation > 0)
     .sort((a, b) => b.variation - a.variation)
     .slice(0, limit);
-}
+  }
 
-export function duplicateRiskInvoices() {
+  function duplicateRiskInvoices() {
   const seen = new Map<string, number>();
-  for (const invoice of purchasesData.invoices) {
+  for (const invoice of data.invoices) {
     const key = `${invoice.rutEmisor}-${invoice.tipoDte}-${invoice.folio}`;
     seen.set(key, (seen.get(key) ?? 0) + 1);
   }
   return [...seen.entries()].filter(([, count]) => count > 1).length;
-}
+  }
 
-export function executiveAlerts() {
+  function executiveAlerts() {
   const overdue = overdueInvoices();
   const due7 = invoicesDueWithin(7);
   const priceRisks = priceIncreaseProducts(5).filter(
@@ -287,4 +283,45 @@ export function executiveAlerts() {
       severity: duplicates ? ("critical" as const) : ("healthy" as const)
     }
   ];
+  }
+
+  return {
+    budgetStatus,
+    categorySpend,
+    currentMonth,
+    currentMonthInvoices,
+    duplicateRiskInvoices,
+    executiveAlerts,
+    invoicesDueWithin,
+    monthlyCostVariation,
+    operatingDate,
+    overdueInvoices,
+    payableInvoices,
+    pendingPayables,
+    priceIncreaseProducts,
+    projectedCashFlow,
+    riskStatus,
+    supplierSpend,
+    totalAmount
+  };
 }
+
+export const {
+  budgetStatus,
+  categorySpend,
+  currentMonth,
+  currentMonthInvoices,
+  duplicateRiskInvoices,
+  executiveAlerts,
+  invoicesDueWithin,
+  monthlyCostVariation,
+  operatingDate,
+  overdueInvoices,
+  payableInvoices,
+  pendingPayables,
+  priceIncreaseProducts,
+  projectedCashFlow,
+  riskStatus,
+  supplierSpend,
+  totalAmount
+} = createErpMetrics(purchasesData);

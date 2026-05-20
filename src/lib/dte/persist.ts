@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
+import { DTE_XML_GMAIL_QUERY } from "@/lib/dte/inbox";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ExtractedDteInvoice } from "@/lib/dte/types";
+
+type PersistInput = Array<{ invoice: ExtractedDteInvoice; xml: string }>;
 
 function addDays(dateText: string, days: number) {
   const date = new Date(`${dateText}T00:00:00`);
@@ -20,9 +23,25 @@ function hashBuffer(value: string) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-export async function persistExtractedDteInvoices(
-  invoices: Array<{ invoice: ExtractedDteInvoice; xml: string }>
-) {
+function paymentTermsDays(invoice: ExtractedDteInvoice) {
+  if (!invoice.fechaVencimiento) {
+    return 30;
+  }
+  return Math.max(
+    0,
+    Math.round(
+      (new Date(`${invoice.fechaVencimiento}T00:00:00`).getTime() -
+        new Date(`${invoice.fechaEmision}T00:00:00`).getTime()) /
+        86_400_000
+    )
+  );
+}
+
+function normalizeName(value: string) {
+  return value.trim().replace(/\s+/g, " ").slice(0, 240);
+}
+
+export async function persistExtractedDteInvoices(invoices: PersistInput) {
   const supabase = createAdminClient();
   const results = [];
 
@@ -47,10 +66,43 @@ export async function persistExtractedDteInvoices(
     throw companyError ?? new Error("Main company not found.");
   }
 
+  const { data: syncRun } = await supabase
+    .from("dte_sync_runs")
+    .insert({
+      provider: "gmail",
+      query: DTE_XML_GMAIL_QUERY,
+      status: "running",
+      tenant_id: tenant.id,
+      attachments_found: invoices.length
+    })
+    .select("id")
+    .maybeSingle();
+
+  let newCount = 0;
+  let duplicateCount = 0;
+
   for (const item of invoices) {
     const invoice = item.invoice;
     const path = storagePath(tenant.id, invoice);
     const xmlHash = hashBuffer(item.xml);
+
+    const { data: existingByKey } = await supabase
+      .from("dte_documents")
+      .select("id")
+      .eq("tenant_id", tenant.id)
+      .eq("idempotency_key", invoice.idempotencyKey)
+      .maybeSingle();
+    const { data: existingByDocument } = existingByKey
+      ? { data: null }
+      : await supabase
+          .from("dte_documents")
+          .select("id")
+          .eq("tenant_id", tenant.id)
+          .eq("rut_emisor", invoice.rutEmisor)
+          .eq("tipo_dte", invoice.tipoDte)
+          .eq("folio", invoice.folio)
+          .maybeSingle();
+    const existing = existingByKey ?? existingByDocument;
 
     const { error: uploadError } = await supabase.storage
       .from("dte-xml-originals")
@@ -67,22 +119,15 @@ export async function persistExtractedDteInvoices(
       .from("suppliers")
       .upsert(
         {
-          tenant_id: tenant.id,
+          address: invoice.dirOrigen,
           company_id: company.id,
-          rut: invoice.rutEmisor,
+          giro: invoice.giroEmisor,
           legal_name: invoice.razonSocialEmisor ?? invoice.rutEmisor,
-          trade_name: invoice.razonSocialEmisor,
-          payment_terms_days: invoice.fechaVencimiento
-            ? Math.max(
-                0,
-                Math.round(
-                  (new Date(`${invoice.fechaVencimiento}T00:00:00`).getTime() -
-                    new Date(`${invoice.fechaEmision}T00:00:00`).getTime()) /
-                    86_400_000
-                )
-              )
-            : 30,
-          status: "active"
+          payment_terms_days: paymentTermsDays(invoice),
+          rut: invoice.rutEmisor,
+          status: "active",
+          tenant_id: tenant.id,
+          trade_name: invoice.razonSocialEmisor
         },
         { onConflict: "tenant_id,rut" }
       )
@@ -97,24 +142,58 @@ export async function persistExtractedDteInvoices(
       .from("dte_documents")
       .upsert(
         {
-          tenant_id: tenant.id,
+          acteco: invoice.acteco,
+          caf_json: invoice.raw.caf,
+          cdg_sii_sucur: invoice.cdgSiiSucur,
+          ciudad_origen: invoice.ciudadOrigen,
+          ciudad_receptor: invoice.ciudadReceptor,
+          cmna_origen: invoice.cmnaOrigen,
+          cmna_receptor: invoice.cmnaReceptor,
           company_id: company.id,
-          supplier_id: supplier.id,
-          tipo_dte: invoice.tipoDte,
+          dir_origen: invoice.dirOrigen,
+          dir_receptor: invoice.dirReceptor,
+          fecha_emision: invoice.fechaEmision,
+          fecha_vencimiento: invoice.fechaVencimiento,
           folio: invoice.folio,
-          rut_emisor: invoice.rutEmisor,
-          rut_receptor: invoice.rutReceptor,
+          forma_pago: invoice.formaPago,
+          frmt: invoice.raw.frmt,
+          giro_emisor: invoice.giroEmisor,
+          giro_receptor: invoice.giroReceptor,
+          gmail_attachment_id: invoice.sourceAttachmentId,
+          gmail_filename: invoice.sourceFilename,
+          gmail_message_id: invoice.sourceMessageId,
+          gmail_received_at: invoice.sourceReceivedAt,
+          gmail_sender: invoice.sourceSender,
+          gmail_subject: invoice.sourceSubject,
+          gmail_thread_id: invoice.sourceThreadId,
+          idempotency_key: invoice.idempotencyKey,
+          iva: invoice.iva,
+          iva_uso_comun: invoice.ivaUsoComun,
+          mnt_bruto: invoice.montoBruto,
+          monto_exento: invoice.montoExento,
+          monto_neto: invoice.montoNeto,
+          monto_periodo: invoice.montoPeriodo,
+          monto_total: invoice.montoTotal,
+          raw_json: invoice.raw.parsedJson,
           razon_social_emisor: invoice.razonSocialEmisor,
           razon_social_receptor: invoice.razonSocialReceptor,
-          fecha_emision: invoice.fechaEmision,
-          monto_neto: invoice.montoNeto,
-          monto_exento: invoice.montoExento,
-          iva: invoice.iva,
-          monto_total: invoice.montoTotal,
-          status: "parsed",
+          rut_emisor: invoice.rutEmisor,
+          rut_receptor: invoice.rutReceptor,
           sii_status: "pending_validation",
-          xml_sha256: xmlHash,
-          idempotency_key: invoice.idempotencyKey
+          source_provider: "gmail",
+          status: "parsed",
+          supplier_id: supplier.id,
+          tasa_iva: invoice.tasaIva,
+          ted_json: invoice.raw.ted,
+          tenant_id: tenant.id,
+          term_pago_glosa: invoice.termPagoGlosa,
+          tipo_dte: invoice.tipoDte,
+          tpo_tran_compra: invoice.tipoTranCompra,
+          tpo_tran_venta: invoice.tipoTranVenta,
+          validation_status: "parsed",
+          vlr_pagar: invoice.valorPagar,
+          xml_original: item.xml,
+          xml_sha256: xmlHash
         },
         { onConflict: "tenant_id,rut_emisor,tipo_dte,folio" }
       )
@@ -125,49 +204,170 @@ export async function persistExtractedDteInvoices(
       throw dteError ?? new Error(`DTE ${invoice.folio} not persisted.`);
     }
 
+    if (existing) {
+      duplicateCount += 1;
+    } else {
+      newCount += 1;
+    }
+
     await supabase.from("dte_xml_files").upsert(
       {
-        tenant_id: tenant.id,
+        content_type: "application/xml",
         dte_document_id: dte.id,
+        sha256: xmlHash,
+        size_bytes: Buffer.byteLength(item.xml),
         storage_bucket: "dte-xml-originals",
         storage_path: path,
-        content_type: "application/xml",
-        sha256: xmlHash,
-        size_bytes: Buffer.byteLength(item.xml)
+        tenant_id: tenant.id
       },
       { onConflict: "storage_bucket,storage_path" }
     );
 
     await supabase.from("dte_items").delete().eq("dte_document_id", dte.id);
+    await supabase.from("dte_references").delete().eq("dte_document_id", dte.id);
+    await supabase.from("dte_taxes").delete().eq("dte_document_id", dte.id);
+    await supabase.from("dte_global_discounts").delete().eq("dte_document_id", dte.id);
+
     if (invoice.items.length) {
-      const { error: itemsError } = await supabase.from("dte_items").insert(
-        invoice.items.map((line) => ({
-          tenant_id: tenant.id,
-          dte_document_id: dte.id,
-          line_number: line.lineNumber,
-          description: line.description,
-          quantity: line.quantity,
-          unit: line.unit,
-          unit_price: line.unitPrice,
-          line_total: line.lineTotal
-        }))
-      );
+      const { data: insertedItems, error: itemsError } = await supabase
+        .from("dte_items")
+        .insert(
+          invoice.items.map((line) => ({
+            additional_tax_code: line.additionalTaxCode,
+            code_type: line.codeType,
+            code_value: line.codeValue,
+            description: line.description,
+            detail_description: line.description,
+            discount_amount: line.discountAmount,
+            discount_pct: line.discountPct,
+            dte_document_id: dte.id,
+            item_code: line.itemCode,
+            line_number: line.lineNumber,
+            line_total: line.lineTotal,
+            name: line.name,
+            quantity: line.quantity,
+            raw_json: line.raw,
+            surcharge_amount: line.surchargeAmount,
+            surcharge_pct: line.surchargePct,
+            tenant_id: tenant.id,
+            unit: line.unit,
+            unit_price: line.unitPrice
+          }))
+        )
+        .select("id,line_number");
 
       if (itemsError) {
         throw itemsError;
       }
+
+      const itemIdByLine = new Map(
+        (insertedItems ?? []).map((line) => [Number(line.line_number), line.id as string])
+      );
+
+      const itemTaxRows = invoice.raw.taxes
+        .filter((tax) => tax.lineNumber)
+        .map((tax) => ({
+          dte_document_id: dte.id,
+          dte_item_id: itemIdByLine.get(Number(tax.lineNumber)) ?? null,
+          monto_imp: tax.montoImp,
+          raw_json: tax.raw,
+          tasa_imp: tax.tasaImp,
+          tenant_id: tenant.id,
+          tipo_imp: tax.tipoImp
+        }));
+
+      if (itemTaxRows.length) {
+        await supabase.from("dte_taxes").insert(itemTaxRows);
+      }
+
+      for (const line of invoice.items) {
+        const name = normalizeName(line.name);
+        if (!name || line.unitPrice <= 0) {
+          continue;
+        }
+        const { data: product } = await supabase
+          .from("products")
+          .upsert(
+            {
+              description: line.description,
+              name,
+              status: "active",
+              tenant_id: tenant.id,
+              unit: line.unit
+            },
+            { onConflict: "tenant_id,name" }
+          )
+          .select("id")
+          .single();
+
+        if (product?.id) {
+          await supabase.from("product_supplier_links").upsert(
+            {
+              last_purchase_at: invoice.fechaEmision,
+              last_purchase_price: line.unitPrice,
+              product_id: product.id,
+              supplier_id: supplier.id,
+              supplier_product_code: line.codeValue,
+              tenant_id: tenant.id
+            },
+            { onConflict: "tenant_id,product_id,supplier_id" }
+          );
+          await supabase.from("product_price_history").insert({
+            effective_date: invoice.fechaEmision,
+            price: line.unitPrice,
+            product_id: product.id,
+            source_entity_id: dte.id,
+            source_entity_type: "dte_document",
+            supplier_id: supplier.id,
+            tenant_id: tenant.id
+          });
+        }
+      }
     }
 
-    await supabase.from("dte_references").delete().eq("dte_document_id", dte.id);
     if (invoice.raw.references.length) {
       await supabase.from("dte_references").insert(
         invoice.raw.references.map((reference) => ({
-          tenant_id: tenant.id,
           dte_document_id: dte.id,
-          referenced_tipo_dte: reference.referencedTipoDte,
-          referenced_folio: reference.referencedFolio,
+          line_number: reference.lineNumber,
+          raw_json: reference.raw,
+          reason: reference.reason,
+          reference_code: reference.referenceCode,
           reference_date: reference.referenceDate,
-          reason: reference.reason
+          referenced_folio: reference.referencedFolio,
+          referenced_tipo_dte: reference.referencedTipoDte,
+          tenant_id: tenant.id
+        }))
+      );
+    }
+
+    const totalTaxRows = invoice.raw.taxes
+      .filter((tax) => !tax.lineNumber)
+      .map((tax) => ({
+        dte_document_id: dte.id,
+        monto_imp: tax.montoImp,
+        raw_json: tax.raw,
+        tasa_imp: tax.tasaImp,
+        tenant_id: tenant.id,
+        tipo_imp: tax.tipoImp
+      }));
+    if (totalTaxRows.length) {
+      await supabase.from("dte_taxes").insert(totalTaxRows);
+    }
+
+    if (invoice.raw.globalDiscounts.length) {
+      await supabase.from("dte_global_discounts").insert(
+        invoice.raw.globalDiscounts.map((discount) => ({
+          description: discount.description,
+          dte_document_id: dte.id,
+          exempt_indicator: discount.exemptIndicator,
+          line_number: discount.lineNumber,
+          movement_type: discount.movementType,
+          other_currency_value: discount.otherCurrencyValue,
+          raw_json: discount.raw,
+          tenant_id: tenant.id,
+          value: discount.value,
+          value_type: discount.valueType
         }))
       );
     }
@@ -175,43 +375,63 @@ export async function persistExtractedDteInvoices(
     if (invoice.tipoDte !== "61") {
       await supabase.from("accounts_payable").upsert(
         {
-          tenant_id: tenant.id,
-          company_id: company.id,
-          supplier_id: supplier.id,
-          dte_document_id: dte.id,
-          document_number: `${invoice.tipoDte}-${invoice.folio}`,
-          issue_date: invoice.fechaEmision,
-          due_date: invoice.fechaVencimiento ?? addDays(invoice.fechaEmision, 30),
-          subtotal: invoice.montoNeto + invoice.montoExento,
-          tax_amount: invoice.iva,
-          total_amount: invoice.montoTotal,
           balance_amount: invoice.montoTotal,
-          status: "pending_approval"
+          company_id: company.id,
+          document_number: `${invoice.tipoDte}-${invoice.folio}`,
+          dte_document_id: dte.id,
+          due_date: invoice.fechaVencimiento ?? addDays(invoice.fechaEmision, 30),
+          issue_date: invoice.fechaEmision,
+          status: "pending_approval",
+          subtotal: invoice.montoNeto + invoice.montoExento,
+          supplier_id: supplier.id,
+          tax_amount: invoice.iva,
+          tenant_id: tenant.id,
+          total_amount: invoice.montoTotal
         },
         { onConflict: "tenant_id,supplier_id,document_number" }
       );
     }
 
     await supabase.from("audit_events").insert({
-      tenant_id: tenant.id,
-      company_id: company.id,
-      event_type: "dte.xml_processed",
-      entity_type: "dte_document",
-      entity_id: dte.id,
       after_data: {
+        duplicate: Boolean(existing),
         folio: invoice.folio,
+        gmail_message_id: invoice.sourceMessageId,
         rut_emisor: invoice.rutEmisor,
-        source_message_id: invoice.sourceMessageId,
         xml_sha256: xmlHash
-      }
+      },
+      company_id: company.id,
+      entity_id: dte.id,
+      entity_type: "dte_document",
+      event_type: existing ? "dte.xml_duplicate_seen" : "dte.xml_processed",
+      tenant_id: tenant.id
     });
 
     results.push({
+      dteDocumentId: dte.id,
+      duplicate: Boolean(existing),
       folio: invoice.folio,
       rutEmisor: invoice.rutEmisor,
-      dteDocumentId: dte.id,
       storagePath: path
     });
+  }
+
+  if (syncRun?.id) {
+    await supabase
+      .from("dte_sync_runs")
+      .update({
+        duplicate_count: duplicateCount,
+        finished_at: new Date().toISOString(),
+        new_count: newCount,
+        processed_count: invoices.length,
+        status: "completed",
+        summary: {
+          new_count: newCount,
+          duplicate_count: duplicateCount,
+          processed_count: invoices.length
+        }
+      })
+      .eq("id", syncRun.id);
   }
 
   return results;

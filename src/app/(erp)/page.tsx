@@ -15,28 +15,17 @@ import Link from "next/link";
 import { AppShell } from "@/components/layout/app-shell";
 import { BrandLogo } from "@/components/brand/logo";
 import {
-  currentMonth,
-  currentMonthInvoices,
-  executiveAlerts,
-  invoicesDueWithin,
-  monthlyCostVariation,
-  operatingDate,
-  overdueInvoices,
-  pendingPayables,
-  projectedCashFlow,
-  riskStatus,
+  createErpMetrics,
   severityLabel,
-  statusTone,
-  supplierSpend,
-  totalAmount
+  statusTone
 } from "@/lib/finance/erp-metrics";
 import {
   formatClp,
   formatDate,
   formatMonth,
-  purchasesData,
   totalsFor
 } from "@/lib/dte/purchases-data";
+import { getDtePurchaseData } from "@/lib/dte/supabase-data";
 
 function StatusBadge({
   label,
@@ -55,16 +44,18 @@ function StatusBadge({
   );
 }
 
-export default function HomePage() {
-  const totals = totalsFor(currentMonthInvoices);
-  const overdue = overdueInvoices();
-  const due7 = invoicesDueWithin(7);
-  const due30 = invoicesDueWithin(30);
-  const variation = monthlyCostVariation();
-  const alerts = executiveAlerts();
-  const risk = riskStatus();
-  const suppliers = supplierSpend(5);
-  const flow = projectedCashFlow();
+export default async function HomePage() {
+  const dteData = await getDtePurchaseData();
+  const metrics = createErpMetrics(dteData);
+  const totals = totalsFor(metrics.currentMonthInvoices);
+  const overdue = metrics.overdueInvoices();
+  const due7 = metrics.invoicesDueWithin(7);
+  const due30 = metrics.invoicesDueWithin(30);
+  const variation = metrics.monthlyCostVariation();
+  const alerts = metrics.executiveAlerts();
+  const risk = metrics.riskStatus();
+  const suppliers = metrics.supplierSpend(5);
+  const flow = metrics.projectedCashFlow();
   const topSupplier = suppliers[0];
   const alertSeverity = alerts.some((alert) => alert.severity === "critical")
     ? "critical"
@@ -82,12 +73,12 @@ export default function HomePage() {
       value: formatClp(flow)
     },
     {
-      detail: `${pendingPayables.length} documentos pendientes`,
+      detail: `${metrics.pendingPayables.length} documentos pendientes`,
       href: "/tesoreria?estado=pendiente",
       icon: ReceiptText,
       label: "Cuentas por pagar",
-      severity: pendingPayables.length > 80 ? "critical" : pendingPayables.length > 40 ? "warning" : "healthy",
-      value: formatClp(totalAmount(pendingPayables))
+      severity: metrics.pendingPayables.length > 80 ? "critical" : metrics.pendingPayables.length > 40 ? "warning" : "healthy",
+      value: formatClp(metrics.totalAmount(metrics.pendingPayables))
     },
     {
       detail: `${overdue.length} documentos fuera de plazo`,
@@ -95,11 +86,11 @@ export default function HomePage() {
       icon: AlertTriangle,
       label: "Facturas vencidas",
       severity: overdue.length ? "critical" : "healthy",
-      value: formatClp(totalAmount(overdue))
+      value: formatClp(metrics.totalAmount(overdue))
     },
     {
-      detail: formatMonth(currentMonth),
-      href: `/compras?mes=${currentMonth}`,
+      detail: formatMonth(metrics.currentMonth),
+      href: `/compras?mes=${metrics.currentMonth}`,
       icon: Banknote,
       label: "Compras del mes",
       severity: totals.total > 12_000_000 ? "warning" : "healthy",
@@ -143,8 +134,8 @@ export default function HomePage() {
                 Control financiero La Cocina de Javier
               </h1>
               <p className="mt-3 max-w-4xl text-base leading-7 text-[#6f6263]">
-                Lectura ejecutiva basada en {purchasesData.invoiceCount} XML DTE
-                procesados. Corte operativo: {formatDate(operatingDate)}.
+                Lectura ejecutiva basada en {dteData.invoiceCount} XML DTE
+                procesados. Corte operativo: {formatDate(metrics.operatingDate)}.
               </p>
             </div>
             <div className="rounded-lg border border-[#eadfd9] bg-brand-50 p-4 text-sm">
@@ -211,10 +202,10 @@ export default function HomePage() {
 
             <div className="mt-5 grid gap-3 md:grid-cols-4">
               {[
-                ["Hoy", invoicesDueWithin(0).length, totalAmount(invoicesDueWithin(0))],
-                ["7 dias", due7.length, totalAmount(due7)],
-                ["15 dias", invoicesDueWithin(15).length, totalAmount(invoicesDueWithin(15))],
-                ["30 dias", due30.length, totalAmount(due30)]
+                ["Hoy", metrics.invoicesDueWithin(0).length, metrics.totalAmount(metrics.invoicesDueWithin(0))],
+                ["7 dias", due7.length, metrics.totalAmount(due7)],
+                ["15 dias", metrics.invoicesDueWithin(15).length, metrics.totalAmount(metrics.invoicesDueWithin(15))],
+                ["30 dias", due30.length, metrics.totalAmount(due30)]
               ].map(([label, count, amount]) => (
                 <div className="rounded-lg border border-[#e6ebe5] bg-[#f8faf8] p-4" key={label}>
                   <p className="text-xs font-semibold uppercase text-[#667068]">
@@ -354,7 +345,7 @@ export default function HomePage() {
                 </tr>
               </thead>
               <tbody>
-                {purchasesData.summaries.byMonth.map((month, index) => {
+                {dteData.summaries.byMonth.map((month, index) => {
                   const severity =
                     index === 0 && variation > 20
                       ? "critical"

@@ -1,11 +1,18 @@
 import { createHash } from "node:crypto";
 import { XMLParser } from "fast-xml-parser";
-import type { ExtractedDteInvoice, ExtractedDteItem } from "@/lib/dte/types";
+import type {
+  ExtractedDteGlobalDiscount,
+  ExtractedDteInvoice,
+  ExtractedDteItem,
+  ExtractedDteReference,
+  ExtractedDteTax
+} from "@/lib/dte/types";
 
 const parser = new XMLParser({
-  ignoreAttributes: false,
   attributeNamePrefix: "",
+  ignoreAttributes: false,
   parseTagValue: true,
+  preserveOrder: false,
   trimValues: true
 });
 
@@ -13,7 +20,6 @@ function asArray<T>(value: T | T[] | undefined): T[] {
   if (!value) {
     return [];
   }
-
   return Array.isArray(value) ? value : [value];
 }
 
@@ -21,96 +27,207 @@ function text(value: unknown): string | null {
   if (value === null || value === undefined) {
     return null;
   }
-
   return String(value).trim() || null;
 }
 
-function numberValue(value: unknown) {
+function numberValue(value: unknown): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function optionalNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function sha256(value: string) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+function firstDte(parsed: Record<string, unknown>) {
+  const envio = (parsed.EnvioDTE ?? parsed) as Record<string, unknown>;
+  const setDte = (envio.SetDTE ?? {}) as Record<string, unknown>;
+  const candidates = asArray(
+    (setDte.DTE ?? envio.DTE ?? parsed.DTE) as Record<string, unknown> | Record<string, unknown>[] | undefined
+  );
+  return {
+    dte: candidates[0] ?? parsed,
+    envio,
+    setDte
+  };
+}
+
+function itemCode(line: Record<string, unknown>) {
+  const codes = asArray(line.CdgItem as Record<string, unknown> | Record<string, unknown>[] | undefined);
+  const first = codes[0] ?? {};
+  return {
+    itemCode: text(first.VlrCodigo),
+    codeType: text(first.TpoCodigo),
+    codeValue: text(first.VlrCodigo)
+  };
+}
+
 export function parseDteXml({
   xml,
   sourceMessageId,
+  sourceThreadId = null,
   sourceAttachmentId,
-  sourceFilename
+  sourceFilename,
+  sourceReceivedAt = null,
+  sourceSender = null,
+  sourceSubject = null
 }: {
   xml: string;
   sourceMessageId: string;
+  sourceThreadId?: string | null;
   sourceAttachmentId: string;
   sourceFilename: string;
+  sourceReceivedAt?: string | null;
+  sourceSender?: string | null;
+  sourceSubject?: string | null;
 }): ExtractedDteInvoice {
-  const parsed = parser.parse(xml);
-  const envio = parsed.EnvioDTE ?? parsed.DTE ?? parsed;
-  const dte = asArray(envio.SetDTE?.DTE ?? envio.DTE ?? parsed.DTE)[0];
-  const documento = dte?.Documento ?? dte;
-  const encabezado = documento?.Encabezado;
-  const idDoc = encabezado?.IdDoc;
-  const emisor = encabezado?.Emisor;
-  const receptor = encabezado?.Receptor;
-  const totales = encabezado?.Totales;
+  const parsed = parser.parse(xml) as Record<string, unknown>;
+  const { dte, setDte } = firstDte(parsed);
+  const documento = ((dte as Record<string, unknown>)?.Documento ?? dte) as Record<string, unknown>;
+  const encabezado = (documento?.Encabezado ?? {}) as Record<string, unknown>;
+  const idDoc = (encabezado?.IdDoc ?? {}) as Record<string, unknown>;
+  const emisor = (encabezado?.Emisor ?? {}) as Record<string, unknown>;
+  const receptor = (encabezado?.Receptor ?? {}) as Record<string, unknown>;
+  const totales = (encabezado?.Totales ?? {}) as Record<string, unknown>;
 
-  const tipoDte = text(idDoc?.TipoDTE);
-  const folio = text(idDoc?.Folio);
-  const rutEmisor = text(emisor?.RUTEmisor);
-  const rutReceptor = text(receptor?.RUTRecep);
-  const fechaEmision = text(idDoc?.FchEmis);
+  const tipoDte = text(idDoc.TipoDTE);
+  const folio = text(idDoc.Folio);
+  const rutEmisor = text(emisor.RUTEmisor);
+  const rutReceptor = text(receptor.RUTRecep);
+  const fechaEmision = text(idDoc.FchEmis);
 
   if (!tipoDte || !folio || !rutEmisor || !rutReceptor || !fechaEmision) {
     throw new Error(`Invalid DTE XML header in ${sourceFilename}`);
   }
 
-  const items: ExtractedDteItem[] = asArray(documento?.Detalle).map(
-    (line: Record<string, unknown>, index) => ({
+  const items: ExtractedDteItem[] = asArray(
+    documento?.Detalle as Record<string, unknown> | Record<string, unknown>[] | undefined
+  ).map((line, index) => {
+    const code = itemCode(line);
+    const name = text(line.NmbItem) ?? "Item sin descripcion";
+    return {
+      ...code,
+      additionalTaxCode: text(line.CodImpAdic),
+      description: text(line.DscItem) ?? name,
+      discountAmount: numberValue(line.DescuentoMonto),
+      discountPct: optionalNumber(line.DescuentoPct),
       lineNumber: numberValue(line.NroLinDet) || index + 1,
-      description: text(line.NmbItem) ?? "Item sin descripcion",
+      lineTotal: numberValue(line.MontoItem),
+      name,
       quantity: numberValue(line.QtyItem) || 1,
+      raw: line,
+      surchargeAmount: numberValue(line.RecargoMonto),
+      surchargePct: optionalNumber(line.RecargoPct),
       unit: text(line.UnmdItem) ?? "unidad",
-      unitPrice: numberValue(line.PrcItem),
-      lineTotal: numberValue(line.MontoItem)
-    })
-  );
+      unitPrice: numberValue(line.PrcItem)
+    };
+  });
 
+  const references: ExtractedDteReference[] = asArray(
+    documento?.Referencia as Record<string, unknown> | Record<string, unknown>[] | undefined
+  ).map((reference) => ({
+    lineNumber: optionalNumber(reference.NroLinRef),
+    raw: reference,
+    reason: text(reference.RazonRef),
+    referenceCode: text(reference.CodRef),
+    referenceDate: text(reference.FchRef),
+    referencedFolio: text(reference.FolioRef),
+    referencedTipoDte: text(reference.TpoDocRef)
+  }));
+
+  const globalDiscounts: ExtractedDteGlobalDiscount[] = asArray(
+    documento?.DscRcgGlobal as Record<string, unknown> | Record<string, unknown>[] | undefined
+  ).map((discount) => ({
+    description: text(discount.GlosaDR),
+    exemptIndicator: text(discount.IndExeDR),
+    lineNumber: optionalNumber(discount.NroLinDR),
+    movementType: text(discount.TpoMov),
+    otherCurrencyValue: optionalNumber(discount.ValorDROtrMnda),
+    raw: discount,
+    value: optionalNumber(discount.ValorDR),
+    valueType: text(discount.TpoValor)
+  }));
+
+  const itemTaxes: ExtractedDteTax[] = items
+    .filter((item) => item.additionalTaxCode)
+    .map((item) => ({
+      lineNumber: item.lineNumber,
+      montoImp: 0,
+      raw: item.raw,
+      tasaImp: null,
+      tipoImp: item.additionalTaxCode
+    }));
+
+  const totalTaxes: ExtractedDteTax[] = asArray(
+    totales.ImptoReten as Record<string, unknown> | Record<string, unknown>[] | undefined
+  ).map((tax) => ({
+    lineNumber: null,
+    montoImp: numberValue(tax.MontoImp),
+    raw: tax,
+    tasaImp: optionalNumber(tax.TasaImp),
+    tipoImp: text(tax.TipoImp)
+  }));
+
+  const ted = (documento.TED ?? null) as Record<string, unknown> | null;
   const xmlSha256 = sha256(xml);
-  const references = asArray(documento?.Referencia).map(
-    (reference: Record<string, unknown>) => ({
-      referencedTipoDte: text(reference.TpoDocRef),
-      referencedFolio: text(reference.FolioRef),
-      referenceDate: text(reference.FchRef),
-      reason: text(reference.RazonRef)
-    })
-  );
+  const caratula = (setDte.Caratula ?? {}) as Record<string, unknown>;
 
   return {
-    idempotencyKey: `${rutEmisor}:${tipoDte}:${folio}:${xmlSha256}`,
-    tipoDte,
-    folio,
-    rutEmisor,
-    razonSocialEmisor: text(emisor?.RznSoc),
-    rutReceptor,
-    razonSocialReceptor: text(receptor?.RznSocRecep),
+    acteco: text(emisor.Acteco),
+    cdgSiiSucur: text(emisor.CdgSIISucur),
+    ciudadOrigen: text(emisor.CiudadOrigen),
+    ciudadReceptor: text(receptor.CiudadRecep),
+    cmnaOrigen: text(emisor.CmnaOrigen),
+    cmnaReceptor: text(receptor.CmnaRecep),
+    dirOrigen: text(emisor.DirOrigen),
+    dirReceptor: text(receptor.DirRecep),
     fechaEmision,
-    fechaVencimiento: text(idDoc?.FchVenc) ?? null,
-    formaPago: text(idDoc?.FmaPago) ?? null,
-    montoNeto: numberValue(totales?.MntNeto),
-    montoExento: numberValue(totales?.MntExe),
-    iva: numberValue(totales?.IVA),
-    montoTotal: numberValue(totales?.MntTotal),
-    xmlSha256,
-    sourceMessageId,
+    fechaVencimiento: text(idDoc.FchVenc),
+    folio,
+    formaPago: text(idDoc.FmaPago),
+    giroEmisor: text(emisor.GiroEmis),
+    giroReceptor: text(receptor.GiroRecep),
+    idempotencyKey: `${rutEmisor}:${tipoDte}:${folio}:${xmlSha256}`,
+    items,
+    iva: numberValue(totales.IVA),
+    ivaUsoComun: optionalNumber(totales.IVAUsoComun),
+    montoBruto: optionalNumber(idDoc.MntBruto),
+    montoExento: numberValue(totales.MntExe),
+    montoNeto: numberValue(totales.MntNeto),
+    montoPeriodo: optionalNumber(totales.MontoPeriodo),
+    montoTotal: numberValue(totales.MntTotal),
+    raw: {
+      caf: ted && typeof ted === "object" ? (ted.DD as Record<string, unknown> | undefined)?.CAF ?? null : null,
+      frmt: ted && typeof ted === "object" ? text(ted.FRMT) : null,
+      globalDiscounts,
+      parsedJson: parsed,
+      references,
+      taxes: [...totalTaxes, ...itemTaxes],
+      ted,
+      trackId: text(caratula.TmstFirmaEnv)
+    },
+    razonSocialEmisor: text(emisor.RznSoc),
+    razonSocialReceptor: text(receptor.RznSocRecep),
+    rutEmisor,
+    rutReceptor,
     sourceAttachmentId,
     sourceFilename,
-    raw: {
-      trackId: text(envio.SetDTE?.Caratula?.TmstFirmaEnv ?? parsed?.EnvioDTE?.SetDTE?.Caratula?.TmstFirmaEnv),
-      ted: documento?.TED ?? null,
-      caf: documento?.TED?.DD?.CAF ?? null,
-      references
-    },
-    items
+    sourceMessageId,
+    sourceReceivedAt,
+    sourceSender,
+    sourceSubject,
+    sourceThreadId,
+    tasaIva: optionalNumber(totales.TasaIVA),
+    termPagoGlosa: text(idDoc.TermPagoGlosa),
+    tipoDte,
+    tipoTranCompra: text(idDoc.TpoTranCompra),
+    tipoTranVenta: text(idDoc.TpoTranVenta),
+    valorPagar: optionalNumber(totales.VlrPagar),
+    xmlSha256
   };
 }
