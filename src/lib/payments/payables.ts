@@ -37,7 +37,7 @@ export async function getPayableCandidates(): Promise<PayableCandidate[]> {
     type SupplierRow = { id: string; rut: string; legal_name: string; email: string | null; payment_email: string | null; status: string; supplier_bank_accounts?: Array<{ bank_name: string; bank_code: string | null; account_type: string; account_number: string; status: string }> };
     const supplier = (Array.isArray(row.suppliers) ? row.suppliers[0] : row.suppliers) as SupplierRow;
     const bank = supplier.supplier_bank_accounts?.find((account) => account.status !== "disabled") ?? supplier.supplier_bank_accounts?.[0];
-    const validation = { accountNumber: bank?.account_number ?? "", accountType: bank?.account_type ?? "", bankName: bank?.bank_name ?? "", email: supplier.email ?? "", paymentEmail: supplier.payment_email ?? "", rut: supplier.rut, status: supplier.status };
+    const validation = { accountNumber: bank?.account_number ?? "", accountType: bank?.account_type ?? "", bankCode: bank?.bank_code ?? "", bankName: bank?.bank_name ?? "", email: supplier.email ?? "", legalName: supplier.legal_name, paymentEmail: supplier.payment_email ?? "", rut: supplier.rut, status: supplier.status };
     const alerts = paymentMissingFields(validation);
     return {
       accountType: bank?.account_type ?? "",

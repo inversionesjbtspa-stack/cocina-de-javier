@@ -19,9 +19,11 @@ export async function GET(request: Request) {
         error: "payment_validation_failed",
         invalid: result.invalid.map((item) => ({
           alerts: item.alerts,
-          folio: "invoice" in item ? item.invoice.folio : item.id,
-          proveedor: "invoice" in item ? item.invoice.razonSocialEmisor : "Cuenta por pagar",
-          rut: "invoice" in item ? item.invoice.rutEmisor : ""
+          folio: "invoice" in item ? item.invoice.folio : item.folio,
+          id: "invoice" in item ? item.invoice.folio : item.id,
+          proveedor: "invoice" in item ? item.invoice.razonSocialEmisor : item.supplierName,
+          rut: "invoice" in item ? item.invoice.rutEmisor : item.supplierRut,
+          supplierId: "invoice" in item ? "" : item.supplierId
         }))
       },
       { status: 422 }

@@ -7,7 +7,8 @@ import { suppliersMaster } from "@/lib/suppliers/master";
 import { formatClp } from "@/lib/dte/purchases-data";
 import { getSupplierPaymentProfiles } from "@/lib/suppliers/supabase-profiles";
 
-export default async function ProveedoresPage() {
+export default async function ProveedoresPage({ searchParams }: { searchParams: Promise<{ supplier?: string }> }) {
+  const params = await searchParams;
   const suppliers = await getSupplierPaymentProfiles();
   const pending = suppliers.reduce((sum, supplier) => sum + supplier.pending, 0);
   const missingBank = suppliers.filter((supplier) => supplier.missingPaymentFields.includes("banco") || supplier.missingPaymentFields.includes("numero de cuenta"));
@@ -82,7 +83,7 @@ export default async function ProveedoresPage() {
         </div>
 
         <Suspense fallback={<div className="rounded-2xl border border-[#eadfd9] bg-white p-6 text-sm text-[#6f6263]">Cargando proveedores...</div>}>
-            <SupplierProfileDirectory initialSuppliers={suppliers} />
+            <SupplierProfileDirectory initialSelectedId={params.supplier} initialSuppliers={suppliers} />
         </Suspense>
       </section>
     </AppShell>

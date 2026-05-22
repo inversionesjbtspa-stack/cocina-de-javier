@@ -17,6 +17,14 @@ type SupabasePaymentRow = {
   folio: string;
   supplier: { bankAccount: string; bankCode: string; businessName: string; code: string; email: string; rut: string };
 };
+export type InvalidPayablePayment = {
+  id: string;
+  folio: string;
+  supplierId: string;
+  supplierName: string;
+  supplierRut: string;
+  alerts: string[];
+};
 
 function escapeXml(value: string) {
   return value
@@ -142,14 +150,23 @@ export function generateSantanderTemplate(folios: string[]) {
 export async function generateSantanderTemplateFromPayables(payableIds: string[], payDate?: string) {
   if (!fs.existsSync(templatePath)) throw new Error("Template Pagos JESUS.xlsx no existe en el proyecto.");
   const supabase = createAdminClient();
-  const { data } = await supabase.from("accounts_payable").select("id,tenant_id,company_id,document_number,balance_amount,status,suppliers(id,rut,legal_name,email,payment_email,supplier_bank_accounts(bank_name,bank_code,account_type,account_number,status))").in("id", payableIds);
-  const invalid: Array<{ id: string; alerts: string[] }> = [];
+  const [{ data }, { data: activeBatchItems }] = await Promise.all([
+    supabase.from("accounts_payable").select("id,tenant_id,company_id,document_number,balance_amount,status,suppliers(id,rut,legal_name,email,payment_email,status,supplier_bank_accounts(bank_name,bank_code,account_type,account_number,status))").in("id", payableIds),
+    supabase.from("payment_batch_items").select("accounts_payable_id,payment_batches(status)").in("accounts_payable_id", payableIds)
+  ]);
+  const activeBatchPayables = new Set((activeBatchItems ?? []).filter((item) => {
+    const batch = Array.isArray(item.payment_batches) ? item.payment_batches[0] : item.payment_batches;
+    return batch && batch.status !== "cancelled" && batch.status !== "reconciled";
+  }).map((item) => item.accounts_payable_id));
+  const invalid: InvalidPayablePayment[] = [];
   const rows: SupabasePaymentRow[] = [];
   for (const item of data ?? []) {
-    type SupplierRow = { id: string; rut: string; legal_name: string; email: string | null; payment_email: string | null; supplier_bank_accounts?: Array<{ bank_name: string; bank_code: string | null; account_type: string; account_number: string; status: string }> };
+    type SupplierRow = { id: string; rut: string; legal_name: string; email: string | null; payment_email: string | null; status: string; supplier_bank_accounts?: Array<{ bank_name: string; bank_code: string | null; account_type: string; account_number: string; status: string }> };
     const supplier = (Array.isArray(item.suppliers) ? item.suppliers[0] : item.suppliers) as SupplierRow;
     const bank = supplier.supplier_bank_accounts?.find((account) => account.status !== "disabled");
     const alerts = [];
+    if (!supplier?.rut) alerts.push("RUT");
+    if (!supplier?.legal_name) alerts.push("razon social");
     if (!bank?.bank_name) alerts.push("banco");
     if (!bank?.bank_code) alerts.push("codigo banco");
     if (!bank?.account_type) alerts.push("tipo cuenta");
@@ -157,7 +174,9 @@ export async function generateSantanderTemplateFromPayables(payableIds: string[]
     if (!(supplier.payment_email || supplier.email)) alerts.push("email");
     if (Number(item.balance_amount ?? 0) <= 0) alerts.push("saldo");
     if (item.status === "paid") alerts.push("pagada");
-    if (alerts.length || !bank) { invalid.push({ alerts, id: item.id }); continue; }
+    if (supplier.status === "blocked") alerts.push("proveedor bloqueado");
+    if (activeBatchPayables.has(item.id)) alerts.push("ya esta en nomina activa");
+    if (alerts.length || !bank) { invalid.push({ alerts, folio: item.document_number, id: item.id, supplierId: supplier.id, supplierName: supplier.legal_name || "Proveedor sin razon social", supplierRut: supplier.rut || "" }); continue; }
     rows.push({ amount: Number(item.balance_amount), folio: String(item.document_number).replace(/^\d+-/, ""), payableId: item.id, supplier: { bankAccount: bank.account_number, bankCode: bank.bank_code ?? "", businessName: supplier.legal_name, code: "", email: supplier.payment_email ?? supplier.email ?? "", rut: supplier.rut } });
   }
   if (invalid.length || !rows.length) return { invalid, ok: false as const, rows: [] };

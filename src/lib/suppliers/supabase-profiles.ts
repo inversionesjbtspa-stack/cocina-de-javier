@@ -34,10 +34,12 @@ export type SupplierPaymentProfile = {
   paymentReady: boolean;
 };
 
-export function paymentMissingFields(profile: Pick<SupplierPaymentProfile, "rut" | "bankName" | "accountType" | "accountNumber" | "paymentEmail" | "email" | "status">) {
+export function paymentMissingFields(profile: Pick<SupplierPaymentProfile, "rut" | "legalName" | "bankName" | "bankCode" | "accountType" | "accountNumber" | "paymentEmail" | "email" | "status">) {
   const missing = [];
   if (!profile.rut) missing.push("RUT");
+  if (!profile.legalName) missing.push("razon social");
   if (!profile.bankName) missing.push("banco");
+  if (!profile.bankCode) missing.push("codigo banco");
   if (!profile.accountType) missing.push("tipo de cuenta");
   if (!profile.accountNumber) missing.push("numero de cuenta");
   if (!(profile.paymentEmail || profile.email)) missing.push("email de pagos");
