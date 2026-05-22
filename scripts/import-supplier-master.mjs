@@ -41,6 +41,15 @@ try {
           [tenant.rows[0].id, saved.rows[0].id, supplier.bankName, supplier.bankCode || null, supplier.accountType || "", supplier.bankAccount, supplier.businessName, supplier.rut]
         );
         summary.bankAccounts += 1;
+      } else if (supplier.bankCode && supplier.bankCode !== "#N/A") {
+        await client.query(
+          `update public.supplier_bank_accounts set
+             bank_code = coalesce(nullif(bank_code,''), $2),
+             account_type = coalesce(nullif(account_type,''), $3),
+             bank_name = coalesce(nullif(bank_name,''), $4)
+           where id=$1`,
+          [existing.rows[0].id, supplier.bankCode, supplier.accountType || "no_informada_master", supplier.bankName]
+        );
       }
     }
   }

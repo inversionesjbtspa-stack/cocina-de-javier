@@ -179,7 +179,7 @@ export async function generateSantanderTemplateFromPayables(payableIds: string[]
     if (alerts.length || !bank) { invalid.push({ alerts, folio: item.document_number, id: item.id, supplierId: supplier.id, supplierName: supplier.legal_name || "Proveedor sin razon social", supplierRut: supplier.rut || "" }); continue; }
     rows.push({ amount: Number(item.balance_amount), folio: String(item.document_number).replace(/^\d+-/, ""), payableId: item.id, supplier: { bankAccount: bank.account_number, bankCode: bank.bank_code ?? "", businessName: supplier.legal_name, code: "", email: supplier.payment_email ?? supplier.email ?? "", rut: supplier.rut } });
   }
-  if (invalid.length || !rows.length) return { invalid, ok: false as const, rows: [] };
+  if (!rows.length) return { invalid, ok: false as const, rows: [] };
   const zip = new AdmZip(templatePath);
   const entry = zip.getEntry("xl/worksheets/sheet1.xml");
   if (!entry) throw new Error("Template Santander no contiene xl/worksheets/sheet1.xml.");
@@ -187,5 +187,5 @@ export async function generateSantanderTemplateFromPayables(payableIds: string[]
   await supabase.from("accounts_payable").update({ status: "scheduled" }).in("id", rows.map((row) => row.payableId));
   const first = (data ?? [])[0];
   await supabase.from("audit_events").insert({ after_data: { accounts_payable_ids: rows.map((row) => row.payableId), count: rows.length, pay_date: payDate ?? null }, company_id: first?.company_id, entity_type: "payment_nomina", event_type: "payment.santander_exported", tenant_id: first?.tenant_id });
-  return { buffer: zip.toBuffer(), invalid: [], ok: true as const, rows };
+  return { buffer: zip.toBuffer(), invalid, ok: true as const, rows };
 }

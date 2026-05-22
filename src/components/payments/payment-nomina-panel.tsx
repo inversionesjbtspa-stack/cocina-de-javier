@@ -82,7 +82,7 @@ export function PaymentNominaPanel({ candidates }: { candidates: PayableCandidat
     if (!selected.length || invalidSelected.length) return;
     setBusy(true);
     setIssue(null);
-    const response = await fetch(`/api/payment-template?payableIds=${encodeURIComponent(selected.join(","))}&payDate=${encodeURIComponent(payDate)}`);
+    const response = await fetch(`/api/payment-template?payableIds=${encodeURIComponent(selected.join(","))}&payDate=${encodeURIComponent(payDate)}`, { headers: { "X-ERP-Request": "treasury" } });
     if (!response.ok) {
       const body = await response.json().catch(() => ({ invalid: [] }));
       setIssue({ invalid: body.invalid ?? [], title: "No se pudo generar la nomina Santander" });
@@ -96,7 +96,7 @@ export function PaymentNominaPanel({ candidates }: { candidates: PayableCandidat
   async function repairSuppliers() {
     setBusy(true);
     setRepairMessage("");
-    const response = await fetch("/api/admin/payables/repair-suppliers", { method: "POST" });
+    const response = await fetch("/api/admin/repair-payment-suppliers", { method: "POST" });
     const body = await response.json().catch(() => null);
     setRepairMessage(response.ok ? `Reparacion ejecutada: ${body?.relinked ?? 0} cuentas enlazadas, ${body?.created ?? 0} fichas creadas.` : "No se pudo ejecutar la reparacion.");
     setBusy(false);
