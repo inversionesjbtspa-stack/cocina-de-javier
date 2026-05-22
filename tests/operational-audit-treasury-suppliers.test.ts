@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { mapBankName } from "../src/lib/payments/bank-mappings.ts";
 
 test("audit page reads Supabase audit events instead of fixed timeline fixtures", async () => {
   const page = await readFile("src/app/(erp)/auditoria/page.tsx", "utf8");
@@ -29,4 +30,21 @@ test("supplier creation and payable repair routes exist and audit mutations", as
   assert.match(repairRoute, /accounts_payable\.payment_suppliers_repaired/);
   assert.match(repairRoute, /razon_social_emisor/);
   assert.match(repairRoute, /bank_code/);
+});
+
+test("Santander bank mapping handles dirty master bank names from treasury capture", () => {
+  assert.deepEqual(
+    [
+      mapBankName("BANCO DE CREDITO E INVERSIONES - NOVA// BCI"),
+      mapBankName("BANCO DE A. EDWARDS"),
+      mapBankName("BANCO SANTANDER ( CHILE )"),
+      mapBankName("THE FIRST NAT. BANK OF BOSTON//[object Object]ITAU")
+    ].map((bank) => [bank.bankNameNormalized, bank.bankCode, bank.needsReview]),
+    [
+      ["BCI", "16", false],
+      ["BANCO DE CHILE / EDWARDS", "1", false],
+      ["BANCO SANTANDER CHILE", "37", false],
+      ["ITAU", "39", false]
+    ]
+  );
 });

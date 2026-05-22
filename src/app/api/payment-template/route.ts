@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 
 type InvalidExport = {
   alerts: string[];
+  bankCode: string;
+  bankName: string;
   folio: string;
   id: string;
   proveedor: string;
@@ -15,11 +17,13 @@ type InvalidExport = {
 function errorCsv(rows: InvalidExport[]) {
   const escape = (value: string) => `"${String(value ?? "").replace(/"/g, '""')}"`;
   return [
-    ["folio", "proveedor", "rut", "dato_faltante", "accion_recomendada", "ficha_proveedor"],
+    ["folio", "proveedor", "rut", "banco", "codigo_banco", "dato_faltante", "accion_recomendada", "ficha_proveedor"],
     ...rows.map((row) => [
       row.folio,
       row.proveedor,
       row.rut,
+      row.bankName,
+      row.bankCode,
       row.alerts.join(", "),
       "Completar ficha proveedor antes de exportar Santander",
       row.supplierId ? `/proveedores?supplier=${row.supplierId}` : "/proveedores"
@@ -58,6 +62,8 @@ export async function GET(request: Request) {
   const result = payableIds.length ? await generateSantanderTemplateFromPayables(payableIds, url.searchParams.get("payDate") ?? undefined) : generateSantanderTemplate(folios);
   const invalid = result.invalid.map((item) => ({
     alerts: item.alerts,
+    bankCode: "invoice" in item ? "" : item.bankCode,
+    bankName: "invoice" in item ? "" : item.bankName,
     folio: "invoice" in item ? item.invoice.folio : item.folio,
     id: "invoice" in item ? item.invoice.folio : item.id,
     proveedor: "invoice" in item ? item.invoice.razonSocialEmisor : item.supplierName,
