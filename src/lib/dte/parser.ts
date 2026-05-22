@@ -13,6 +13,7 @@ const parser = new XMLParser({
   ignoreAttributes: false,
   parseTagValue: true,
   preserveOrder: false,
+  removeNSPrefix: true,
   trimValues: true
 });
 
@@ -51,6 +52,44 @@ function normalizeItemName(value: string) {
     .replace(/\s+/g, " ")
     .trim()
     .toUpperCase();
+}
+
+function looksLikePackaging(value: string) {
+  return /^(?:\d+(?:[.,]\d+)?\s*)?(?:CAJA|CAJAS|UNIDAD|UNIDADES|UN|KG|KILO|KILOS|LITRO|LITROS|BOTELLA|BOTELLAS)$/i.test(
+    value.trim()
+  );
+}
+
+function looksNumeric(value: string) {
+  return /^\d+(?:[.,]\d+)?$/.test(value.trim());
+}
+
+function resolveItemName(line: Record<string, unknown>, code: ReturnType<typeof itemCode>) {
+  const rawName = text(line.NmbItem);
+  const rawDescription = text(line.DscItem);
+  const codeLabel = [code.codeValue, rawDescription].filter(Boolean).join(" - ");
+  const warnings: string[] = [];
+
+  if (rawName && !looksNumeric(rawName) && !looksLikePackaging(rawName)) {
+    return { name: rawName, rawDescription, rawName, warnings };
+  }
+  if (rawName && rawDescription) {
+    warnings.push(`NmbItem sospechoso "${rawName}"; se usa DscItem para el producto.`);
+    return { name: rawDescription, rawDescription, rawName, warnings };
+  }
+  if (rawDescription) {
+    return { name: rawDescription, rawDescription, rawName, warnings };
+  }
+  if (codeLabel) {
+    warnings.push("Detalle sin NmbItem/DscItem descriptivo; se usa codigo de item.");
+    return { name: codeLabel, rawDescription, rawName, warnings };
+  }
+  return {
+    name: "SIN NOMBRE EN XML",
+    rawDescription,
+    rawName,
+    warnings: ["Detalle sin NmbItem, DscItem ni CdgItem descriptivo."]
+  };
 }
 
 function validateLine({
@@ -92,6 +131,55 @@ function validateLine({
     confidence: Number(confidence.toFixed(2)),
     errors,
     status
+  };
+}
+
+function validateDocument({
+  items,
+  montoExento,
+  montoNeto,
+  montoTotal,
+  iva,
+  taxes
+}: {
+  items: ExtractedDteItem[];
+  montoExento: number;
+  montoNeto: number;
+  montoTotal: number;
+  iva: number;
+  taxes: ExtractedDteTax[];
+}) {
+  const warnings = items.flatMap((item) => item.validationErrors);
+  const errors: string[] = [];
+  const lineTotal = items.reduce((total, item) => total + item.lineTotal, 0);
+  const netBase = montoNeto + montoExento;
+  const totalAdditionalTaxes = taxes
+    .filter((tax) => !tax.lineNumber)
+    .reduce((total, tax) => total + tax.montoImp, 0);
+  const tolerance = Math.max(10, Math.abs(montoTotal) * 0.03);
+
+  if (!items.length) {
+    errors.push("Documento DTE sin Detalle.");
+  }
+  if (netBase > 0 && Math.abs(lineTotal - netBase) > tolerance) {
+    warnings.push(`Suma Detalle ${lineTotal.toFixed(2)} difiere de neto/exento ${netBase.toFixed(2)}.`);
+  }
+  const calculatedTotal = netBase + iva + totalAdditionalTaxes;
+  if (montoTotal > 0 && Math.abs(calculatedTotal - montoTotal) > tolerance) {
+    warnings.push(
+      `Neto/exento + IVA + impuestos adicionales ${calculatedTotal.toFixed(2)} difiere de total ${montoTotal.toFixed(2)}.`
+    );
+  }
+
+  const itemConfidence = items.length
+    ? items.reduce((score, item) => score + item.priceConfidenceScore, 0) / items.length
+    : 0;
+  const confidenceScore = Math.max(0, itemConfidence - warnings.length * 3 - errors.length * 20);
+  return {
+    confidenceScore: Number(confidenceScore.toFixed(2)),
+    errors,
+    status: errors.length ? "error" as const : warnings.length ? "warning" as const : "valid" as const,
+    warnings
   };
 }
 
@@ -160,11 +248,9 @@ export function parseDteXml({
     documento?.Detalle as Record<string, unknown> | Record<string, unknown>[] | undefined
   ).map((line, index) => {
     const code = itemCode(line);
-    const parserErrors: string[] = [];
-    const name = text(line.NmbItem) ?? text(line.DscItem) ?? "SIN DESCRIPCION XML";
-    if (!text(line.NmbItem) && !text(line.DscItem)) {
-      parserErrors.push("Detalle sin NmbItem ni DscItem.");
-    }
+    const resolvedName = resolveItemName(line, code);
+    const parserErrors = [...resolvedName.warnings];
+    const name = resolvedName.name;
     const discountAmount = numberValue(line.DescuentoMonto);
     const surchargeAmount = numberValue(line.RecargoMonto);
     const quantity = numberValue(line.QtyItem) || 1;
@@ -180,7 +266,7 @@ export function parseDteXml({
     return {
       ...code,
       additionalTaxCode: text(line.CodImpAdic),
-      description: text(line.DscItem) ?? name,
+      description: resolvedName.rawDescription ?? name,
       discountAmount,
       discountPct: optionalNumber(line.DescuentoPct),
       lineNumber: numberValue(line.NroLinDet) || index + 1,
@@ -188,14 +274,20 @@ export function parseDteXml({
       name,
       normalizedName: normalizeItemName(name),
       priceConfidenceScore: validation.confidence,
+      productEligible:
+        name !== "SIN NOMBRE EN XML" &&
+        !looksLikePackaging(name) &&
+        !looksNumeric(name),
       quantity,
       raw: line,
+      rawDescription: resolvedName.rawDescription,
+      rawName: resolvedName.rawName,
       surchargeAmount,
       surchargePct: optionalNumber(line.RecargoPct),
       unit: text(line.UnmdItem) ?? "unidad",
       unitPrice,
       validationErrors: [...parserErrors, ...validation.errors],
-      validationStatus: parserErrors.length ? "error" : validation.status
+      validationStatus: name === "SIN NOMBRE EN XML" ? "error" : parserErrors.length || validation.errors.length ? "warning" : validation.status
     };
   });
 
@@ -247,6 +339,14 @@ export function parseDteXml({
   const ted = (documento.TED ?? null) as Record<string, unknown> | null;
   const xmlSha256 = sha256(xml);
   const caratula = (setDte.Caratula ?? {}) as Record<string, unknown>;
+  const validation = validateDocument({
+    items,
+    iva: numberValue(totales.IVA),
+    montoExento: numberValue(totales.MntExe),
+    montoNeto: numberValue(totales.MntNeto),
+    montoTotal: numberValue(totales.MntTotal),
+    taxes: totalTaxes
+  });
 
   return {
     acteco: text(emisor.Acteco),
@@ -279,12 +379,13 @@ export function parseDteXml({
       globalDiscounts,
       parsedJson: parsed,
       parserErrors: items.flatMap((item) => item.validationStatus === "error" ? item.validationErrors : []),
-      parserWarnings: items.flatMap((item) => item.validationStatus === "warning" ? item.validationErrors : []),
+      parserWarnings: [...items.flatMap((item) => item.validationStatus === "warning" ? item.validationErrors : []), ...validation.warnings],
       receiver: receptor,
       references,
       taxes: [...totalTaxes, ...itemTaxes],
       ted,
-      trackId: text(caratula.TmstFirmaEnv)
+      trackId: text(caratula.TmstFirmaEnv),
+      validation
     },
     razonSocialEmisor: text(emisor.RznSoc),
     razonSocialReceptor: text(receptor.RznSocRecep),

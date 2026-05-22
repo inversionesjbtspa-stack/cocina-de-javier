@@ -1,9 +1,22 @@
 import { NextResponse } from "next/server";
-import { formatClp, formatDate, purchasesData, type DtePurchaseInvoice } from "@/lib/dte/purchases-data";
+import {
+  formatClp,
+  formatDate,
+  purchasesData,
+  type DtePurchaseInvoice,
+  type DtePurchaseItem
+} from "@/lib/dte/purchases-data";
 import { hasSupabaseAdminConfig } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-type PdfInvoice = DtePurchaseInvoice & {
+type PdfItem = DtePurchaseItem & {
+  additionalTaxCode?: string | null;
+  discountAmount?: number;
+  surchargeAmount?: number;
+};
+
+type PdfInvoice = Omit<DtePurchaseInvoice, "items"> & {
+  items: PdfItem[];
   metadata?: {
     formaPago?: string | null;
     termPagoGlosa?: string | null;
@@ -18,11 +31,11 @@ type PdfInvoice = DtePurchaseInvoice & {
     tasaIva?: number | null;
     xmlSha256?: string | null;
     sourceFilename?: string | null;
-    referenceCount?: number;
-    taxCount?: number;
     globalDiscountCount?: number;
     hasTed?: boolean;
     hasCaf?: boolean;
+    references?: Array<{ folio?: string | null; type?: string | null; reason?: string | null }>;
+    taxes?: Array<{ code?: string | null; rate?: number | null; amount: number; lineNumber?: number | null }>;
   };
 };
 
@@ -54,7 +67,7 @@ function line(x1: number, y1: number, x2: number, y2: number, color = "0.88 0.82
   return `${color} RG 0.7 w ${x1} ${y1} m ${x2} ${y2} l S`;
 }
 
-function invoiceType(invoice: PdfInvoice) {
+function invoiceType(invoice: Pick<PdfInvoice, "tipoDte">) {
   if (invoice.tipoDte === "61") {
     return "NOTA DE CREDITO ELECTRONICA";
   }
@@ -64,17 +77,16 @@ function invoiceType(invoice: PdfInvoice) {
   return "FACTURA ELECTRONICA";
 }
 
-function generatePdf(invoice: PdfInvoice) {
-  const ops: string[] = [
+function pageHeader(invoice: PdfInvoice, page: number, pageCount: number) {
+  return [
     rect(0, 760, 612, 82, "0.43 0.09 0.16"),
     rect(38, 672, 536, 70, "1 0.98 0.95"),
     rect(390, 682, 164, 50, "1 1 1"),
     rect(38, 585, 255, 70, "1 1 1"),
     rect(319, 585, 255, 70, "1 1 1"),
-    rect(390, 132, 164, 86, "1 0.98 0.95"),
     bold(48, 805, "LA COCINA DE JAVIER", 17, "1 1 1"),
-    text(48, 786, "Representacion corporativa generada desde XML DTE original", 9, "0.96 0.90 0.86"),
-    text(48, 771, "Documento contable para revision interna, auditoria y pago", 8, "0.96 0.90 0.86"),
+    text(48, 786, "Representacion contable generada desde XML DTE original", 9, "0.96 0.90 0.86"),
+    text(48, 771, `Pagina ${page} de ${pageCount}`, 8, "0.96 0.90 0.86"),
     bold(405, 715, invoiceType(invoice), 9),
     bold(405, 699, `RUT ${invoice.rutEmisor}`, 9),
     bold(405, 683, `FOLIO ${invoice.folio}`, 13),
@@ -85,67 +97,107 @@ function generatePdf(invoice: PdfInvoice) {
     bold(48, 635, "Emisor", 10),
     text(48, 619, truncate(invoice.razonSocialEmisor, 42)),
     text(48, 605, `RUT: ${invoice.rutEmisor}`),
-    text(48, 591, `Forma pago: ${invoice.metadata?.formaPago ?? (invoice.paymentStatus === "paid" ? "Pagada" : "Pendiente")}`),
+    text(48, 591, truncate(`Giro: ${invoice.metadata?.giroEmisor ?? "No informado en XML"}`, 42)),
     bold(329, 635, "Receptor", 10),
     text(329, 619, truncate(invoice.razonSocialReceptor, 42)),
     text(329, 605, `RUT: ${invoice.rutReceptor}`),
-    text(329, 591, "Operacion: La Cocina de Javier"),
+    text(329, 591, truncate(`Direccion: ${invoice.metadata?.dirReceptor ?? "No informado en XML"}`, 42)),
     rect(38, 538, 536, 26, "0.43 0.09 0.16"),
     bold(48, 547, "Detalle de items XML", 10, "1 1 1"),
-    text(48, 526, "Descripcion", 8),
-    text(300, 526, "Cant.", 8),
-    text(350, 526, "Unidad", 8),
-    text(410, 526, "Precio", 8),
-    text(500, 526, "Total", 8),
+    text(48, 526, "Producto / descripcion", 7),
+    text(286, 526, "Cant.", 7),
+    text(326, 526, "Un.", 7),
+    text(361, 526, "P.Unit.", 7),
+    text(426, 526, "Desc/Rec.", 7),
+    text(486, 526, "Imp.", 7),
+    text(528, 526, "Total", 7),
     line(38, 518, 574, 518)
   ];
+}
 
-  let y = 500;
-  invoice.items.slice(0, 18).forEach((item, index) => {
-    if (index % 2 === 0) {
-      ops.push(rect(38, y - 5, 536, 18, "0.995 0.985 0.965"));
-    }
-    ops.push(text(48, y, truncate(item.description, 54), 8));
-    ops.push(text(302, y, item.quantity.toLocaleString("es-CL"), 8));
-    ops.push(text(350, y, item.unit || "UN", 8));
-    ops.push(text(410, y, money(item.unitPrice), 8));
-    ops.push(text(500, y, money(item.lineTotal), 8));
-    y -= 20;
-  });
-
-  if (invoice.items.length > 18) {
-    ops.push(text(48, y, `Mas items disponibles en XML original: ${invoice.items.length - 18}`, 8, "0.43 0.09 0.16"));
+function pagesForInvoice(invoice: PdfInvoice) {
+  const chunks: PdfInvoice["items"][] = [];
+  for (let index = 0; index < invoice.items.length; index += 12) {
+    chunks.push(invoice.items.slice(index, index + 12));
+  }
+  if (!chunks.length) {
+    chunks.push([]);
   }
 
-  ops.push(
-    line(390, 205, 554, 205),
-    text(405, 194, "Monto neto", 9),
-    bold(488, 194, money(invoice.montoNeto), 9),
-    text(405, 176, "Monto exento", 9),
-    bold(488, 176, money(invoice.montoExento), 9),
-    text(405, 158, "IVA", 9),
-    bold(488, 158, money(invoice.iva), 9),
-    rect(390, 132, 164, 24, "0.43 0.09 0.16"),
-    bold(405, 140, "TOTAL", 10, "1 1 1"),
-    bold(488, 140, money(invoice.montoTotal), 10, "1 1 1"),
-    bold(48, 194, "Trazabilidad XML", 10),
-    text(48, 176, `Clave idempotente: ${invoice.normalizedKey ?? `${invoice.rutEmisor}-${invoice.tipoDte}-${invoice.folio}`}`),
-    text(48, 160, `Origen: Gmail DTE / ${invoice.metadata?.sourceFilename ?? "XML original en Supabase"}`),
-    text(48, 144, `Hash SHA-256: ${invoice.metadata?.xmlSha256 ?? invoice.normalizedKey ?? "registrado en XML"}`),
-    text(48, 128, `Referencias: ${invoice.metadata?.referenceCount ?? 0} · Impuestos adicionales: ${invoice.metadata?.taxCount ?? 0} · Desc/rec globales: ${invoice.metadata?.globalDiscountCount ?? 0}`),
-    text(48, 112, `TED: ${invoice.metadata?.hasTed ? "informado" : "no informado"} · CAF: ${invoice.metadata?.hasCaf ? "informado" : "no informado"} · Tasa IVA: ${invoice.metadata?.tasaIva ?? 19}%`),
-    text(48, 94, `Emisor: ${truncate([invoice.metadata?.giroEmisor, invoice.metadata?.dirOrigen, invoice.metadata?.cmnaOrigen].filter(Boolean).join(" / "), 86)}`, 7, "0.45 0.38 0.38"),
-    text(48, 80, `Receptor: ${truncate([invoice.metadata?.giroReceptor, invoice.metadata?.dirReceptor, invoice.metadata?.cmnaReceptor].filter(Boolean).join(" / "), 86)}`, 7, "0.45 0.38 0.38")
-  );
+  return chunks.map((items, index) => {
+    const finalPage = index === chunks.length - 1;
+    const ops = pageHeader(invoice, index + 1, chunks.length);
+    let y = 500;
+    items.forEach((item, itemIndex) => {
+      if (itemIndex % 2 === 0) {
+        ops.push(rect(38, y - 5, 536, 18, "0.995 0.985 0.965"));
+      }
+      const detail =
+        item.detailDescription && item.detailDescription !== item.description
+          ? ` / ${item.detailDescription}`
+          : "";
+      ops.push(text(48, y, truncate(`${item.description}${detail}`, 50), 7));
+      ops.push(text(288, y, item.quantity.toLocaleString("es-CL"), 7));
+      ops.push(text(326, y, truncate(item.unit || "UN", 6), 7));
+      ops.push(text(361, y, money(item.unitPrice), 7));
+      ops.push(text(426, y, `${money(item.discountAmount ?? 0)} / ${money(item.surchargeAmount ?? 0)}`, 6));
+      ops.push(text(486, y, item.additionalTaxCode ?? "-", 7));
+      ops.push(text(528, y, money(item.lineTotal), 7));
+      y -= 20;
+    });
 
-  const content = ops.join("\n");
+    if (!finalPage) {
+      ops.push(text(48, 230, "Detalle continua en la pagina siguiente.", 8, "0.43 0.09 0.16"));
+      return ops.join("\n");
+    }
+
+    const taxTotal = (invoice.metadata?.taxes ?? [])
+      .filter((tax) => !tax.lineNumber)
+      .reduce((total, tax) => total + tax.amount, 0);
+    ops.push(
+      rect(390, 132, 164, 104, "1 0.98 0.95"),
+      line(390, 218, 554, 218),
+      text(405, 204, "Monto neto", 8),
+      bold(488, 204, money(invoice.montoNeto), 8),
+      text(405, 188, "Monto exento", 8),
+      bold(488, 188, money(invoice.montoExento), 8),
+      text(405, 172, "IVA", 8),
+      bold(488, 172, money(invoice.iva), 8),
+      text(405, 156, "Imp. adicional", 8),
+      bold(488, 156, money(taxTotal), 8),
+      rect(390, 132, 164, 20, "0.43 0.09 0.16"),
+      bold(405, 139, "TOTAL", 9, "1 1 1"),
+      bold(488, 139, money(invoice.montoTotal), 9, "1 1 1"),
+      bold(48, 216, "Referencias e impuestos", 9),
+      text(48, 200, truncate(`Referencias: ${(invoice.metadata?.references ?? []).map((ref) => `${ref.type ?? "DTE"} ${ref.folio ?? ""}`).join(" / ") || "No informadas en XML"}`, 82), 7),
+      text(48, 186, truncate(`Impuestos: ${(invoice.metadata?.taxes ?? []).map((tax) => `${tax.code ?? "N/A"} ${tax.rate ?? "-"}% ${money(tax.amount)}`).join(" / ") || "Sin adicionales"}`, 82), 7),
+      bold(48, 160, "Trazabilidad XML", 9),
+      text(48, 146, truncate(`Clave idempotente: ${invoice.normalizedKey ?? `${invoice.rutEmisor}-${invoice.tipoDte}-${invoice.folio}`}`, 82), 7),
+      text(48, 132, truncate(`Origen: Gmail DTE / ${invoice.metadata?.sourceFilename ?? "XML original en Supabase"}`, 82), 7),
+      text(48, 118, truncate(`Hash SHA-256: ${invoice.metadata?.xmlSha256 ?? "No informado"}`, 82), 7),
+      text(48, 104, `TED: ${invoice.metadata?.hasTed ? "informado" : "no informado"} / CAF: ${invoice.metadata?.hasCaf ? "informado" : "no informado"} / Tasa IVA: ${invoice.metadata?.tasaIva ?? 19}%`, 7),
+      text(48, 90, truncate(`Emisor: ${[invoice.metadata?.dirOrigen, invoice.metadata?.cmnaOrigen, invoice.metadata?.ciudadOrigen].filter(Boolean).join(" / ") || "No informado en XML"}`, 82), 7)
+    );
+    return ops.join("\n");
+  });
+}
+
+function generatePdf(invoice: PdfInvoice) {
+  const pages = pagesForInvoice(invoice);
+  const pageObjectStart = 3;
+  const fontObject = pageObjectStart + pages.length;
+  const boldFontObject = fontObject + 1;
+  const contentObjectStart = boldFontObject + 1;
+  const pageRefs = pages.map((_, index) => `${pageObjectStart + index} 0 R`).join(" ");
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
+    `<< /Type /Pages /Kids [${pageRefs}] /Count ${pages.length} >>`,
+    ...pages.map((_, index) =>
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 ${fontObject} 0 R /F2 ${boldFontObject} 0 R >> >> /Contents ${contentObjectStart + index} 0 R >>`
+    ),
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-    `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`
+    ...pages.map((content) => `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`)
   ];
   let pdf = "%PDF-1.4\n";
   const offsets = [0];
@@ -172,7 +224,7 @@ async function getSupabaseInvoice(folio: string): Promise<PdfInvoice | null> {
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("dte_documents")
-    .select("*,dte_items(line_number,name,description,item_description_raw,quantity,unit,unit_price,discount_amount,surcharge_amount,additional_tax_code,line_total,item_validation_status,price_confidence_score),dte_references(id),dte_taxes(id),dte_global_discounts(id)")
+    .select("*,dte_items(line_number,name,description,item_description_raw,quantity,unit,unit_price,discount_amount,surcharge_amount,additional_tax_code,line_total,item_validation_status,price_confidence_score),dte_references(referenced_folio,referenced_tipo_dte,reason),dte_taxes(tipo_imp,tasa_imp,monto_imp,dte_items(line_number)),dte_global_discounts(id)")
     .eq("folio", folio)
     .order("fecha_emision", { ascending: false })
     .limit(1)
@@ -183,36 +235,47 @@ async function getSupabaseInvoice(folio: string): Promise<PdfInvoice | null> {
   }
 
   return {
-    documentType: invoiceType({ tipoDte: data.tipo_dte } as PdfInvoice),
+    documentType: invoiceType({ tipoDte: data.tipo_dte }),
     fechaEmision: data.fecha_emision,
     fechaVencimiento: data.fecha_vencimiento ?? data.fecha_emision,
     folio: data.folio,
     items: (data.dte_items ?? []).map((item: Record<string, unknown>) => ({
-      description: String(item.name ?? item.description ?? "SIN DESCRIPCION XML"),
+      additionalTaxCode: item.additional_tax_code ? String(item.additional_tax_code) : null,
+      description: String(item.name ?? item.description ?? "SIN NOMBRE EN XML"),
       detailDescription: item.item_description_raw ? String(item.item_description_raw) : null,
+      discountAmount: Number(item.discount_amount ?? 0),
       lineNumber: Number(item.line_number ?? 0),
       lineTotal: Number(item.line_total ?? 0),
       quantity: Number(item.quantity ?? 0),
+      surchargeAmount: Number(item.surcharge_amount ?? 0),
       unit: String(item.unit ?? "UN"),
       unitPrice: Number(item.unit_price ?? 0)
     })),
     metadata: {
-      cmnaOrigen: data.cmna_origen,
-      cmnaReceptor: data.cmna_receptor,
       ciudadOrigen: data.ciudad_origen,
-      ciudadReceptor: data.ciudad_receptor,
+      cmnaOrigen: data.cmna_origen,
       dirOrigen: data.dir_origen,
       dirReceptor: data.dir_receptor,
-      formaPago: data.forma_pago,
       giroEmisor: data.giro_emisor,
       giroReceptor: data.giro_receptor,
       globalDiscountCount: data.dte_global_discounts?.length ?? 0,
       hasCaf: Boolean(data.caf_json),
       hasTed: Boolean(data.ted_json),
-      referenceCount: data.dte_references?.length ?? 0,
+      references: (data.dte_references ?? []).map((reference: Record<string, unknown>) => ({
+        folio: reference.referenced_folio ? String(reference.referenced_folio) : null,
+        reason: reference.reason ? String(reference.reason) : null,
+        type: reference.referenced_tipo_dte ? String(reference.referenced_tipo_dte) : null
+      })),
       sourceFilename: data.gmail_filename,
       tasaIva: data.tasa_iva,
-      taxCount: data.dte_taxes?.length ?? 0,
+      taxes: (data.dte_taxes ?? []).map((tax: Record<string, unknown>) => ({
+        amount: Number(tax.monto_imp ?? 0),
+        code: tax.tipo_imp ? String(tax.tipo_imp) : null,
+        lineNumber: Array.isArray(tax.dte_items)
+          ? Number((tax.dte_items[0] as Record<string, unknown> | undefined)?.line_number ?? 0) || null
+          : null,
+        rate: tax.tasa_imp === null ? null : Number(tax.tasa_imp ?? 0)
+      })),
       termPagoGlosa: data.term_pago_glosa,
       xmlSha256: data.xml_sha256
     },
@@ -230,19 +293,17 @@ async function getSupabaseInvoice(folio: string): Promise<PdfInvoice | null> {
   };
 }
 
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ folio: string }> }
-) {
+export async function GET(request: Request, { params }: { params: Promise<{ folio: string }> }) {
   const { folio } = await params;
-  const invoice = await getSupabaseInvoice(folio) ?? purchasesData.invoices.find((candidate) => candidate.folio === folio);
+  const invoice =
+    (await getSupabaseInvoice(folio)) ??
+    (purchasesData.invoices.find((candidate) => candidate.folio === folio) as PdfInvoice | undefined);
 
   if (!invoice) {
     return NextResponse.json({ ok: false, error: "invoice_not_found" }, { status: 404 });
   }
 
-  const url = new URL(request.url);
-  const disposition = url.searchParams.get("download") === "1" ? "attachment" : "inline";
+  const disposition = new URL(request.url).searchParams.get("download") === "1" ? "attachment" : "inline";
 
   return new NextResponse(generatePdf(invoice), {
     headers: {

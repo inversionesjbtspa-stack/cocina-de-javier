@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { serverEnv } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +11,10 @@ export async function GET() {
     parsed,
     items,
     itemsWithoutPrice,
+    itemsWithoutProducts,
+    suspiciousProducts,
+    taxedItems,
+    itemTaxes,
     products,
     suppliersMissing,
     errors,
@@ -19,6 +24,13 @@ export async function GET() {
     supabase.from("dte_documents").select("id", { count: "exact", head: true }).not("raw_json", "eq", "{}"),
     supabase.from("dte_items").select("id", { count: "exact", head: true }),
     supabase.from("dte_items").select("id", { count: "exact", head: true }).lte("unit_price", 0),
+    supabase.from("dte_items").select("id", { count: "exact", head: true }).is("product_id", null),
+    supabase
+      .from("dte_items")
+      .select("id", { count: "exact", head: true })
+      .or("name.ilike.1 caja,name.ilike.1 unidad"),
+    supabase.from("dte_items").select("id", { count: "exact", head: true }).not("additional_tax_code", "is", null),
+    supabase.from("dte_taxes").select("id", { count: "exact", head: true }).not("dte_item_id", "is", null),
     supabase.from("products").select("id", { count: "exact", head: true }),
     supabase.from("dte_documents").select("id", { count: "exact", head: true }).is("supplier_id", null),
     supabase
@@ -46,8 +58,15 @@ export async function GET() {
     !parsed.error &&
     !items.error &&
     !itemsWithoutPrice.error &&
+    !itemsWithoutProducts.error &&
     !suppliersMissing.error &&
-    itemsWithoutNameWithXml === 0;
+    itemsWithoutNameWithXml === 0 &&
+    documentsWithoutItems === 0 &&
+    (itemsWithoutProducts.count ?? 0) === 0 &&
+    (suspiciousProducts.count ?? 0) === 0 &&
+    (taxedItems.count ?? 0) <= (itemTaxes.count ?? 0) &&
+    Boolean(serverEnv.CRON_SECRET) &&
+    lastSync.data?.status === "completed";
 
   return NextResponse.json(
     {
@@ -58,10 +77,16 @@ export async function GET() {
       documentsWithoutItems,
       itemsWithoutNameWithXml,
       itemsWithoutPrice: itemsWithoutPrice.count,
+      itemsWithoutProducts: itemsWithoutProducts.count,
+      suspiciousItemNames: suspiciousProducts.count,
+      additionalTaxedItems: taxedItems.count,
+      additionalItemTaxRows: itemTaxes.count,
       products: products.count,
       invoicesWithoutSupplier: suppliersMissing.count,
       parserErrorsLast7Days: errors.count,
       lastSync: lastSync.data,
+      cronSecretConfigured: Boolean(serverEnv.CRON_SECRET),
+      pdfGenerableDocuments: Math.max(0, (docs.count ?? 0) - (documentsWithoutItems ?? 0)),
       checkedAt: new Date().toISOString()
     },
     { status: ok ? 200 : 503 }

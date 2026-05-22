@@ -20,7 +20,8 @@ const migrations = [
   "202605150006_payments.sql",
   "202605150007_admin_payment_permissions.sql",
   "202605150008_complete_dte_xml_pipeline.sql",
-  "202605150009_dte_item_validation.sql"
+  "202605150009_dte_item_validation.sql",
+  "202605150010_dte_parser_production_hardening.sql"
 ];
 
 const client = new Client({

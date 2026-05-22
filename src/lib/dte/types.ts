@@ -52,6 +52,7 @@ export type ExtractedDteInvoice = {
     taxes: ExtractedDteTax[];
     parserWarnings: string[];
     parserErrors: string[];
+    validation: ExtractedDteValidation;
   };
   items: ExtractedDteItem[];
 };
@@ -62,8 +63,10 @@ export type ExtractedDteItem = {
   codeType: string | null;
   codeValue: string | null;
   name: string;
+  rawName: string | null;
   normalizedName: string;
   description: string;
+  rawDescription: string | null;
   quantity: number;
   unit: string;
   unitPrice: number;
@@ -76,6 +79,7 @@ export type ExtractedDteItem = {
   validationStatus: "valid" | "warning" | "error";
   validationErrors: string[];
   priceConfidenceScore: number;
+  productEligible: boolean;
   raw: unknown;
 };
 
@@ -106,4 +110,11 @@ export type ExtractedDteGlobalDiscount = {
   otherCurrencyValue: number | null;
   exemptIndicator: string | null;
   raw: unknown;
+};
+
+export type ExtractedDteValidation = {
+  status: "valid" | "warning" | "error";
+  warnings: string[];
+  errors: string[];
+  confidenceScore: number;
 };

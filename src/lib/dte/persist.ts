@@ -41,6 +41,77 @@ function normalizeName(value: string) {
   return value.trim().replace(/\s+/g, " ").slice(0, 240);
 }
 
+async function ensureProductForItem({
+  invoice,
+  itemId,
+  line,
+  supplierId,
+  tenantId,
+  dteDocumentId
+}: {
+  invoice: ExtractedDteInvoice;
+  itemId: string | null;
+  line: ExtractedDteInvoice["items"][number];
+  supplierId: string;
+  tenantId: string;
+  dteDocumentId: string;
+}) {
+  const supabase = createAdminClient();
+  const name = normalizeName(line.name);
+  if (!line.productEligible || !name) {
+    return null;
+  }
+
+  const { data: product, error: productError } = await supabase
+    .from("products")
+    .upsert(
+      {
+        description: line.rawDescription ?? line.description,
+        name,
+        status: "active",
+        tenant_id: tenantId,
+        unit: line.unit
+      },
+      { onConflict: "tenant_id,name" }
+    )
+    .select("id")
+    .single();
+
+  if (productError || !product?.id) {
+    throw productError ?? new Error(`Product ${name} not persisted.`);
+  }
+
+  await supabase.from("product_supplier_links").upsert(
+    {
+      last_purchase_at: invoice.fechaEmision,
+      last_purchase_price: line.unitPrice,
+      product_id: product.id,
+      supplier_id: supplierId,
+      supplier_product_code: line.codeValue,
+      tenant_id: tenantId
+    },
+    { onConflict: "tenant_id,product_id,supplier_id" }
+  );
+
+  if (itemId) {
+    await supabase.from("dte_items").update({ product_id: product.id }).eq("id", itemId);
+  }
+
+  if (line.priceConfidenceScore >= 90 && line.unitPrice > 0) {
+    await supabase.from("product_price_history").insert({
+      effective_date: invoice.fechaEmision,
+      price: line.unitPrice,
+      product_id: product.id,
+      source_entity_id: dteDocumentId,
+      source_entity_type: "dte_document",
+      supplier_id: supplierId,
+      tenant_id: tenantId
+    });
+  }
+
+  return product.id as string;
+}
+
 export async function persistExtractedDteInvoices(invoices: PersistInput) {
   const supabase = createAdminClient();
   const results = [];
@@ -180,6 +251,7 @@ export async function persistExtractedDteInvoices(invoices: PersistInput) {
           parser_version: "dte-parser-v2",
           parser_warnings: invoice.raw.parserWarnings,
           parser_errors: invoice.raw.parserErrors,
+          confidence_score: invoice.raw.validation.confidenceScore,
           razon_social_emisor: invoice.razonSocialEmisor,
           razon_social_receptor: invoice.razonSocialReceptor,
           rut_emisor: invoice.rutEmisor,
@@ -195,7 +267,9 @@ export async function persistExtractedDteInvoices(invoices: PersistInput) {
           tipo_dte: invoice.tipoDte,
           tpo_tran_compra: invoice.tipoTranCompra,
           tpo_tran_venta: invoice.tipoTranVenta,
-          validation_status: "parsed",
+          validation_errors: invoice.raw.validation.errors,
+          validation_status: invoice.raw.validation.status,
+          validation_warnings: invoice.raw.validation.warnings,
           vlr_pagar: invoice.valorPagar,
           xml_original: item.xml,
           xml_sha256: xmlHash
@@ -240,6 +314,7 @@ export async function persistExtractedDteInvoices(invoices: PersistInput) {
         .insert(
           invoice.items.map((line) => ({
             additional_tax_code: line.additionalTaxCode,
+            item_additional_tax_codes: line.additionalTaxCode ? [line.additionalTaxCode] : [],
             code_type: line.codeType,
             code_value: line.codeValue,
             description: line.description,
@@ -249,6 +324,7 @@ export async function persistExtractedDteInvoices(invoices: PersistInput) {
             dte_document_id: dte.id,
             item_code: line.itemCode,
             item_description_raw: line.description,
+            item_name_raw: line.rawName,
             item_name_normalized: line.normalizedName,
             item_validation_errors: line.validationErrors,
             item_validation_status: line.validationStatus,
@@ -292,47 +368,14 @@ export async function persistExtractedDteInvoices(invoices: PersistInput) {
       }
 
       for (const line of invoice.items) {
-        const name = normalizeName(line.name);
-        if (!name || line.unitPrice <= 0) {
-          continue;
-        }
-        const { data: product } = await supabase
-          .from("products")
-          .upsert(
-            {
-              description: line.description,
-              name,
-              status: "active",
-              tenant_id: tenant.id,
-              unit: line.unit
-            },
-            { onConflict: "tenant_id,name" }
-          )
-          .select("id")
-          .single();
-
-        if (product?.id) {
-          await supabase.from("product_supplier_links").upsert(
-            {
-              last_purchase_at: invoice.fechaEmision,
-              last_purchase_price: line.unitPrice,
-              product_id: product.id,
-              supplier_id: supplier.id,
-              supplier_product_code: line.codeValue,
-              tenant_id: tenant.id
-            },
-            { onConflict: "tenant_id,product_id,supplier_id" }
-          );
-          await supabase.from("product_price_history").insert({
-            effective_date: invoice.fechaEmision,
-            price: line.unitPrice,
-            product_id: product.id,
-            source_entity_id: dte.id,
-            source_entity_type: "dte_document",
-            supplier_id: supplier.id,
-            tenant_id: tenant.id
-          });
-        }
+        await ensureProductForItem({
+          dteDocumentId: dte.id,
+          invoice,
+          itemId: itemIdByLine.get(line.lineNumber) ?? null,
+          line,
+          supplierId: supplier.id,
+          tenantId: tenant.id
+        });
       }
     }
 
