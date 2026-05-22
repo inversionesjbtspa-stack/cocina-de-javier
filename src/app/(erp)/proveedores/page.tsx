@@ -1,16 +1,17 @@
 import { AlertTriangle, Building2, CreditCard, MailWarning, ShieldCheck } from "lucide-react";
 import { Suspense } from "react";
 import { AppShell } from "@/components/layout/app-shell";
-import { SupplierMasterDirectory } from "@/components/suppliers/supplier-master-directory";
+import { SupplierProfileDirectory } from "@/components/suppliers/supplier-profile-directory";
 import { MetricCard, PremiumPanel } from "@/components/ui/enterprise";
-import { enrichedSuppliers, suppliersMaster } from "@/lib/suppliers/master";
+import { suppliersMaster } from "@/lib/suppliers/master";
 import { formatClp } from "@/lib/dte/purchases-data";
+import { getSupplierPaymentProfiles } from "@/lib/suppliers/supabase-profiles";
 
-export default function ProveedoresPage() {
-  const suppliers = enrichedSuppliers();
+export default async function ProveedoresPage() {
+  const suppliers = await getSupplierPaymentProfiles();
   const pending = suppliers.reduce((sum, supplier) => sum + supplier.pending, 0);
-  const missingBank = suppliers.filter((supplier) => supplier.validation.alerts.includes("Proveedor sin codigo de banco"));
-  const missingEmail = suppliers.filter((supplier) => supplier.validation.alerts.includes("Proveedor sin email"));
+  const missingBank = suppliers.filter((supplier) => supplier.missingPaymentFields.includes("banco") || supplier.missingPaymentFields.includes("numero de cuenta"));
+  const missingEmail = suppliers.filter((supplier) => supplier.missingPaymentFields.includes("email de pagos"));
   const withDebt = suppliers.filter((supplier) => supplier.pending > 0);
 
   return (
@@ -33,10 +34,10 @@ export default function ProveedoresPage() {
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard
-            detail={`${suppliersMaster.stats.duplicateRuts.length} RUT duplicados detectados`}
+            detail={`${suppliersMaster.stats.duplicateRuts.length} RUT duplicados detectados en master`}
             href="/proveedores?filter=duplicados"
             label="Proveedores master"
-            value={String(suppliersMaster.stats.total)}
+            value={String(suppliers.length)}
           />
           <MetricCard
             detail={`${withDebt.length} proveedores con facturas XML`}
@@ -81,7 +82,7 @@ export default function ProveedoresPage() {
         </div>
 
         <Suspense fallback={<div className="rounded-2xl border border-[#eadfd9] bg-white p-6 text-sm text-[#6f6263]">Cargando proveedores...</div>}>
-          <SupplierMasterDirectory suppliers={suppliers} />
+            <SupplierProfileDirectory initialSuppliers={suppliers} />
         </Suspense>
       </section>
     </AppShell>

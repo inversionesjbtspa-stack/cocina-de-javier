@@ -17,6 +17,7 @@ export async function GET() {
     itemTaxes,
     products,
     suppliersMissing,
+    payablesMissing,
     errors,
     lastSync
   ] = await Promise.all([
@@ -33,6 +34,7 @@ export async function GET() {
     supabase.from("dte_taxes").select("id", { count: "exact", head: true }).not("dte_item_id", "is", null),
     supabase.from("products").select("id", { count: "exact", head: true }),
     supabase.from("dte_documents").select("id", { count: "exact", head: true }).is("supplier_id", null),
+    supabase.from("dte_documents").select("id,accounts_payable(id)", { count: "exact" }).neq("tipo_dte", "61").limit(1000),
     supabase
       .from("dte_processing_errors")
       .select("id", { count: "exact", head: true })
@@ -52,6 +54,7 @@ export async function GET() {
     .limit(1000);
   const itemsWithoutNameWithXml =
     itemNameAudit.data?.filter((row) => !String(row.name ?? "").trim()).length ?? null;
+  const invoicesWithoutPayable = payablesMissing.data?.filter((row) => !row.accounts_payable?.length).length ?? null;
 
   const ok =
     !docs.error &&
@@ -65,6 +68,7 @@ export async function GET() {
     (itemsWithoutProducts.count ?? 0) === 0 &&
     (suspiciousProducts.count ?? 0) === 0 &&
     (taxedItems.count ?? 0) <= (itemTaxes.count ?? 0) &&
+    invoicesWithoutPayable === 0 &&
     Boolean(serverEnv.CRON_SECRET) &&
     lastSync.data?.status === "completed";
 
@@ -83,6 +87,7 @@ export async function GET() {
       additionalItemTaxRows: itemTaxes.count,
       products: products.count,
       invoicesWithoutSupplier: suppliersMissing.count,
+      invoicesWithoutPayable,
       parserErrorsLast7Days: errors.count,
       lastSync: lastSync.data,
       cronSecretConfigured: Boolean(serverEnv.CRON_SECRET),

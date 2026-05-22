@@ -1,15 +1,16 @@
 import { NextResponse } from "next/server";
-import { generateSantanderTemplate } from "@/lib/payments/santander-template";
+import { generateSantanderTemplate, generateSantanderTemplateFromPayables } from "@/lib/payments/santander-template";
 
-export function GET(request: Request) {
+export async function GET(request: Request) {
   const url = new URL(request.url);
+  const payableIds = url.searchParams.get("payableIds")?.split(",").map((id) => id.trim()).filter(Boolean) ?? [];
   const folios = url.searchParams
     .get("folios")
     ?.split(",")
     .map((folio) => folio.trim())
     .filter(Boolean) ?? [];
 
-  const result = generateSantanderTemplate(folios);
+  const result = payableIds.length ? await generateSantanderTemplateFromPayables(payableIds, url.searchParams.get("payDate") ?? undefined) : generateSantanderTemplate(folios);
 
   if (!result.ok) {
     return NextResponse.json(
@@ -18,9 +19,9 @@ export function GET(request: Request) {
         error: "payment_validation_failed",
         invalid: result.invalid.map((item) => ({
           alerts: item.alerts,
-          folio: item.invoice.folio,
-          proveedor: item.invoice.razonSocialEmisor,
-          rut: item.invoice.rutEmisor
+          folio: "invoice" in item ? item.invoice.folio : item.id,
+          proveedor: "invoice" in item ? item.invoice.razonSocialEmisor : "Cuenta por pagar",
+          rut: "invoice" in item ? item.invoice.rutEmisor : ""
         }))
       },
       { status: 422 }

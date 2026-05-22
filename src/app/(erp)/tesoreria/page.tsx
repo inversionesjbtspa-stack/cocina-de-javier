@@ -18,7 +18,7 @@ import {
 } from "@/lib/finance/erp-metrics";
 import { formatClp, formatDate } from "@/lib/dte/purchases-data";
 import { getDtePurchaseData } from "@/lib/dte/supabase-data";
-import { paymentValidation } from "@/lib/suppliers/master";
+import { getPayableCandidates } from "@/lib/payments/payables";
 
 function Badge({
   children,
@@ -35,7 +35,7 @@ function Badge({
 }
 
 export default async function TesoreriaPage() {
-  const dteData = await getDtePurchaseData();
+  const [dteData, paymentCandidates] = await Promise.all([getDtePurchaseData(), getPayableCandidates()]);
   const metrics = createErpMetrics(dteData);
   const today = metrics.invoicesDueWithin(0);
   const due7 = metrics.invoicesDueWithin(7);
@@ -47,22 +47,6 @@ export default async function TesoreriaPage() {
   const criticalSuppliers = metrics.supplierSpend(6);
   const prepared = due30.slice(0, 12);
   const due7LastDate = due7.at(-1)?.fechaVencimiento;
-  const paymentCandidates = due30
-    .filter((invoice) => invoice.tipoDte !== "61")
-    .slice(0, 80)
-    .map((invoice) => {
-      const validation = paymentValidation(invoice);
-      return {
-        alerts: validation.alerts,
-        bankAccount: validation.supplier?.bankAccount ?? "",
-        bankCode: validation.supplier?.bankCode ?? "",
-        bankName: validation.supplier?.bankName ?? "",
-        email: validation.supplier?.email ?? "",
-        invoice,
-        ok: validation.ok,
-        supplierName: validation.supplier?.businessName ?? invoice.razonSocialEmisor
-      };
-    });
 
   const summary = [
     {

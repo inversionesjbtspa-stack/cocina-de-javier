@@ -5,9 +5,12 @@ import { MetricCard, PremiumPanel, StatusPill } from "@/components/ui/enterprise
 import { formatClp, formatDate } from "@/lib/dte/purchases-data";
 import { createErpMetrics } from "@/lib/finance/erp-metrics";
 import { getDtePurchaseData } from "@/lib/dte/supabase-data";
+import { getDteOperationalInvoices } from "@/lib/dte/invoice-operations";
+import { InvoiceDayDirectory } from "@/components/dte/invoice-day-directory";
+import { RepairConsistencyButton } from "@/components/dte/repair-consistency-button";
 
 export default async function FacturasPage() {
-  const dteData = await getDtePurchaseData();
+  const [dteData, operationalInvoices] = await Promise.all([getDtePurchaseData(), getDteOperationalInvoices()]);
   const metrics = createErpMetrics(dteData);
   const invoices = metrics.currentMonthInvoices.slice(0, 12);
   const total = invoices.reduce((sum, invoice) => sum + invoice.montoTotal, 0);
@@ -38,6 +41,7 @@ export default async function FacturasPage() {
           <MetricCard detail="Ajustes tributarios recibidos" href="/facturas?tipo=61" label="Notas credito" tone={creditNotes.length ? "warning" : "neutral"} value={String(creditNotes.length)} />
           <MetricCard detail="Lineas de detalle parseadas" href="/facturas?filter=items" label="Items XML" value={String(parsedItems)} />
         </div>
+        <InvoiceDayDirectory invoices={operationalInvoices} />
 
         <section className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
           <PremiumPanel className="p-5">
@@ -53,7 +57,7 @@ export default async function FacturasPage() {
                   Ultima sincronizacion: {new Date(dteData.generatedAt).toLocaleString("es-CL")} · Proxima: cron Vercel cada 10 minutos
                 </p>
               </div>
-              <SyncXmlButton />
+              <div className="flex flex-wrap gap-2"><SyncXmlButton /><RepairConsistencyButton /></div>
             </div>
 
             <div className="mt-5 space-y-4">

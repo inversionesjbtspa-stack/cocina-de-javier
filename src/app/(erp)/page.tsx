@@ -26,6 +26,8 @@ import {
   totalsFor
 } from "@/lib/dte/purchases-data";
 import { getDtePurchaseData } from "@/lib/dte/supabase-data";
+import { getIntelligentPriceAlerts } from "@/lib/finance/price-alerts";
+import { PriceAlertPanel } from "@/components/finance/price-alert-panel";
 
 function StatusBadge({
   label,
@@ -45,7 +47,7 @@ function StatusBadge({
 }
 
 export default async function HomePage() {
-  const dteData = await getDtePurchaseData();
+  const [dteData, priceAlerts] = await Promise.all([getDtePurchaseData(), getIntelligentPriceAlerts()]);
   const metrics = createErpMetrics(dteData);
   const totals = totalsFor(metrics.currentMonthInvoices);
   const overdue = metrics.overdueInvoices();
@@ -316,6 +318,7 @@ export default async function HomePage() {
             </div>
           </article>
         </section>
+        <PriceAlertPanel alerts={priceAlerts} />
 
         <section className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
