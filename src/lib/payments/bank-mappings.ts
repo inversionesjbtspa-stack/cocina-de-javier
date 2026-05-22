@@ -38,6 +38,8 @@ const mappings: BankMapping[] = [
   { aliases: ["BANCO FALABELLA"], bankCode: "51", bankNameNormalized: "BANCO FALABELLA", confidence: 1, needsReview: false, source: masterSource },
   { aliases: ["BANCO RIPLEY"], bankCode: "53", bankNameNormalized: "BANCO RIPLEY", confidence: 1, needsReview: false, source: masterSource },
   { aliases: ["BANCO INTERNACIONAL"], bankCode: "9", bankNameNormalized: "BANCO INTERNACIONAL", confidence: 1, needsReview: false, source: masterSource },
+  { aliases: ["BANCO BBVA SCOTIA BANK AZUL"], bankCode: "504", bankNameNormalized: "BBVA / SCOTIA BANK AZUL", confidence: 1, needsReview: false, source: masterSource },
+  { aliases: ["CORPBANCA"], bankCode: "27", bankNameNormalized: "CORPBANCA", confidence: 1, needsReview: false, source: masterSource },
   { aliases: ["MERCADOPAGO", "MERCADO PAGO"], bankCode: "875", bankNameNormalized: "MERCADO PAGO", confidence: 1, needsReview: false, source: masterSource },
   { aliases: ["BANCO CONSORCIO"], bankCode: "", bankNameNormalized: "BANCO CONSORCIO", confidence: 0.5, needsReview: true, source: "needs master/template confirmation" },
   { aliases: ["COOPEUCH"], bankCode: "", bankNameNormalized: "COOPEUCH", confidence: 0.5, needsReview: true, source: "needs master/template confirmation" },

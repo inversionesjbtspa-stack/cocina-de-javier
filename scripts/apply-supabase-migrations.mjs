@@ -23,7 +23,8 @@ const migrations = [
   "202605150009_dte_item_validation.sql",
   "202605150010_dte_parser_production_hardening.sql",
   "202605150011_supplier_payment_profiles.sql",
-  "202605150012_bank_mapping_repair.sql"
+  "202605150012_bank_mapping_repair.sql",
+  "202605150013_bank_mapping_master_tail.sql"
 ];
 
 const client = new Client({
