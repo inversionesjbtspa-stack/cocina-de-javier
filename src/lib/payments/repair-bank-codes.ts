@@ -54,6 +54,18 @@ function one<T>(value: T | T[] | null) {
 
 export async function repairBankCodes(actor: BankActor) {
   const supabase = createAdminClient();
+  const mappings = mappedBanks().flatMap((mapping) =>
+    mapping.aliases.map((alias) => ({
+      bank_code: mapping.bankCode,
+      bank_name_normalized: mapping.bankNameNormalized,
+      confidence: 1,
+      needs_review: false,
+      raw_pattern: alias,
+      source: "master proveedores jesus"
+    }))
+  );
+  const { error: mappingError } = await supabase.from("bank_mappings").upsert(mappings, { onConflict: "raw_pattern" });
+  if (mappingError) throw mappingError;
   const { data: banks, error } = await supabase
     .from("supplier_bank_accounts")
     .select("id,supplier_id,bank_name,bank_code,bank_raw,account_type,account_number")
