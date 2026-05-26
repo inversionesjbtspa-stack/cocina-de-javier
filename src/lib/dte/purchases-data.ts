@@ -14,7 +14,12 @@ export type DtePurchaseItem = {
 };
 
 export type DtePurchaseInvoice = {
+  id?: string;
+  accountsPayableId?: string | null;
   normalizedKey?: string;
+  source?: "xml" | "sii";
+  sourceLabel?: string;
+  siiRegistryId?: string | null;
   tipoDte: string;
   documentType: string;
   folio: string;
@@ -29,6 +34,7 @@ export type DtePurchaseInvoice = {
   iva: number;
   montoTotal: number;
   paymentStatus: string;
+  xmlStatus?: "received" | "missing";
   items: DtePurchaseItem[];
 };
 

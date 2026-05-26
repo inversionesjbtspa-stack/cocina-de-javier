@@ -14,7 +14,7 @@ import {
   formatMonth,
   totalsFor
 } from "@/lib/dte/purchases-data";
-import { getDtePurchaseData } from "@/lib/dte/supabase-data";
+import { getUnifiedPurchasesByMonth } from "@/lib/dte/supabase-data";
 import type { ReactNode } from "react";
 
 function Badge({
@@ -32,10 +32,15 @@ function Badge({
 }
 
 export default async function ComprasPage() {
-  const dteData = await getDtePurchaseData();
+  const dteData = await getUnifiedPurchasesByMonth();
   const metrics = createErpMetrics(dteData);
   const invoices = metrics.currentMonthInvoices;
   const totals = totalsFor(invoices);
+  const xmlInvoices = invoices.filter((invoice) => invoice.xmlStatus !== "missing" && invoice.source !== "sii");
+  const pendingXmlInvoices = invoices.filter((invoice) => invoice.xmlStatus === "missing" || invoice.source === "sii");
+  const xmlTotals = totalsFor(xmlInvoices);
+  const pendingXmlTotals = totalsFor(pendingXmlInvoices);
+  const pendingXmlSuppliers = new Set(pendingXmlInvoices.map((invoice) => invoice.rutEmisor)).size;
   const categories = metrics.categorySpend();
   const suppliers = metrics.supplierSpend(8);
   const increases = metrics.priceIncreaseProducts(8);
@@ -55,8 +60,9 @@ export default async function ComprasPage() {
                 Compras
               </h1>
               <p className="mt-3 max-w-4xl text-base leading-7 text-[#4e5a52]">
-                {dteData.invoiceCount} XML DTE cargados. Analisis mensual
-                de gasto, proveedores, productos y variaciones de precio.
+                {dteData.invoiceCount} documentos consolidados entre XML recibidos
+                y facturas detectadas en SII pendientes de XML. Productos y alertas
+                de precio se calculan solo con XML que tiene detalle.
               </p>
             </div>
             <div className="grid gap-3 text-sm sm:grid-cols-3">
@@ -80,6 +86,29 @@ export default async function ComprasPage() {
               </div>
             </div>
           </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <article className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm">
+            <p className="text-sm font-medium text-[#667068]">Documentos totales</p>
+            <p className="mt-2 text-2xl font-semibold text-brand-900">{invoices.length}</p>
+            <p className="mt-1 text-xs text-[#667068]">XML + SII sin duplicar</p>
+          </article>
+          <article className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm">
+            <p className="text-sm font-medium text-[#667068]">Documentos con XML</p>
+            <p className="mt-2 text-2xl font-semibold text-emerald-800">{xmlInvoices.length}</p>
+            <p className="mt-1 text-xs text-[#667068]">{formatClp(xmlTotals.total)} con respaldo XML</p>
+          </article>
+          <article className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm">
+            <p className="text-sm font-medium text-[#667068]">Pendientes XML</p>
+            <p className="mt-2 text-2xl font-semibold text-amber-800">{pendingXmlInvoices.length}</p>
+            <p className="mt-1 text-xs text-[#667068]">{formatClp(pendingXmlTotals.total)} detectado en SII</p>
+          </article>
+          <article className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm">
+            <p className="text-sm font-medium text-[#667068]">Proveedores con XML pendiente</p>
+            <p className="mt-2 text-2xl font-semibold text-brand-900">{pendingXmlSuppliers}</p>
+            <p className="mt-1 text-xs text-[#667068]">Cruce Control SII vs XML</p>
+          </article>
         </div>
 
         <div className="grid gap-4 lg:grid-cols-3">
@@ -183,11 +212,13 @@ export default async function ComprasPage() {
                 Facturas por mes - {formatMonth(metrics.currentMonth)}
               </h2>
               <p className="mt-1 text-sm text-[#667068]">
-                Tabla enterprise con filtros visuales, montos CLP y acciones PDF.
+                Tabla unificada con XML recibido y facturas SII pendientes de XML.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
               <Badge>{`${invoices.length} documentos`}</Badge>
+              <Badge>{`${xmlInvoices.length} con XML`}</Badge>
+              <Badge severity={pendingXmlInvoices.length ? "warning" : "healthy"}>{`${pendingXmlInvoices.length} pendientes XML`}</Badge>
               <Badge>{`${formatClp(totals.total)} total`}</Badge>
               <Badge severity={totals.creditNotes ? "warning" : "healthy"}>
                 {`${totals.creditNotes} notas credito`}

@@ -11,6 +11,10 @@ import {
 
 type DteRow = {
   id: string;
+  source_type: string | null;
+  xml_status: string | null;
+  payment_status: string | null;
+  sii_purchase_registry_id: string | null;
   tipo_dte: string;
   folio: string;
   rut_emisor: string;
@@ -38,6 +42,25 @@ type DteRow = {
   }>;
 };
 
+type SiiRegistryRow = {
+  id: string;
+  periodo: string | null;
+  rut_emisor: string;
+  proveedor: string | null;
+  razon_social: string | null;
+  tipo_dte: string;
+  folio: string;
+  fecha_emision: string | null;
+  monto_neto: number | null;
+  iva: number | null;
+  monto_total: number | null;
+  estado_xml: string | null;
+  payment_status: string | null;
+  dte_document_id: string | null;
+  provisional_dte_document_id: string | null;
+  accounts_payable_id: string | null;
+};
+
 function documentType(tipoDte: string) {
   if (tipoDte === "61") {
     return "Nota credito electronica";
@@ -51,6 +74,10 @@ function documentType(tipoDte: string) {
 function toNumber(value: unknown) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeKey(rut: string, tipoDte: string, folio: string) {
+  return `${rut.replace(/[.\-\s]/g, "").toUpperCase()}:${tipoDte}:${folio}`.toUpperCase();
 }
 
 function toInvoice(row: DteRow): DtePurchaseInvoice {
@@ -68,22 +95,57 @@ function toInvoice(row: DteRow): DtePurchaseInvoice {
   }));
 
   return {
+    accountsPayableId: null,
     documentType: documentType(row.tipo_dte),
     fechaEmision: row.fecha_emision,
     fechaVencimiento: row.fecha_vencimiento ?? row.fecha_emision,
     folio: row.folio,
+    id: row.id,
     items,
     montoExento: toNumber(row.monto_exento),
     montoNeto: toNumber(row.monto_neto),
     montoTotal: toNumber(row.monto_total),
-    normalizedKey: row.idempotency_key,
-    paymentStatus: "Pendiente",
+    normalizedKey: normalizeKey(row.rut_emisor, row.tipo_dte, row.folio),
+    paymentStatus: row.payment_status ?? "Pendiente",
     razonSocialEmisor: row.razon_social_emisor ?? row.rut_emisor,
     razonSocialReceptor: row.razon_social_receptor ?? row.rut_receptor,
     rutEmisor: row.rut_emisor,
     rutReceptor: row.rut_receptor,
+    siiRegistryId: row.sii_purchase_registry_id,
+    source: row.source_type === "sii" ? "sii" : "xml",
+    sourceLabel: row.source_type === "sii" ? "SII" : "XML",
     tipoDte: row.tipo_dte,
-    iva: toNumber(row.iva)
+    iva: toNumber(row.iva),
+    xmlStatus: row.xml_status === "missing" ? "missing" : "received"
+  };
+}
+
+function toSiiInvoice(row: SiiRegistryRow): DtePurchaseInvoice {
+  const issueDate = row.fecha_emision ?? `${row.periodo ?? "2026-05"}-01`;
+  const supplier = row.razon_social ?? row.proveedor ?? row.rut_emisor;
+
+  return {
+    accountsPayableId: row.accounts_payable_id,
+    documentType: documentType(String(row.tipo_dte)),
+    fechaEmision: issueDate,
+    fechaVencimiento: issueDate,
+    folio: String(row.folio),
+    items: [],
+    montoExento: 0,
+    montoNeto: toNumber(row.monto_neto),
+    montoTotal: toNumber(row.monto_total),
+    normalizedKey: normalizeKey(row.rut_emisor, String(row.tipo_dte), String(row.folio)),
+    paymentStatus: row.payment_status ?? (row.accounts_payable_id ? "En tesoreria" : "Pendiente"),
+    razonSocialEmisor: supplier,
+    razonSocialReceptor: "La Cocina de Javier",
+    rutEmisor: row.rut_emisor,
+    rutReceptor: "",
+    siiRegistryId: row.id,
+    source: "sii",
+    sourceLabel: "SII",
+    tipoDte: String(row.tipo_dte),
+    iva: toNumber(row.iva),
+    xmlStatus: "missing"
   };
 }
 
@@ -178,6 +240,10 @@ function summarize(invoices: DtePurchaseInvoice[]): DtePurchaseData["summaries"]
 }
 
 export async function getDtePurchaseData(): Promise<DtePurchaseData> {
+  return getUnifiedPurchasesByMonth();
+}
+
+export async function getUnifiedPurchasesByMonth(): Promise<DtePurchaseData> {
   noStore();
   if (!hasSupabaseAdminConfig()) {
     return purchasesData;
@@ -186,15 +252,43 @@ export async function getDtePurchaseData(): Promise<DtePurchaseData> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("dte_documents")
-    .select("id,tipo_dte,folio,rut_emisor,razon_social_emisor,rut_receptor,razon_social_receptor,fecha_emision,fecha_vencimiento,monto_neto,monto_exento,iva,monto_total,idempotency_key,dte_items(line_number,name,description,item_description_raw,quantity,unit,unit_price,line_total,item_validation_status,price_confidence_score)")
+    .select("id,source_type,xml_status,payment_status,sii_purchase_registry_id,tipo_dte,folio,rut_emisor,razon_social_emisor,rut_receptor,razon_social_receptor,fecha_emision,fecha_vencimiento,monto_neto,monto_exento,iva,monto_total,idempotency_key,dte_items(line_number,name,description,item_description_raw,quantity,unit,unit_price,line_total,item_validation_status,price_confidence_score)")
     .order("fecha_emision", { ascending: false })
-    .limit(1000);
+    .limit(5000);
 
-  if (error || !data?.length) {
+  const dteRows = error
+    ? (await supabase
+      .from("dte_documents")
+      .select("id,tipo_dte,folio,rut_emisor,razon_social_emisor,rut_receptor,razon_social_receptor,fecha_emision,fecha_vencimiento,monto_neto,monto_exento,iva,monto_total,idempotency_key,dte_items(line_number,name,description,item_description_raw,quantity,unit,unit_price,line_total,item_validation_status,price_confidence_score)")
+      .order("fecha_emision", { ascending: false })
+      .limit(5000)).data
+    : data;
+
+  const byKey = new Map<string, DtePurchaseInvoice>();
+  for (const invoice of ((dteRows ?? []) as DteRow[]).map(toInvoice)) {
+    byKey.set(invoice.normalizedKey ?? normalizeKey(invoice.rutEmisor, invoice.tipoDte, invoice.folio), invoice);
+  }
+
+  const { data: registryData } = await supabase
+    .from("sii_purchase_registry")
+    .select("id,periodo,rut_emisor,proveedor,razon_social,tipo_dte,folio,fecha_emision,monto_neto,iva,monto_total,estado_xml,payment_status,dte_document_id,provisional_dte_document_id,accounts_payable_id")
+    .or("estado_xml.eq.falta_xml,dte_document_id.is.null")
+    .order("fecha_emision", { ascending: false })
+    .limit(5000);
+
+  for (const row of ((registryData ?? []) as SiiRegistryRow[])) {
+    const invoice = toSiiInvoice(row);
+    const key = invoice.normalizedKey ?? normalizeKey(invoice.rutEmisor, invoice.tipoDte, invoice.folio);
+    if (!byKey.has(key)) {
+      byKey.set(key, invoice);
+    }
+  }
+
+  const invoices = [...byKey.values()].sort((a, b) => b.fechaEmision.localeCompare(a.fechaEmision));
+  if (!invoices.length) {
     return purchasesData;
   }
 
-  const invoices = (data as DteRow[]).map(toInvoice);
   return {
     generatedAt: new Date().toISOString(),
     invoiceCount: invoices.length,

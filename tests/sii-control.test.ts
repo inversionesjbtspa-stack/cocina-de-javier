@@ -51,3 +51,24 @@ test("Control SII module exposes upload, comparison and missing XML claim text",
   assert.match(migration, /provisional_dte_document_id/);
   assert.match(migration, /payment_status/);
 });
+
+test("Compras uses unified XML and SII pending purchases without product side effects", async () => {
+  const purchasesStore = await readFile("src/lib/dte/supabase-data.ts", "utf8");
+  const comprasPage = await readFile("src/app/(erp)/compras/page.tsx", "utf8");
+  const comprasTable = await readFile("src/components/purchases/purchase-search-table.tsx", "utf8");
+  const exportRoute = await readFile("src/app/api/exports/purchases/route.ts", "utf8");
+
+  assert.match(purchasesStore, /getUnifiedPurchasesByMonth/);
+  assert.match(purchasesStore, /sii_purchase_registry/);
+  assert.match(purchasesStore, /estado_xml\.eq\.falta_xml,dte_document_id\.is\.null/);
+  assert.match(purchasesStore, /normalizeKey\(row\.rut_emisor, String\(row\.tipo_dte\), String\(row\.folio\)\)/);
+  assert.match(purchasesStore, /items: \[\]/);
+  assert.match(comprasPage, /Documentos con XML/);
+  assert.match(comprasPage, /Pendientes XML/);
+  assert.match(comprasPage, /getUnifiedPurchasesByMonth/);
+  assert.match(comprasTable, /SII pendiente XML/);
+  assert.match(comprasTable, /PDF no disponible/);
+  assert.match(comprasTable, /Enviar a Tesoreria/);
+  assert.match(comprasTable, /api\/sii\/provisionalize/);
+  assert.match(exportRoute, /getUnifiedPurchasesByMonth/);
+});

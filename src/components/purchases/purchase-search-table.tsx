@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarDays, Search } from "lucide-react";
+import { CalendarDays, FileWarning, Search, Send } from "lucide-react";
 import { formatClp, formatDate, type DtePurchaseInvoice } from "@/lib/dte/purchases-data";
 
 function normalize(value: string) {
@@ -11,19 +11,59 @@ function normalize(value: string) {
 export function PurchaseSearchTable({ invoices }: { invoices: DtePurchaseInvoice[] }) {
   const [query, setQuery] = useState("");
   const [month, setMonth] = useState("todos");
+  const [origin, setOrigin] = useState("todos");
+  const [xmlStatus, setXmlStatus] = useState("todos");
+  const [paymentStatus, setPaymentStatus] = useState("todos");
+  const [busyRegistryId, setBusyRegistryId] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const months = useMemo(() => ["todos", ...Array.from(new Set(invoices.map((invoice) => invoice.fechaEmision.slice(0, 7))))], [invoices]);
+  const paymentStatuses = useMemo(
+    () => ["todos", ...Array.from(new Set(invoices.map((invoice) => invoice.paymentStatus).filter(Boolean)))],
+    [invoices]
+  );
   const filtered = useMemo(() => {
     const needle = normalize(query);
     return invoices.filter((invoice) => {
       const products = invoice.items.map((item) => item.description).join(" ");
-      const haystack = normalize(`${invoice.razonSocialEmisor} ${invoice.rutEmisor} ${invoice.folio} ${invoice.montoTotal} ${invoice.fechaEmision} ${products}`);
-      return (!needle || haystack.includes(needle)) && (month === "todos" || invoice.fechaEmision.startsWith(month));
+      const haystack = normalize(`${invoice.razonSocialEmisor} ${invoice.rutEmisor} ${invoice.folio} ${invoice.montoTotal} ${invoice.fechaEmision} ${invoice.tipoDte} ${invoice.sourceLabel ?? ""} ${invoice.paymentStatus} ${products}`);
+      const matchesOrigin = origin === "todos" || invoice.source === origin;
+      const matchesXmlStatus =
+        xmlStatus === "todos" ||
+        (xmlStatus === "received" && invoice.xmlStatus !== "missing") ||
+        (xmlStatus === "missing" && invoice.xmlStatus === "missing");
+      const matchesPayment = paymentStatus === "todos" || invoice.paymentStatus === paymentStatus;
+      return (!needle || haystack.includes(needle)) &&
+        (month === "todos" || invoice.fechaEmision.startsWith(month)) &&
+        matchesOrigin &&
+        matchesXmlStatus &&
+        matchesPayment;
     });
-  }, [invoices, month, query]);
+  }, [invoices, month, origin, paymentStatus, query, xmlStatus]);
+
+  async function sendToTreasury(invoice: DtePurchaseInvoice) {
+    if (!invoice.siiRegistryId) {
+      return;
+    }
+
+    setBusyRegistryId(invoice.siiRegistryId);
+    setMessage(null);
+    const response = await fetch("/api/sii/provisionalize", {
+      body: JSON.stringify({ ids: [invoice.siiRegistryId] }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      setMessage(payload?.error ?? "No se pudo enviar a Tesoreria.");
+    } else {
+      setMessage(`Enviado a Tesoreria: ${payload?.createdPayables ?? 0} cuenta(s) por pagar creadas.`);
+    }
+    setBusyRegistryId(null);
+  }
 
   return (
     <>
-      <div className="mt-5 grid gap-3 lg:grid-cols-5">
+      <div className="mt-5 grid gap-3 lg:grid-cols-6">
         <label className="block lg:col-span-2">
           <span className="flex items-center gap-2 text-sm font-medium text-[#5d665f]">
             <Search className="h-4 w-4" />
@@ -48,15 +88,50 @@ export function PurchaseSearchTable({ invoices }: { invoices: DtePurchaseInvoice
             ))}
           </select>
         </label>
-        <div className="flex items-end gap-2 lg:col-span-2">
-          <a className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50" href="/compras">
+        <label className="block">
+          <span className="text-sm font-medium text-[#5d665f]">Origen</span>
+          <select className="mt-2 w-full rounded-md border border-[#dfe4dd] px-3 py-2 text-sm" onChange={(event) => setOrigin(event.target.value)} value={origin}>
+            <option value="todos">Todos</option>
+            <option value="xml">XML</option>
+            <option value="sii">SII pendiente XML</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-sm font-medium text-[#5d665f]">Estado XML</span>
+          <select className="mt-2 w-full rounded-md border border-[#dfe4dd] px-3 py-2 text-sm" onChange={(event) => setXmlStatus(event.target.value)} value={xmlStatus}>
+            <option value="todos">Todos</option>
+            <option value="received">Recibido</option>
+            <option value="missing">Pendiente XML</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-sm font-medium text-[#5d665f]">Estado pago</span>
+          <select className="mt-2 w-full rounded-md border border-[#dfe4dd] px-3 py-2 text-sm" onChange={(event) => setPaymentStatus(event.target.value)} value={paymentStatus}>
+            {paymentStatuses.map((item) => (
+              <option key={item} value={item}>{item === "todos" ? "Todos" : item}</option>
+            ))}
+          </select>
+        </label>
+        <div className="flex items-end gap-2 lg:col-span-6">
+          <button className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50" onClick={() => {
+            setQuery("");
+            setMonth("todos");
+            setOrigin("todos");
+            setXmlStatus("todos");
+            setPaymentStatus("todos");
+          }} type="button">
             Limpiar filtros
-          </a>
-          <a className="rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-900" href={`/api/exports/purchases?q=${encodeURIComponent(query)}&month=${encodeURIComponent(month)}`}>
+          </button>
+          <a className="rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-900" href={`/api/exports/purchases?q=${encodeURIComponent(query)}&month=${encodeURIComponent(month)}&origin=${encodeURIComponent(origin)}&xmlStatus=${encodeURIComponent(xmlStatus)}`}>
             Exportar resultados
           </a>
         </div>
       </div>
+      {message ? (
+        <div className="mt-4 rounded-md border border-[#dfe4dd] bg-[#f8faf8] px-4 py-3 text-sm text-brand-900">
+          {message}
+        </div>
+      ) : null}
 
       <div className="mt-5 max-h-[560px] overflow-auto rounded-lg border border-[#e6ebe5]">
         <table className="w-full min-w-[980px] border-collapse text-sm">
@@ -65,39 +140,79 @@ export function PurchaseSearchTable({ invoices }: { invoices: DtePurchaseInvoice
               <th className="px-4 py-3">Fecha</th>
               <th className="px-4 py-3">Razon social</th>
               <th className="px-4 py-3">Documento</th>
+              <th className="px-4 py-3">Origen</th>
               <th className="px-4 py-3 text-right">Neto</th>
               <th className="px-4 py-3 text-right">IVA</th>
               <th className="px-4 py-3 text-right">Total</th>
-              <th className="px-4 py-3">Estado</th>
-              <th className="px-4 py-3">PDF</th>
+              <th className="px-4 py-3">Estado XML</th>
+              <th className="px-4 py-3">Estado pago</th>
+              <th className="px-4 py-3">Accion</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((invoice) => (
-              <tr className="border-b border-[#edf2ee] bg-white hover:bg-[#f8faf8]" key={invoice.normalizedKey ?? `${invoice.rutEmisor}-${invoice.tipoDte}-${invoice.folio}`}>
-                <td className="px-4 py-3 text-[#4e5a52]">{formatDate(invoice.fechaEmision)}</td>
-                <td className="px-4 py-3 font-medium text-brand-900">
-                  <a className="hover:underline" href={`/proveedores?q=${encodeURIComponent(invoice.razonSocialEmisor)}`}>{invoice.razonSocialEmisor}</a>
-                </td>
-                <td className="px-4 py-3 text-[#4e5a52]">
-                  <a className="hover:underline" href={`/facturas?folio=${encodeURIComponent(invoice.folio)}`}>{invoice.documentType} {invoice.folio}</a>
-                </td>
-                <td className="px-4 py-3 text-right font-medium text-[#4e5a52]">{formatClp(invoice.montoNeto)}</td>
-                <td className="px-4 py-3 text-right font-medium text-[#4e5a52]">{formatClp(invoice.iva)}</td>
-                <td className="px-4 py-3 text-right font-semibold text-brand-700">{formatClp(invoice.montoTotal)}</td>
-                <td className="px-4 py-3 text-[#4e5a52]">{invoice.tipoDte === "61" ? "Nota credito" : invoice.paymentStatus}</td>
-                <td className="px-4 py-3">
-                  <div className="flex gap-2">
-                    <a className="rounded-md bg-brand-700 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-900" href={`/api/invoices/${invoice.folio}/pdf`} target="_blank">
-                      Ver
-                    </a>
-                    <a className="rounded-md border border-brand-700 px-3 py-2 text-xs font-semibold text-brand-700 hover:bg-[#edf2ee]" href={`/api/invoices/${invoice.folio}/pdf?download=1`}>
-                      Descargar
-                    </a>
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {filtered.map((invoice) => {
+              const isPendingXml = invoice.xmlStatus === "missing" || invoice.source === "sii";
+              return (
+                <tr className="border-b border-[#edf2ee] bg-white hover:bg-[#f8faf8]" key={invoice.normalizedKey ?? `${invoice.rutEmisor}-${invoice.tipoDte}-${invoice.folio}`}>
+                  <td className="px-4 py-3 text-[#4e5a52]">{formatDate(invoice.fechaEmision)}</td>
+                  <td className="px-4 py-3 font-medium text-brand-900">
+                    <a className="hover:underline" href={`/proveedores?q=${encodeURIComponent(invoice.razonSocialEmisor)}`}>{invoice.razonSocialEmisor}</a>
+                    <p className="mt-1 text-xs font-normal text-[#667068]">{invoice.rutEmisor}</p>
+                  </td>
+                  <td className="px-4 py-3 text-[#4e5a52]">
+                    <a className="hover:underline" href={`/facturas?folio=${encodeURIComponent(invoice.folio)}`}>{invoice.documentType} {invoice.folio}</a>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`rounded-full px-2 py-1 text-xs font-semibold ${isPendingXml ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-800"}`}>
+                      {isPendingXml ? "SII" : "XML"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right font-medium text-[#4e5a52]">{formatClp(invoice.montoNeto)}</td>
+                  <td className="px-4 py-3 text-right font-medium text-[#4e5a52]">{formatClp(invoice.iva)}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-brand-700">{formatClp(invoice.montoTotal)}</td>
+                  <td className="px-4 py-3 text-[#4e5a52]">
+                    {isPendingXml ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800">
+                        <FileWarning className="h-3.5 w-3.5" />
+                        Pendiente XML
+                      </span>
+                    ) : "Recibido"}
+                  </td>
+                  <td className="px-4 py-3 text-[#4e5a52]">{invoice.tipoDte === "61" ? "Nota credito" : invoice.paymentStatus}</td>
+                  <td className="px-4 py-3">
+                    {isPendingXml ? (
+                      <div className="space-y-2">
+                        <p className="text-xs text-[#667068]">PDF no disponible</p>
+                        {invoice.accountsPayableId ? (
+                          <a className="rounded-md border border-brand-700 px-3 py-2 text-xs font-semibold text-brand-700 hover:bg-[#edf2ee]" href="/tesoreria#nomina-pagos">
+                            En Tesoreria
+                          </a>
+                        ) : (
+                          <button
+                            className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-900 disabled:opacity-60"
+                            disabled={busyRegistryId === invoice.siiRegistryId}
+                            onClick={() => sendToTreasury(invoice)}
+                            type="button"
+                          >
+                            <Send className="h-3.5 w-3.5" />
+                            Enviar a Tesoreria
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <a className="rounded-md bg-brand-700 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-900" href={`/api/invoices/${invoice.folio}/pdf`} target="_blank">
+                          Ver
+                        </a>
+                        <a className="rounded-md border border-brand-700 px-3 py-2 text-xs font-semibold text-brand-700 hover:bg-[#edf2ee]" href={`/api/invoices/${invoice.folio}/pdf?download=1`}>
+                          Descargar
+                        </a>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         {filtered.length === 0 ? (
