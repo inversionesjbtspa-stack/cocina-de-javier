@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import AdmZip from "adm-zip";
 import { mapBankName } from "../src/lib/payments/bank-mappings.ts";
 
 test("audit page reads Supabase audit events instead of fixed timeline fixtures", async () => {
@@ -13,13 +14,31 @@ test("treasury export handles validation in the UI and preserves supplier detail
   const panel = await readFile("src/components/payments/payment-nomina-panel.tsx", "utf8");
   const template = await readFile("src/lib/payments/santander-template.ts", "utf8");
   const route = await readFile("src/app/api/payment-template/route.ts", "utf8");
+  const payables = await readFile("src/lib/payments/payables.ts", "utf8");
   assert.match(panel, /fetch\(`\/api\/payment-template/);
   assert.match(panel, /Descargar reporte de errores/);
+  assert.match(panel, /Traer facturas SII pendientes/);
+  assert.match(panel, /Todos los vencimientos/);
+  assert.match(panel, /Origen XML\/SII/);
   assert.doesNotMatch(panel, /href=\{`\/api\/payment-template/);
   assert.match(template, /supplierName/);
+  assert.match(template, /styledTextCell/);
+  assert.match(template, /columnStyle/);
   assert.match(template, /ya esta en nomina activa/);
   assert.match(route, /Errores nomina Santander\.csv/);
   assert.match(route, /x-erp-request/);
+  assert.match(payables, /getPayableCandidatesResult/);
+  assert.match(payables, /proveedor sin enlace/);
+  assert.match(payables, /diagnostics/);
+});
+
+test("official Santander template keeps columns through provider code", () => {
+  const zip = new AdmZip("src/templates/template-pagos-jesus.xlsx");
+  const sheet = zip.getEntry("xl/worksheets/sheet1.xml")?.getData().toString("utf8") ?? "";
+  assert.match(sheet, /<dimension ref="A1:R2"/);
+  assert.match(sheet, /<c r="P1"/);
+  assert.match(sheet, /<c r="Q1"/);
+  assert.match(sheet, /<c r="R1"/);
 });
 
 test("supplier creation and payable repair routes exist and audit mutations", async () => {

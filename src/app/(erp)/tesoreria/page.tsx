@@ -18,7 +18,7 @@ import {
 } from "@/lib/finance/erp-metrics";
 import { formatClp, formatDate } from "@/lib/dte/purchases-data";
 import { getDtePurchaseData } from "@/lib/dte/supabase-data";
-import { getPayableCandidates } from "@/lib/payments/payables";
+import { getPayableCandidatesResult } from "@/lib/payments/payables";
 
 function Badge({
   children,
@@ -35,7 +35,8 @@ function Badge({
 }
 
 export default async function TesoreriaPage() {
-  const [dteData, paymentCandidates] = await Promise.all([getDtePurchaseData(), getPayableCandidates()]);
+  const [dteData, payablesResult] = await Promise.all([getDtePurchaseData(), getPayableCandidatesResult()]);
+  const paymentCandidates = payablesResult.candidates;
   const metrics = createErpMetrics(dteData);
   const today = metrics.invoicesDueWithin(0);
   const due7 = metrics.invoicesDueWithin(7);
@@ -322,7 +323,7 @@ export default async function TesoreriaPage() {
           </aside>
         </section>
 
-        <PaymentNominaPanel candidates={paymentCandidates} />
+        <PaymentNominaPanel candidates={paymentCandidates} diagnostics={payablesResult.diagnostics} />
       </section>
     </AppShell>
   );

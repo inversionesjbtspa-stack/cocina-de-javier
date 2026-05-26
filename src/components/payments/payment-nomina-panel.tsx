@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { FileSpreadsheet, Link2, RefreshCw, X } from "lucide-react";
 import { formatClp } from "@/lib/dte/purchases-data";
 import { mapBankName } from "@/lib/payments/bank-mappings";
-import type { PayableCandidate } from "@/lib/payments/payables";
+import type { PayableCandidate, PayableDiagnostics } from "@/lib/payments/payables";
 
 type InvalidExportRow = { alerts: string[]; bankCode?: string; bankName?: string; folio: string; id: string; proveedor: string; rut: string; supplierId?: string };
 type ExportIssue = { invalid: InvalidExportRow[]; title: string };
@@ -22,11 +22,12 @@ function errorCsv(rows: InvalidExportRow[]) {
   return [["proveedor", "rut", "folio", "datos_faltantes"], ...rows.map((row) => [row.proveedor, row.rut, row.folio, row.alerts.join(", ")])].map((row) => row.map(escape).join(";")).join("\n");
 }
 
-export function PaymentNominaPanel({ candidates }: { candidates: PayableCandidate[] }) {
+export function PaymentNominaPanel({ candidates, diagnostics }: { candidates: PayableCandidate[]; diagnostics?: PayableDiagnostics }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [supplierId, setSupplierId] = useState("");
-  const [quick, setQuick] = useState("30");
+  const [quick, setQuick] = useState("todos");
+  const [origin, setOrigin] = useState("todos");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [issueFrom, setIssueFrom] = useState("");
@@ -41,15 +42,16 @@ export function PaymentNominaPanel({ candidates }: { candidates: PayableCandidat
   const suppliers = useMemo(() => [...new Map(candidates.map((row) => [row.supplierId, row.supplierName])).entries()], [candidates]);
   const filtered = useMemo(() => {
     const today = new Date();
-    const quickEnd = new Date(today);
-    quickEnd.setDate(today.getDate() + Number(quick === "custom" ? 3650 : quick));
+      const quickEnd = new Date(today);
+    quickEnd.setDate(today.getDate() + Number(quick === "custom" || quick === "todos" ? 3650 : quick));
     const needle = query.toLowerCase().trim();
     return candidates.filter((row) => {
       const due = new Date(`${row.dueDate}T00:00:00`);
       const haystack = [row.documentNumber, row.supplierName, row.supplierRut, row.balance, row.status, row.sourceType, row.xmlStatus].join(" ").toLowerCase();
       return (!needle || haystack.includes(needle)) &&
         (!supplierId || row.supplierId === supplierId) &&
-        (quick === "custom" || due <= quickEnd) &&
+        (quick === "todos" || quick === "custom" || due <= quickEnd) &&
+        (origin === "todos" || row.sourceType === origin || (origin === "sii" && row.payableWithoutXml)) &&
         (!from || row.dueDate >= from) &&
         (!to || row.dueDate <= to) &&
         (!issueFrom || row.issueDate >= issueFrom) &&
@@ -58,7 +60,7 @@ export function PaymentNominaPanel({ candidates }: { candidates: PayableCandidat
         (!maxAmount || row.balance <= Number(maxAmount)) &&
         (status === "todos" || status === row.status || (status === "vencidas" && due < today));
     });
-  }, [candidates, from, issueFrom, issueTo, maxAmount, minAmount, query, quick, status, supplierId, to]);
+  }, [candidates, from, issueFrom, issueTo, maxAmount, minAmount, origin, query, quick, status, supplierId, to]);
   const selectedRows = candidates.filter((row) => selected.includes(row.id));
   const invalidSelected = selectedRows.filter((row) => !row.ok);
   const total = selectedRows.reduce((sum, row) => sum + row.balance, 0);
@@ -111,24 +113,43 @@ export function PaymentNominaPanel({ candidates }: { candidates: PayableCandidat
     setBusy(false);
     if (response.ok) window.location.reload();
   }
+  async function bringSiiPending() {
+    setBusy(true);
+    setRepairMessage("");
+    const response = await fetch("/api/sii/provisionalize", {
+      body: JSON.stringify({}),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+    const body = await response.json().catch(() => null);
+    setRepairMessage(response.ok
+      ? `SII enviado a Tesoreria: ${body?.createdPayables ?? 0} cuentas creadas, ${body?.existing ?? 0} ya existentes.`
+      : body?.error ?? "No se pudieron traer facturas SII pendientes.");
+    setBusy(false);
+    if (response.ok) window.location.reload();
+  }
 
   return <section className="space-y-4 rounded-lg border border-[#eadfd9] bg-white p-5 shadow-sm" id="nomina-pagos">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div><h2 className="text-lg font-semibold text-brand-900">Pagar por proveedor y nomina Santander</h2><p className="text-sm text-[#6f6263]">Seleccione cuentas exportables. Las incompletas quedan en revision de proveedor.</p></div>
       <div className="flex flex-wrap gap-2">
         <span className="rounded-md bg-brand-50 px-3 py-2 text-sm">{selected.length} facturas / {selectedSuppliers} proveedores / <b>{formatClp(total)}</b></span>
+        <span className="rounded-md bg-white px-3 py-2 text-sm ring-1 ring-[#eadfd9]">{diagnostics?.fetched ?? candidates.length} cuentas / {diagnostics?.valid ?? candidates.filter((row) => row.ok).length} validas / <b>{formatClp(diagnostics?.totalBalance ?? candidates.reduce((sum, row) => sum + row.balance, 0))}</b></span>
         <button className="rounded-md border px-3 py-2 text-sm font-semibold" onClick={selectVisible} type="button">Seleccionar todo visible</button>
         <button className="rounded-md border px-3 py-2 text-sm font-semibold" onClick={() => setSelected([])} type="button">Quitar seleccion</button>
+        <button className="rounded-md border border-amber-700 px-3 py-2 text-sm font-semibold text-amber-800" disabled={busy} onClick={bringSiiPending} type="button">Traer facturas SII pendientes</button>
         <button className="rounded-md border px-3 py-2 text-sm font-semibold" disabled={busy} onClick={repairSuppliers} type="button"><RefreshCw className="mr-1 inline h-4 w-4" />Reparar proveedores</button>
         <button className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" disabled={busy} onClick={repairBankCodes} type="button"><RefreshCw className="mr-1 inline h-4 w-4" />Reparar codigos banco</button>
         <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white disabled:bg-[#d8d0cc]" disabled={!selected.length || invalidSelected.length > 0 || busy} onClick={exportSantander} type="button"><FileSpreadsheet className="mr-1 inline h-4 w-4" />{busy ? "Generando..." : "Exportar Santander"}</button>
       </div>
     </div>
+    {diagnostics?.error ? <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">Diagnostico query cuentas por pagar: {diagnostics.error}</p> : null}
     {repairMessage ? <p className="rounded-md bg-brand-50 p-3 text-sm text-brand-900">{repairMessage}</p> : null}
     <div className="grid gap-3 lg:grid-cols-6">
       <input className="rounded-md border px-3 py-2 text-sm lg:col-span-2" onChange={(event) => setQuery(event.target.value)} placeholder="Folio, proveedor, RUT o monto" value={query} />
       <select className="rounded-md border px-3 py-2 text-sm lg:col-span-2" onChange={(event) => setSupplierId(event.target.value)} value={supplierId}><option value="">Todos los proveedores</option>{suppliers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
-      <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setQuick(event.target.value)} value={quick}><option value="0">Hoy</option><option value="7">7 dias</option><option value="15">15 dias</option><option value="30">30 dias</option><option value="custom">Rango</option></select>
+      <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setQuick(event.target.value)} value={quick}><option value="todos">Todos los vencimientos</option><option value="0">Hoy</option><option value="7">7 dias</option><option value="15">15 dias</option><option value="30">30 dias</option><option value="custom">Rango</option></select>
+      <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setOrigin(event.target.value)} value={origin}><option value="todos">Origen XML/SII</option><option value="xml">XML</option><option value="sii">SII pendiente XML</option></select>
       <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setStatus(event.target.value)} value={status}><option value="todos">Todo estado</option><option value="pending_approval">Pendiente</option><option value="approved">Aprobada</option><option value="scheduled">En nomina</option><option value="vencidas">Vencidas</option></select>
       <label className="text-xs">Vence desde<input className="mt-1 w-full rounded-md border p-2 text-sm" onChange={(event) => { setQuick("custom"); setFrom(event.target.value); }} type="date" value={from} /></label>
       <label className="text-xs">Vence hasta<input className="mt-1 w-full rounded-md border p-2 text-sm" onChange={(event) => { setQuick("custom"); setTo(event.target.value); }} type="date" value={to} /></label>

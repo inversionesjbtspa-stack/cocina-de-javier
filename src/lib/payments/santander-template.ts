@@ -46,28 +46,46 @@ function numberCell(ref: string, value: number) {
   return `<c r="${ref}"><v>${Math.round(value)}</v></c>`;
 }
 
-function rowXml(index: number, row: PaymentRow | SupabasePaymentRow) {
+function columnStyle(sheetXml: string, column: string) {
+  return sheetXml.match(new RegExp(`<c r="${column}2"([^>]*)>`))?.[1]?.match(/\ss="[^"]+"/)?.[0] ?? "";
+}
+
+function styledTextCell(ref: string, value: string, style = "") {
+  return `<c r="${ref}"${style} t="inlineStr"><is><t>${escapeXml(value)}</t></is></c>`;
+}
+
+function styledNumberCell(ref: string, value: number, style = "") {
+  return `<c r="${ref}"${style}><v>${Math.round(value)}</v></c>`;
+}
+
+function rowXml(index: number, row: PaymentRow | SupabasePaymentRow, sheetXml?: string) {
   const amount = Math.round("invoice" in row ? row.invoice.montoTotal : row.amount);
   const folio = "invoice" in row ? row.invoice.folio : row.folio;
   const glosa = "invoice" in row ? `FACT ${folio}` : row.glosa || `PAGO ${folio}`;
+  const text = (column: string, value: string) =>
+    sheetXml ? styledTextCell(`${column}${index}`, value, columnStyle(sheetXml, column)) : textCell(`${column}${index}`, value);
+  const number = (column: string, value: number) =>
+    sheetXml ? styledNumberCell(`${column}${index}`, value, columnStyle(sheetXml, column)) : numberCell(`${column}${index}`, value);
 
   return `<row r="${index}" spans="1:18">` +
-    textCell(`A${index}`, "71068862") +
-    textCell(`B${index}`, "CLP") +
-    textCell(`C${index}`, row.supplier.bankAccount) +
-    textCell(`D${index}`, "CLP") +
-    textCell(`E${index}`, row.supplier.bankCode) +
-    textCell(`F${index}`, row.supplier.rut) +
-    textCell(`G${index}`, row.supplier.businessName) +
-    numberCell(`H${index}`, amount) +
-    textCell(`I${index}`, glosa) +
-    textCell(`J${index}`, row.supplier.email) +
-    textCell(`K${index}`, glosa) +
-    textCell(`L${index}`, glosa) +
-    textCell(`M${index}`, `${glosa} J. PASCUAL Y FAMILIA SPA`) +
-    textCell(`P${index}`, row.supplier.code) +
-    textCell(`Q${index}`, folio) +
-    numberCell(`R${index}`, amount) +
+    text("A", "71068862") +
+    text("B", "CLP") +
+    text("C", row.supplier.bankAccount) +
+    text("D", "CLP") +
+    text("E", row.supplier.bankCode) +
+    text("F", row.supplier.rut) +
+    text("G", row.supplier.businessName) +
+    number("H", amount) +
+    text("I", glosa) +
+    text("J", row.supplier.email) +
+    text("K", glosa) +
+    text("L", glosa) +
+    text("M", `${glosa} J. PASCUAL Y FAMILIA SPA`) +
+    text("N", "") +
+    text("O", "") +
+    text("P", row.supplier.code) +
+    text("Q", folio) +
+    number("R", amount) +
     "</row>";
 }
 
@@ -86,7 +104,7 @@ function sheetDataWithRows(sheetXml: string, rows: Array<PaymentRow | SupabasePa
     throw new Error("Template Santander no tiene fila de encabezados.");
   }
 
-  const bodyRows = rows.map((row, index) => rowXml(index + 2, row)).join("");
+  const bodyRows = rows.map((row, index) => rowXml(index + 2, row, sheetXml)).join("");
   return sheetXml
     .replace(/<dimension ref="[^"]*"\s*\/>/, `<dimension ref="A1:R${rows.length + 1}"/>`)
     .replace(/<sheetData>[\s\S]*?<\/sheetData>/, `<sheetData>${headerMatch[0]}${bodyRows}</sheetData>`);
