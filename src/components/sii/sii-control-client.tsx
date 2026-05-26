@@ -122,6 +122,7 @@ export function SiiControlClient() {
   const [monthlyTotals, setMonthlyTotals] = useState<SummaryTotals>(emptySummaryTotals);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [technicalDetail, setTechnicalDetail] = useState<unknown>(null);
   const [filter, setFilter] = useState("");
   const [estadoXml, setEstadoXml] = useState("");
   const [claimStatus, setClaimStatus] = useState("");
@@ -130,6 +131,7 @@ export function SiiControlClient() {
   const load = useCallback(async () => {
     const response = await fetch("/api/sii/compare", { cache: "no-store" });
     const result = await response.json();
+    setTechnicalDetail(null);
     if (response.ok) {
       setRows(result.results ?? []);
       setSummary(result.summary ?? emptySummary);
@@ -137,8 +139,13 @@ export function SiiControlClient() {
       setMonthlyTotals(result.summaryTotals ?? emptySummaryTotals);
     } else if (result.error === "missing_sii_purchase_registry_migration") {
       setMessage("Falta aplicar la migracion sii_purchase_registry en Supabase.");
+      setTechnicalDetail(result.detail ?? result);
     } else if (result.error === "missing_sii_purchase_summary_migration") {
       setMessage("Falta aplicar la migracion sii_purchase_summary en Supabase.");
+      setTechnicalDetail(result.detail ?? result);
+    } else {
+      setMessage(errorMessage(result.error));
+      setTechnicalDetail(result.detail ?? result);
     }
   }, []);
 
@@ -169,12 +176,13 @@ export function SiiControlClient() {
   }, [missing]);
 
   async function submit(formData: FormData) {
-    setBusy(true); setMessage("");
+    setBusy(true); setMessage(""); setTechnicalDetail(null);
     const response = await fetch("/api/sii/compare", { body: formData, method: "POST" });
     const result = await response.json();
     setBusy(false);
     if (!response.ok) {
-      setMessage(result.error === "no_supported_rows" ? "No se detectaron filas de detalle ni resumen en el archivo SII." : "No se pudo procesar el archivo SII. Revisa formato CSV/XLSX o migracion.");
+      setMessage(errorMessage(result.error));
+      setTechnicalDetail(result.detail ?? result);
       return;
     }
     setRows(result.results ?? []);
@@ -245,6 +253,12 @@ export function SiiControlClient() {
           </div>
         </div>
         {message ? <p className="mt-3 rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-900">{message}</p> : null}
+        {technicalDetail ? (
+          <details className="mt-3 rounded-md border border-[#eadfd9] bg-[#fffdfb] px-3 py-2 text-xs text-[#667068]">
+            <summary className="cursor-pointer font-semibold text-brand-900">Detalle tecnico para administrador</summary>
+            <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap">{JSON.stringify(technicalDetail, null, 2)}</pre>
+          </details>
+        ) : null}
       </form>
 
       <div className="rounded-2xl border border-[#eadfd9] bg-white p-5 shadow-sm">
@@ -356,4 +370,14 @@ export function SiiControlClient() {
       </div>
     </section>
   );
+}
+
+function errorMessage(error: string) {
+  const messages: Record<string, string> = {
+    missing_sii_purchase_registry_migration: "Falta aplicar la migracion sii_purchase_registry en Supabase.",
+    missing_sii_purchase_summary_migration: "Falta aplicar la migracion sii_purchase_summary en Supabase.",
+    no_supported_rows: "No se detectaron columnas reconocibles del SII. Revisa si el archivo esta vacio o si corresponde a otro reporte.",
+    sii_registry_query_failed: "No se pudo leer la base historica SII. Revisa permisos o estructura de tabla."
+  };
+  return messages[error] ?? `No se pudo importar el archivo SII: ${error}`;
 }

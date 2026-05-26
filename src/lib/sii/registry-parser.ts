@@ -26,6 +26,7 @@ export type SiiSummaryRow = {
 
 export type SiiRegistryParseResult = {
   errors: string[];
+  format: "detail" | "summary" | "unknown";
   isSummary: boolean;
   period: string;
   rows: SiiRegistryRow[];
@@ -173,11 +174,37 @@ function toSummaryRows(matrix: string[][], fileName: string) {
 }
 
 function parseCsv(text: string) {
+  const rows: string[][] = [];
   const delimiter = text.includes(";") ? ";" : text.includes("\t") ? "\t" : ",";
-  return text
-    .split(/\r?\n/)
-    .map((line) => line.split(delimiter).map((cell) => cell.replace(/^"|"$/g, "").trim()))
-    .filter((row) => row.some(Boolean));
+  for (const line of text.split(/\r?\n/)) {
+    const cells: string[] = [];
+    let current = "";
+    let quoted = false;
+    for (let index = 0; index < line.length; index += 1) {
+      const char = line[index];
+      const next = line[index + 1];
+      if (char === "\"" && quoted && next === "\"") {
+        current += "\"";
+        index += 1;
+      } else if (char === "\"") {
+        quoted = !quoted;
+      } else if (char === delimiter && !quoted) {
+        cells.push(current.trim());
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    cells.push(current.trim());
+    if (cells.some(Boolean)) rows.push(cells);
+  }
+  return rows;
+}
+
+function decodeCsv(buffer: Buffer) {
+  const utf8 = buffer.toString("utf8");
+  if (!utf8.includes("\uFFFD")) return utf8;
+  return buffer.toString("latin1");
 }
 
 function xmlText(value: string) {
@@ -211,7 +238,7 @@ function parseXlsx(buffer: Buffer) {
 
 export function parseSiiRegistryFile(file: { buffer: Buffer; name: string; type?: string }): SiiRegistryParseResult {
   const lower = file.name.toLowerCase();
-  const matrix = lower.endsWith(".xlsx") ? parseXlsx(file.buffer) : parseCsv(file.buffer.toString("utf8"));
+  const matrix = lower.endsWith(".xlsx") ? parseXlsx(file.buffer) : parseCsv(decodeCsv(file.buffer));
   const rows = toRows(matrix);
   const period = detectPeriod(file.name, rows);
   const withPeriod = rows.map((row) => ({ ...row, periodo: period || row.fecha.slice(0, 7) }));
@@ -222,6 +249,7 @@ export function parseSiiRegistryFile(file: { buffer: Buffer; name: string; type?
   const isSummary = !rows.length && (flattened.includes("resumen") || summaryRows.length > 0);
   return {
     errors: isSummary && !summaryRows.length ? ["El archivo parece ser resumen RCV, pero no se pudieron detectar filas agregadas por tipo de documento."] : [],
+    format: withPeriod.length ? "detail" : summaryWithPeriod.length ? "summary" : "unknown",
     isSummary,
     period: period || summaryPeriod,
     rows: withPeriod,

@@ -26,7 +26,11 @@ export async function GET() {
     .order("fecha_emision", { ascending: false })
     .limit(5000);
   if (error) {
-    return NextResponse.json({ ok: false, error: error.code === "42P01" ? "missing_sii_purchase_registry_migration" : error.message }, { status: 500 });
+    return NextResponse.json({
+      ok: false,
+      detail: error.message,
+      error: error.code === "42P01" ? "missing_sii_purchase_registry_migration" : "sii_registry_query_failed"
+    }, { status: 500 });
   }
   let summaryComparisons = [];
   try {
@@ -52,7 +56,20 @@ export async function POST(request: Request) {
 
   const buffer = Buffer.from(await upload.arrayBuffer());
   const parsed = parseSiiRegistryFile({ buffer, name: upload.name, type: upload.type });
-  if (!parsed.rows.length && !parsed.summaryRows.length) return NextResponse.json({ ok: false, error: "no_supported_rows", errors: parsed.errors, results: [], summary: summarize([]) }, { status: 422 });
+  if (!parsed.rows.length && !parsed.summaryRows.length) {
+    return NextResponse.json({
+      ok: false,
+      detail: {
+        errors: parsed.errors,
+        fileName: upload.name,
+        format: parsed.format,
+        period: parsed.period
+      },
+      error: "no_supported_rows",
+      results: [],
+      summary: summarize([])
+    }, { status: 422 });
+  }
 
   const supabase = createAdminClient();
   try {
@@ -99,7 +116,18 @@ export async function POST(request: Request) {
       : message.includes("sii_purchase_summary")
         ? "missing_sii_purchase_summary_migration"
         : message;
-    return NextResponse.json({ ok: false, error }, { status: 500 });
+    return NextResponse.json({
+      ok: false,
+      detail: {
+        fileName: upload.name,
+        format: parsed.format,
+        message,
+        period: parsed.period,
+        registryRows: parsed.rows.length,
+        summaryRows: parsed.summaryRows.length
+      },
+      error
+    }, { status: 500 });
   }
 }
 
