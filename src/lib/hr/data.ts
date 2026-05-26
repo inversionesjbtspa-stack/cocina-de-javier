@@ -109,6 +109,7 @@ export type HrDashboardData = {
     employeesWithoutBank: number;
     paymentEnabled: number;
     monthPaymentAmount: number;
+    netPayrollAmount: number;
     advancesAmount: number;
     bonusesAmount: number;
   };
@@ -225,6 +226,7 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
         bonusesAmount: 0,
         employeesWithoutBank: 0,
         monthPaymentAmount: 0,
+        netPayrollAmount: 0,
         paymentEnabled: 0,
         payslipsLoaded: 0,
         payslipsMissing: 0,
@@ -327,6 +329,7 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
       bonusesAmount: paymentItems.filter((item) => item.paymentType.includes("bono")).reduce((sum, item) => sum + item.amount, 0),
       employeesWithoutBank: employees.filter((employee) => !employee.bankAccount?.accountNumber).length,
       monthPaymentAmount,
+      netPayrollAmount: payslips.reduce((sum, payslip) => sum + payslip.netAmount, 0),
       paymentEnabled: employees.filter((employee) => employee.status === "activo" && employee.paymentEnabled).length,
       payslipsLoaded: payslips.length,
       payslipsMissing: Math.max(0, activeEmployees.length - payslipEmployeeIds.size),

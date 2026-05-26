@@ -36,6 +36,7 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
     { icon: CalendarDays, label: "Vacaciones pendientes", value: String(data.kpis.vacationPending), sub: `${data.kpis.vacationTaken} dias tomados` },
     { icon: Landmark, label: "Sin cuenta bancaria", value: String(data.kpis.employeesWithoutBank), sub: "Requiere completar ficha" },
     { icon: BadgeDollarSign, label: "Monto a pagar mes", value: formatClp(data.kpis.monthPaymentAmount), sub: "Pagos aprobados RRHH" },
+    { icon: BadgeDollarSign, label: "Liquido liquidaciones", value: formatClp(data.kpis.netPayrollAmount), sub: "Total liquido cargado" },
     { icon: BadgeDollarSign, label: "Anticipos / bonos", value: formatClp(data.kpis.advancesAmount + data.kpis.bonusesAmount), sub: "Incluidos en submodulos" }
   ];
 
@@ -92,6 +93,20 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
       return;
     }
     setMessage("Liquidacion cargada.");
+    form.reset();
+  }
+
+  async function importPayroll(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    setMessage("Importando liquidaciones y datos sueldo...");
+    const response = await fetch("/api/hr/payroll-import", { body: new FormData(form), method: "POST" });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      setMessage(payload?.error ?? "No se pudo importar RRHH abril 2026.");
+      return;
+    }
+    setMessage(`Importacion completa: ${payload.parsedPayslips} liquidaciones leidas, ${payload.payslipsSaved} guardadas, ${payload.accountantRowsImported} filas contador.`);
     form.reset();
   }
 
@@ -173,6 +188,26 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
           {selectedEmployee ? <EmployeeDetail employee={selectedEmployee} onSubmit={updateEmployee} /> : <p className="mt-4 text-sm text-[#667068]">Sin trabajadores creados.</p>}
         </article>
       </div>
+
+      <article className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h2 className="font-semibold text-brand-900">Importacion abril 2026 y datos para contador</h2>
+            <p className="mt-1 text-sm text-[#667068]">
+              Carga el PDF consolidado de liquidaciones y el Excel Datos Sueldos. El sistema crea/actualiza trabajadores por RUT, guarda liquidaciones individuales y prepara la exportacion con el mismo formato del Excel original.
+            </p>
+          </div>
+          <a className="rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" href="/api/hr/accountant-data?period=2026-04">
+            Exportar Datos Sueldos abril 2026
+          </a>
+        </div>
+        <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={importPayroll}>
+          <label className="text-sm font-medium text-[#667068]">Periodo<input className="mt-1 w-full rounded-md border px-3 py-2 text-sm" defaultValue="2026-04" name="period" type="month" /></label>
+          <label className="text-sm font-medium text-[#667068] md:col-span-1">Liquidaciones PDF<input accept="application/pdf" className="mt-1 w-full rounded-md border px-3 py-2 text-sm" name="payslipsPdf" required type="file" /></label>
+          <label className="text-sm font-medium text-[#667068] md:col-span-1">Datos sueldos Excel<input accept=".xlsx" className="mt-1 w-full rounded-md border px-3 py-2 text-sm" name="salaryDataXlsx" type="file" /></label>
+          <div className="flex items-end"><button className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" type="submit"><Upload className="h-4 w-4" /> Importar reales</button></div>
+        </form>
+      </article>
 
       <div className="grid gap-5 xl:grid-cols-3">
         <article className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm">

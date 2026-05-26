@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { extractPayslipsFromPdf, generateAccountantWorkbook, parseAccountantWorkbook } from "../src/lib/hr/payroll-parser.ts";
 import { businessDaysInclusive, accruedVacationDays } from "../src/lib/hr/utils.ts";
 
 test("HR vacation helpers count business days and accrue Chile base vacation days", () => {
@@ -44,4 +46,19 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(employeesRoute, /hr\.employee_created/);
   assert.match(payslipsRoute, /hr\.payslip_uploaded/);
   assert.match(vacationRoute, /businessDaysInclusive/);
+});
+
+test("HR payroll import parser reads the real April 2026 payslips and Datos Sueldos files", { skip: !existsSync("C:/Users/Jose Luis/Downloads/Liquidaciones de Abril 2026 (1).pdf") || !existsSync("C:/Users/Jose Luis/Downloads/4.- Datos sueldos abril 2026 V0.xlsx") }, () => {
+  const payslips = extractPayslipsFromPdf(readFileSync("C:/Users/Jose Luis/Downloads/Liquidaciones de Abril 2026 (1).pdf"));
+  const accountantRows = parseAccountantWorkbook(readFileSync("C:/Users/Jose Luis/Downloads/4.- Datos sueldos abril 2026 V0.xlsx"));
+  const jesus = payslips.find((item) => item.rut === "25.289.035-1");
+
+  assert.ok(payslips.length >= 25, `expected at least 25 payslips, got ${payslips.length}`);
+  assert.ok(jesus, "expected Jesus Betancourt payslip in real PDF");
+  assert.equal(jesus?.period, "2026-04");
+  assert.equal(jesus?.position, "ADMINISTRADOR");
+  assert.ok((jesus?.netPay ?? 0) > 0);
+  assert.ok(accountantRows.length >= 25, `expected at least 25 accountant rows, got ${accountantRows.length}`);
+  assert.ok(accountantRows.some((row) => row.rut.includes("25.289.035-1")));
+  assert.ok(generateAccountantWorkbook(accountantRows).byteLength > 0);
 });
