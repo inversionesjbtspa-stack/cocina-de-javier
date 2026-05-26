@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { parseSiiRegistryFile } from "@/lib/sii/registry-parser";
+import type { SiiRegistryRow } from "@/lib/sii/registry-parser";
 import { getSiiSummaryComparisons, importSiiRegistry, importSiiSummary, toViewRow } from "@/lib/sii/registry-store";
 
 async function context() {
@@ -52,41 +53,69 @@ export async function POST(request: Request) {
   const ctx = await context();
   if (ctx.error) return ctx.error;
 
-  const form = await request.formData();
-  const upload = form.get("file");
-  if (!(upload instanceof File)) return NextResponse.json({ ok: false, error: "file_required" }, { status: 400 });
-
-  const buffer = Buffer.from(await upload.arrayBuffer());
-  const parsed = parseSiiRegistryFile({ buffer, name: upload.name, type: upload.type });
-  if (!parsed.rows.length && !parsed.summaryRows.length) {
-    return NextResponse.json({
-      ok: false,
-      detail: {
-        errors: parsed.errors,
-        fileName: upload.name,
-        format: parsed.format,
-        period: parsed.period
-      },
-      error: "no_supported_rows",
-      results: [],
-      summary: summarize([])
-    }, { status: 422 });
-  }
-
-  const supabase = createAdminClient();
+  let uploadName = "";
+  let parsedFormat = "unknown";
+  let parsedPeriod = "";
+  let parsedRows = 0;
+  let parsedSummaryRows = 0;
+  let sampleRow: unknown = null;
   try {
-    const schema = await validateSiiSchema(supabase);
+    const form = await runStage("parse_file", async () => request.formData(), { fileName: uploadName });
+    const upload = form.get("file");
+    if (!(upload instanceof File)) return NextResponse.json({ ok: false, error: "file_required" }, { status: 400 });
+    uploadName = upload.name;
+
+    const buffer = await runStage("parse_file", async () => Buffer.from(await upload.arrayBuffer()), { fileName: uploadName });
+    const parsed = await runStage("parse_file", async () => parseSiiRegistryFile({ buffer, name: upload.name, type: upload.type }), { fileName: uploadName });
+    parsedFormat = parsed.format;
+    parsedPeriod = parsed.period;
+    parsedRows = parsed.rows.length;
+    parsedSummaryRows = parsed.summaryRows.length;
+    sampleRow = parsed.rows[0] ?? parsed.summaryRows[0] ?? null;
+
+    if (!parsed.rows.length && !parsed.summaryRows.length) {
+      return NextResponse.json({
+        ok: false,
+        detail: {
+          errors: parsed.errors,
+          fileName: upload.name,
+          format: parsed.format,
+          period: parsed.period,
+          stage: "parse_file"
+        },
+        error: "no_supported_rows",
+        results: [],
+        summary: summarize([])
+      }, { status: 422 });
+    }
+
+    const validated = await runStage("validate_rows", async () => validateRows(parsed.rows), {
+      fileName: uploadName,
+      sampleRow
+    });
+    const normalizedRows = await runStage("normalize_rows", async () => normalizeRows(validated.validRows), {
+      fileName: uploadName,
+      sampleRow: validated.validRows[0] ?? sampleRow
+    });
+
+    const supabase = createAdminClient();
+    const schema = await runStage("validate_schema", async () => validateSiiSchema(supabase), { fileName: uploadName });
     if (!schema.ok) return schema.response;
-    const imported = parsed.rows.length ? await importSiiRegistry({
+
+    const imported = normalizedRows.length ? await runStage("upsert_sii_purchase_registry", async () => importSiiRegistry({
         buffer,
         companyId: ctx.membership.company_id,
         fileName: upload.name,
-        rows: parsed.rows,
+        rows: normalizedRows,
         supabase,
         tenantId: ctx.membership.tenant_id,
         userId: ctx.user.id
+      }), {
+        fileName: uploadName,
+        payload: normalizedRows[0] ?? null,
+        rowNumber: normalizedRows[0]?.rowNumber ?? null
       }) : null;
-    const importedSummary = parsed.summaryRows.length ? await importSiiSummary({
+    const importedSummary = parsed.summaryRows.length ? await runStage("upsert_sii_purchase_summary", async () => importSiiSummary({
         buffer,
         companyId: ctx.membership.company_id,
         fileName: upload.name,
@@ -94,33 +123,52 @@ export async function POST(request: Request) {
         supabase,
         tenantId: ctx.membership.tenant_id,
         userId: ctx.user.id
+      }), {
+        fileName: uploadName,
+        payload: parsed.summaryRows[0] ?? null,
+        rowNumber: parsed.summaryRows[0]?.rowNumber ?? null
       }) : null;
-    const { data } = await supabase
+    const { data, error: resultError } = await runStage("calculate_results", async () => supabase
       .from("sii_purchase_registry")
       .select("*,dte_documents(monto_total)")
       .eq("tenant_id", ctx.membership.tenant_id)
       .order("fecha_emision", { ascending: false })
-      .limit(5000);
-    const results = await enrichSupplierEmails(supabase, ctx.membership.tenant_id, (data ?? []).map((row) => toViewRow(row as Record<string, unknown>)));
-    const summaryComparisons = await getSiiSummaryComparisons(supabase, ctx.membership.tenant_id);
-    return NextResponse.json({
+      .limit(5000), { fileName: uploadName });
+    if (resultError) throw { ...resultError, stage: "calculate_results" };
+    const mapped = (data ?? []).map((row) => toViewRow(row as Record<string, unknown>));
+    const results = await runStage("calculate_results", async () => enrichSupplierEmails(supabase, ctx.membership.tenant_id, mapped), { fileName: uploadName });
+    const summaryComparisons = await runStage("calculate_results", async () => getSiiSummaryComparisons(supabase, ctx.membership.tenant_id), { fileName: uploadName });
+    const responsePayload = {
       ok: true,
       importMode: parsed.summaryRows.length && !parsed.rows.length ? "summary" : "detail",
-      imported: imported?.summary ?? null,
-      importErrors: imported?.rowErrors ?? [],
+      imported: imported ? {
+        ...imported.summary,
+        erroresFilasInvalidas: validated.invalidRows.length
+      } : null,
+      importErrors: [...validated.invalidRows, ...(imported?.rowErrors ?? [])],
       importedSummary: importedSummary?.summary ?? null,
       results,
       summary: summarize(results),
       summaryComparisons,
       summaryTotals: summarizeMonthly(summaryComparisons)
+    };
+    return await runStage("return_ui_response", async () => NextResponse.json(responsePayload), {
+      fileName: uploadName,
+      payload: {
+        imported: responsePayload.imported,
+        results: responsePayload.results.length,
+        summary: responsePayload.summary
+      }
     });
   } catch (cause) {
     const technical = technicalError(cause, {
-      fileName: upload.name,
-      format: parsed.format,
-      parsedRows: parsed.rows.length,
-      sampleRow: parsed.rows[0] ?? parsed.summaryRows[0] ?? null,
-      stage: "sii_import"
+      fileName: uploadName,
+      format: parsedFormat,
+      parsedRows,
+      sampleRow,
+      stage: "sii_import",
+      summaryRows: parsedSummaryRows,
+      period: parsedPeriod
     });
     logSiiError(technical);
     const message = technical.message;
@@ -135,6 +183,54 @@ export async function POST(request: Request) {
       error
     }, { status: 500 });
   }
+}
+
+async function runStage<T>(stage: string, task: () => Promise<T> | T, context: Record<string, unknown>) {
+  try {
+    return await task();
+  } catch (error) {
+    if (typeof error === "object" && error !== null) throw { ...error as Record<string, unknown>, stage, stageContext: context };
+    throw { message: String(error), stage, stageContext: context };
+  }
+}
+
+function validateRows(rows: SiiRegistryRow[]) {
+  const invalidRows = [];
+  const validRows = [];
+  for (const row of rows) {
+    const missing = [];
+    if (!row.rutProveedor) missing.push("rut_emisor");
+    if (!row.tipoDte) missing.push("tipo_dte");
+    if (!row.folio) missing.push("folio");
+    if (!Number.isFinite(row.montoTotal)) missing.push("monto_total");
+    if (missing.length) {
+      invalidRows.push({
+        code: "invalid_sii_row",
+        column: missing.join(","),
+        constraint: null,
+        key: `${row.rutProveedor}:${row.tipoDte}:${row.folio}`,
+        message: `Fila SII invalida: faltan ${missing.join(", ")}`,
+        payload: row,
+        rowNumber: row.rowNumber,
+        table: "sii_purchase_registry"
+      });
+    } else {
+      validRows.push(row);
+    }
+  }
+  return { invalidRows, validRows };
+}
+
+function normalizeRows(rows: SiiRegistryRow[]) {
+  return rows.map((row) => ({
+    ...row,
+    folio: String(row.folio).trim(),
+    iva: Number(row.iva || 0),
+    montoNeto: Number(row.montoNeto || 0),
+    montoTotal: Number(row.montoTotal || 0),
+    rutProveedor: String(row.rutProveedor).replace(/\./g, "").replace(/\s+/g, "").toUpperCase(),
+    tipoDte: String(row.tipoDte).trim()
+  }));
 }
 
 async function validateSiiSchema(supabase: ReturnType<typeof createAdminClient>) {
