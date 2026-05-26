@@ -26,7 +26,8 @@ const migrations = [
   "202605150012_bank_mapping_repair.sql",
   "202605150013_bank_mapping_master_tail.sql",
   "202605150014_sii_purchase_registry.sql",
-  "202605150015_sii_purchase_summary.sql"
+  "202605150015_sii_purchase_summary.sql",
+  "202605150016_sii_registry_corrective_columns.sql"
 ];
 
 const client = new Client({

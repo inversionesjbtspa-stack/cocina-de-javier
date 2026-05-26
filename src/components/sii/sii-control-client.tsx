@@ -194,7 +194,8 @@ export function SiiControlClient() {
     const importedSummary = result.importedSummary;
     setMessage(result.importMode === "summary"
       ? `Resumen importado correctamente: ${importedSummary?.leidos ?? 0} tipos leidos, ${importedSummary?.nuevos ?? 0} nuevos, ${importedSummary?.actualizados ?? 0} actualizados. Para identificar folios faltantes sube el detalle del Registro de Compras.`
-      : `Importacion acumulativa lista: ${imported?.leidos ?? 0} leidos, ${imported?.nuevos ?? 0} nuevos, ${imported?.actualizados ?? 0} actualizados, ${imported?.faltanXml ?? 0} faltan XML.`);
+      : `Importacion acumulativa lista: ${imported?.leidos ?? 0} leidos, ${imported?.rowsPersistidas ?? 0} persistidos, ${imported?.duplicadosIgnorados ?? 0} duplicados internos ignorados, ${imported?.faltanXml ?? 0} faltan XML, ${imported?.rowErrors ?? 0} errores de fila.`);
+    if (result.importErrors?.length) setTechnicalDetail({ importErrors: result.importErrors });
   }
 
   async function markClaim(rutEmisor: string, status: ResultRow["claimStatus"]) {

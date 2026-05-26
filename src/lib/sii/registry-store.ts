@@ -12,6 +12,17 @@ type DteDocumentRow = {
   gmail_received_at: string | null;
 };
 
+export type SiiImportRowError = {
+  rowNumber: number;
+  key: string;
+  message: string;
+  code: string | null;
+  table: string;
+  column: string | null;
+  constraint: string | null;
+  payload: Record<string, unknown>;
+};
+
 export type SiiRegistryViewRow = {
   id: string;
   periodo: string;
@@ -62,6 +73,23 @@ function estadoFor(row: SiiRegistryRow, doc: DteDocumentRow | null) {
   return Math.abs(Number(doc.monto_total ?? 0) - row.montoTotal) > 10 ? "diferencia_monto" : "xml_recibido";
 }
 
+function errorField(error: unknown, field: string) {
+  return typeof error === "object" && error !== null && field in error ? String((error as Record<string, unknown>)[field] ?? "") : "";
+}
+
+function toRowError(error: unknown, rowNumber: number, key: string, payload: Record<string, unknown>): SiiImportRowError {
+  return {
+    code: errorField(error, "code") || null,
+    column: errorField(error, "column") || null,
+    constraint: errorField(error, "constraint") || null,
+    key,
+    message: errorField(error, "message") || (error instanceof Error ? error.message : String(error)),
+    payload,
+    rowNumber,
+    table: "sii_purchase_registry"
+  };
+}
+
 export async function importSiiRegistry({
   buffer,
   companyId,
@@ -88,7 +116,7 @@ export async function importSiiRegistry({
   }));
   const rutList = [...new Set(keys.map((key) => key.rut))];
   const folios = [...new Set(keys.map((key) => key.folio))];
-  const { data: docs } = rutList.length && folios.length
+  const docsResult = rutList.length && folios.length
     ? await supabase
       .from("dte_documents")
       .select("id,tipo_dte,folio,rut_emisor,monto_total,gmail_message_id,gmail_received_at")
@@ -96,9 +124,11 @@ export async function importSiiRegistry({
       .in("rut_emisor", rutList)
       .in("folio", folios)
       .limit(5000)
-    : { data: [] as DteDocumentRow[] };
-  const docMap = new Map((docs ?? []).map((doc) => [`${doc.rut_emisor}:${doc.tipo_dte}:${doc.folio}`, doc as DteDocumentRow]));
-  const { data: beforeRows } = keys.length
+    : { data: [] as DteDocumentRow[], error: null };
+  if (docsResult.error) throw { ...docsResult.error, stage: "select_dte_documents" };
+  const docsRows = docsResult.data ?? [];
+  const docMap = new Map(docsRows.map((doc) => [`${doc.rut_emisor}:${doc.tipo_dte}:${doc.folio}`, doc as DteDocumentRow]));
+  const beforeResult = keys.length
     ? await supabase
       .from("sii_purchase_registry")
       .select("id,rut_emisor,tipo_dte,folio")
@@ -106,7 +136,9 @@ export async function importSiiRegistry({
       .in("rut_emisor", rutList)
       .in("folio", folios)
       .limit(5000)
-    : { data: [] as Array<{ id: string; rut_emisor: string; tipo_dte: string; folio: string }> };
+    : { data: [] as Array<{ id: string; rut_emisor: string; tipo_dte: string; folio: string }>, error: null };
+  if (beforeResult.error) throw { ...beforeResult.error, stage: "select_sii_purchase_registry_existing" };
+  const beforeRows = beforeResult.data ?? [];
   const existingKeys = new Set((beforeRows ?? []).map((row) => `${row.rut_emisor}:${row.tipo_dte}:${row.folio}`));
   const now = new Date().toISOString();
   const payload = uniqueRows.map((row) => {
@@ -125,6 +157,7 @@ export async function importSiiRegistry({
       monto_neto: row.montoNeto,
       monto_total: row.montoTotal,
       periodo: row.periodo,
+      proveedor: row.razonSocial,
       razon_social: row.razonSocial,
       rut_emisor: row.rutProveedor,
       source_file: fileName,
@@ -134,11 +167,31 @@ export async function importSiiRegistry({
       xml_received_at: doc?.gmail_received_at ?? null
     };
   });
-  const { data: upserted, error } = await supabase
-    .from("sii_purchase_registry")
-    .upsert(payload, { onConflict: "tenant_id,rut_emisor,tipo_dte,folio" })
-    .select("id,estado_xml");
-  if (error) throw error;
+  const rowErrors: SiiImportRowError[] = [];
+  const upserted: Array<{ id: string; estado_xml: string }> = [];
+  for (let index = 0; index < payload.length; index += 50) {
+    const chunk = payload.slice(index, index + 50);
+    const { data, error } = await supabase
+      .from("sii_purchase_registry")
+      .upsert(chunk, { onConflict: "tenant_id,rut_emisor,tipo_dte,folio" })
+      .select("id,estado_xml");
+    if (!error) {
+      upserted.push(...(data ?? []));
+      continue;
+    }
+    for (const item of chunk) {
+      const { data: rowData, error: rowError } = await supabase
+        .from("sii_purchase_registry")
+        .upsert(item, { onConflict: "tenant_id,rut_emisor,tipo_dte,folio" })
+        .select("id,estado_xml");
+      if (rowError) {
+        const source = uniqueRows.find((row) => row.rutProveedor === item.rut_emisor && row.tipoDte === item.tipo_dte && row.folio === item.folio);
+        rowErrors.push(toRowError(rowError, source?.rowNumber ?? 0, `${item.rut_emisor}:${item.tipo_dte}:${item.folio}`, item));
+      } else {
+        upserted.push(...(rowData ?? []));
+      }
+    }
+  }
   const summary = {
     actualizados: payload.filter((row) => existingKeys.has(`${row.rut_emisor}:${row.tipo_dte}:${row.folio}`)).length,
     diferenciasMonto: payload.filter((row) => row.estado_xml === "diferencia_monto").length,
@@ -146,6 +199,8 @@ export async function importSiiRegistry({
     faltanXml: payload.filter((row) => row.estado_xml === "falta_xml").length,
     leidos: rows.length,
     nuevos: payload.filter((row) => !existingKeys.has(`${row.rut_emisor}:${row.tipo_dte}:${row.folio}`)).length,
+    rowErrors: rowErrors.length,
+    rowsPersistidas: upserted.length,
     xmlRecibidos: payload.filter((row) => row.estado_xml === "xml_recibido").length
   };
   await supabase.from("audit_events").insert({
@@ -156,7 +211,7 @@ export async function importSiiRegistry({
     event_type: "sii.registry_imported",
     tenant_id: tenantId
   });
-  return { sourceHash, summary, upserted: upserted ?? [] };
+  return { rowErrors, sourceHash, summary, upserted };
 }
 
 export async function importSiiSummary({

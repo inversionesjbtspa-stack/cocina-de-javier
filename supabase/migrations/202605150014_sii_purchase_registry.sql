@@ -5,6 +5,7 @@ create table if not exists public.sii_purchase_registry (
   periodo text,
   rut_emisor text not null,
   razon_social text,
+  proveedor text,
   tipo_dte text not null,
   folio text not null,
   fecha_emision date,

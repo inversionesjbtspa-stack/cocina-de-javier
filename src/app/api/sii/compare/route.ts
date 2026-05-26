@@ -19,6 +19,8 @@ export async function GET() {
   const ctx = await context();
   if (ctx.error) return ctx.error;
   const supabase = createAdminClient();
+  const schema = await validateSiiSchema(supabase);
+  if (!schema.ok) return schema.response;
   const { data, error } = await supabase
     .from("sii_purchase_registry")
     .select("*,dte_documents(monto_total)")
@@ -73,6 +75,8 @@ export async function POST(request: Request) {
 
   const supabase = createAdminClient();
   try {
+    const schema = await validateSiiSchema(supabase);
+    if (!schema.ok) return schema.response;
     const imported = parsed.rows.length ? await importSiiRegistry({
         buffer,
         companyId: ctx.membership.company_id,
@@ -103,6 +107,7 @@ export async function POST(request: Request) {
       ok: true,
       importMode: parsed.summaryRows.length && !parsed.rows.length ? "summary" : "detail",
       imported: imported?.summary ?? null,
+      importErrors: imported?.rowErrors ?? [],
       importedSummary: importedSummary?.summary ?? null,
       results,
       summary: summarize(results),
@@ -110,7 +115,15 @@ export async function POST(request: Request) {
       summaryTotals: summarizeMonthly(summaryComparisons)
     });
   } catch (cause) {
-    const message = cause instanceof Error ? cause.message : "unknown_import_error";
+    const technical = technicalError(cause, {
+      fileName: upload.name,
+      format: parsed.format,
+      parsedRows: parsed.rows.length,
+      sampleRow: parsed.rows[0] ?? parsed.summaryRows[0] ?? null,
+      stage: "sii_import"
+    });
+    logSiiError(technical);
+    const message = technical.message;
     const error = message.includes("sii_purchase_registry")
       ? "missing_sii_purchase_registry_migration"
       : message.includes("sii_purchase_summary")
@@ -118,17 +131,101 @@ export async function POST(request: Request) {
         : message;
     return NextResponse.json({
       ok: false,
-      detail: {
-        fileName: upload.name,
-        format: parsed.format,
-        message,
-        period: parsed.period,
-        registryRows: parsed.rows.length,
-        summaryRows: parsed.summaryRows.length
-      },
+      detail: technical,
       error
     }, { status: 500 });
   }
+}
+
+async function validateSiiSchema(supabase: ReturnType<typeof createAdminClient>) {
+  const checks = [
+    {
+      columns: "id,periodo,rut_emisor,tipo_dte,folio,monto_total,estado_xml,proveedor",
+      table: "sii_purchase_registry"
+    },
+    {
+      columns: "id,periodo,rut_empresa,tipo_documento,cantidad_documentos_sii,monto_total_sii",
+      table: "sii_purchase_summary"
+    }
+  ];
+  for (const check of checks) {
+    const { error } = await supabase.from(check.table).select(check.columns).limit(1);
+    if (error) {
+      const detail = technicalError(error, {
+        actionRecommended: `Aplicar migraciones SII pendientes. Tabla/columnas esperadas: ${check.table}(${check.columns}).`,
+        columns: check.columns,
+        stage: "validate_sii_schema",
+        table: check.table
+      });
+      logSiiError(detail);
+      return {
+        ok: false as const,
+        response: NextResponse.json({
+          ok: false,
+          detail,
+          error: detail.code === "42P01"
+            ? `missing_${check.table}_migration`
+            : detail.code === "42703"
+              ? `missing_${check.table}_column`
+              : "sii_schema_validation_failed"
+        }, { status: 500 })
+      };
+    }
+  }
+  return { ok: true as const };
+}
+
+function technicalError(cause: unknown, context: Record<string, unknown>) {
+  const record = typeof cause === "object" && cause !== null ? cause as Record<string, unknown> : {};
+  const message = cause instanceof Error ? cause.message : String(record.message ?? cause ?? "unknown_import_error");
+  return {
+    actionRecommended: context.actionRecommended ?? recommendedAction(String(record.code ?? ""), message),
+    code: String(record.code ?? "") || null,
+    column: String(record.column ?? "") || inferColumn(message),
+    constraint: String(record.constraint ?? "") || inferConstraint(message),
+    detail: String(record.details ?? record.detail ?? "") || null,
+    fileName: context.fileName ?? null,
+    format: context.format ?? null,
+    hint: String(record.hint ?? "") || null,
+    message,
+    payload: context.sampleRow ?? context.payload ?? null,
+    rowNumber: typeof context.sampleRow === "object" && context.sampleRow && "rowNumber" in context.sampleRow ? (context.sampleRow as { rowNumber?: number }).rowNumber ?? null : null,
+    stack: cause instanceof Error ? cause.stack ?? null : null,
+    stage: String(record.stage ?? context.stage ?? "unknown"),
+    table: String(context.table ?? inferTable(message)) || null
+  };
+}
+
+function logSiiError(detail: ReturnType<typeof technicalError>) {
+  console.error({
+    error: detail.message,
+    payload: detail.payload,
+    rowNumber: detail.rowNumber,
+    stack: detail.stack,
+    stage: detail.stage,
+    table: detail.table
+  });
+}
+
+function inferTable(message: string) {
+  return message.match(/relation "([^"]+)"/)?.[1] ?? message.match(/table "([^"]+)"/)?.[1] ?? "";
+}
+
+function inferColumn(message: string) {
+  return message.match(/column "([^"]+)"/)?.[1] ?? "";
+}
+
+function inferConstraint(message: string) {
+  return message.match(/constraint "([^"]+)"/)?.[1] ?? "";
+}
+
+function recommendedAction(code: string, message: string) {
+  if (code === "42P01" || message.includes("relation") && message.includes("does not exist")) return "Aplicar migraciones SII pendientes en Supabase SQL Editor.";
+  if (code === "42703" || message.includes("column") && message.includes("does not exist")) return "Aplicar migracion correctiva de columnas SII.";
+  if (code === "23505" || message.includes("duplicate key")) return "Revisar duplicados internos del archivo; el importador intenta continuar por fila.";
+  if (code === "22P02" || message.includes("invalid input syntax")) return "Revisar la fila indicada: tipo de dato incompatible con la columna.";
+  if (code === "42501" || message.includes("permission denied")) return "Revisar policies/RLS o service role en Vercel.";
+  return "Revisar detalle tecnico y logs Vercel del endpoint /api/sii/compare.";
 }
 
 function summarize(results: ReturnType<typeof toViewRow>[]) {

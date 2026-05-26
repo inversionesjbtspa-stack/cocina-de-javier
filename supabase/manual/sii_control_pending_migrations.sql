@@ -5,6 +5,7 @@ create table if not exists public.sii_purchase_registry (
   periodo text,
   rut_emisor text not null,
   razon_social text,
+  proveedor text,
   tipo_dte text not null,
   folio text not null,
   fecha_emision date,
@@ -84,3 +85,9 @@ create policy "finance can manage sii purchase summary"
 on public.sii_purchase_summary for all
 using (public.has_any_role(tenant_id, array['owner','admin','finance_manager','accountant']))
 with check (public.has_any_role(tenant_id, array['owner','admin','finance_manager','accountant']));
+alter table if exists public.sii_purchase_registry
+  add column if not exists proveedor text;
+
+update public.sii_purchase_registry
+set proveedor = razon_social
+where proveedor is null and razon_social is not null;
