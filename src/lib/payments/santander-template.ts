@@ -15,8 +15,10 @@ type SupabasePaymentRow = {
   payableId: string;
   amount: number;
   folio: string;
+  glosa?: string;
   supplier: { bankAccount: string; bankCode: string; businessName: string; code: string; email: string; rut: string };
 };
+export type SantanderBankPaymentRow = SupabasePaymentRow;
 export type InvalidPayablePayment = {
   id: string;
   folio: string;
@@ -47,7 +49,7 @@ function numberCell(ref: string, value: number) {
 function rowXml(index: number, row: PaymentRow | SupabasePaymentRow) {
   const amount = Math.round("invoice" in row ? row.invoice.montoTotal : row.amount);
   const folio = "invoice" in row ? row.invoice.folio : row.folio;
-  const glosa = `FACT ${folio}`;
+  const glosa = "invoice" in row ? `FACT ${folio}` : row.glosa || `PAGO ${folio}`;
 
   return `<row r="${index}" spans="1:18">` +
     textCell(`A${index}`, "71068862") +
@@ -67,6 +69,15 @@ function rowXml(index: number, row: PaymentRow | SupabasePaymentRow) {
     textCell(`Q${index}`, folio) +
     numberCell(`R${index}`, amount) +
     "</row>";
+}
+
+export function generateSantanderTemplateFromRows(rows: SantanderBankPaymentRow[]) {
+  if (!fs.existsSync(templatePath)) throw new Error("Template Pagos JESUS.xlsx no existe en el proyecto.");
+  const zip = new AdmZip(templatePath);
+  const entry = zip.getEntry("xl/worksheets/sheet1.xml");
+  if (!entry) throw new Error("Template Santander no contiene xl/worksheets/sheet1.xml.");
+  zip.updateFile("xl/worksheets/sheet1.xml", Buffer.from(sheetDataWithRows(entry.getData().toString("utf8"), rows), "utf8"));
+  return zip.toBuffer();
 }
 
 function sheetDataWithRows(sheetXml: string, rows: Array<PaymentRow | SupabasePaymentRow>) {
