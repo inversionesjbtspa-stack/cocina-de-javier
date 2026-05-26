@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { parseSiiRegistryFile } from "@/lib/sii/registry-parser";
-import { importSiiRegistry, toViewRow } from "@/lib/sii/registry-store";
+import { getSiiSummaryComparisons, importSiiRegistry, importSiiSummary, toViewRow } from "@/lib/sii/registry-store";
 
 async function context() {
   const auth = await createClient();
@@ -28,8 +28,18 @@ export async function GET() {
   if (error) {
     return NextResponse.json({ ok: false, error: error.code === "42P01" ? "missing_sii_purchase_registry_migration" : error.message }, { status: 500 });
   }
+  let summaryComparisons = [];
+  try {
+    summaryComparisons = await getSiiSummaryComparisons(supabase, ctx.membership.tenant_id);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("sii_purchase_summary")) {
+      return NextResponse.json({ ok: false, error: "missing_sii_purchase_summary_migration" }, { status: 500 });
+    }
+    throw error;
+  }
   const results = (data ?? []).map((row) => toViewRow(row as Record<string, unknown>));
-  return NextResponse.json({ ok: true, results, summary: summarize(results) });
+  return NextResponse.json({ ok: true, results, summary: summarize(results), summaryComparisons, summaryTotals: summarizeMonthly(summaryComparisons) });
 }
 
 export async function POST(request: Request) {
@@ -42,21 +52,28 @@ export async function POST(request: Request) {
 
   const buffer = Buffer.from(await upload.arrayBuffer());
   const parsed = parseSiiRegistryFile({ buffer, name: upload.name, type: upload.type });
-  if (parsed.isSummary || !parsed.rows.length) {
-    return NextResponse.json({ ok: false, error: "summary_file_not_supported", errors: parsed.errors, results: [], summary: summarize([]) }, { status: 422 });
-  }
+  if (!parsed.rows.length && !parsed.summaryRows.length) return NextResponse.json({ ok: false, error: "no_supported_rows", errors: parsed.errors, results: [], summary: summarize([]) }, { status: 422 });
 
   const supabase = createAdminClient();
   try {
-    const imported = await importSiiRegistry({
-      buffer,
-      companyId: ctx.membership.company_id,
-      fileName: upload.name,
-      rows: parsed.rows,
-      supabase,
-      tenantId: ctx.membership.tenant_id,
-      userId: ctx.user.id
-    });
+    const imported = parsed.rows.length ? await importSiiRegistry({
+        buffer,
+        companyId: ctx.membership.company_id,
+        fileName: upload.name,
+        rows: parsed.rows,
+        supabase,
+        tenantId: ctx.membership.tenant_id,
+        userId: ctx.user.id
+      }) : null;
+    const importedSummary = parsed.summaryRows.length ? await importSiiSummary({
+        buffer,
+        companyId: ctx.membership.company_id,
+        fileName: upload.name,
+        rows: parsed.summaryRows,
+        supabase,
+        tenantId: ctx.membership.tenant_id,
+        userId: ctx.user.id
+      }) : null;
     const { data } = await supabase
       .from("sii_purchase_registry")
       .select("*,dte_documents(monto_total)")
@@ -64,10 +81,25 @@ export async function POST(request: Request) {
       .order("fecha_emision", { ascending: false })
       .limit(5000);
     const results = (data ?? []).map((row) => toViewRow(row as Record<string, unknown>));
-    return NextResponse.json({ ok: true, imported: imported.summary, results, summary: summarize(results) });
+    const summaryComparisons = await getSiiSummaryComparisons(supabase, ctx.membership.tenant_id);
+    return NextResponse.json({
+      ok: true,
+      importMode: parsed.summaryRows.length && !parsed.rows.length ? "summary" : "detail",
+      imported: imported?.summary ?? null,
+      importedSummary: importedSummary?.summary ?? null,
+      results,
+      summary: summarize(results),
+      summaryComparisons,
+      summaryTotals: summarizeMonthly(summaryComparisons)
+    });
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "unknown_import_error";
-    return NextResponse.json({ ok: false, error: message.includes("sii_purchase_registry") ? "missing_sii_purchase_registry_migration" : message }, { status: 500 });
+    const error = message.includes("sii_purchase_registry")
+      ? "missing_sii_purchase_registry_migration"
+      : message.includes("sii_purchase_summary")
+        ? "missing_sii_purchase_summary_migration"
+        : message;
+    return NextResponse.json({ ok: false, error }, { status: 500 });
   }
 }
 
@@ -82,5 +114,15 @@ function summarize(results: ReturnType<typeof toViewRow>[]) {
     proveedoresAReclamar: providers.size,
     total: results.length,
     xmlRecibidos: results.filter((row) => row.estadoXml === "xml_recibido").length
+  };
+}
+
+function summarizeMonthly(results: Awaited<ReturnType<typeof getSiiSummaryComparisons>>) {
+  return {
+    diferenciaDocumentos: results.reduce((sum, row) => sum + row.diferenciaDocumentos, 0),
+    diferenciaMonto: results.reduce((sum, row) => sum + row.diferenciaMonto, 0),
+    documentosSii: results.reduce((sum, row) => sum + row.documentosSii, 0),
+    documentosXml: results.reduce((sum, row) => sum + row.documentosXml, 0),
+    tiposConDiferencias: results.filter((row) => row.estado !== "ok").length
   };
 }

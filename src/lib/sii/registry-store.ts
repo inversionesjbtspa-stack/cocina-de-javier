@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { SiiRegistryRow } from "@/lib/sii/registry-parser";
+import type { SiiRegistryRow, SiiSummaryRow } from "@/lib/sii/registry-parser";
 
 type DteDocumentRow = {
   id: string;
@@ -31,6 +31,25 @@ export type SiiRegistryViewRow = {
   gmailMessageId: string | null;
   sourceFile: string | null;
   lastImportedAt: string;
+};
+
+export type SiiSummaryComparisonRow = {
+  id: string;
+  periodo: string;
+  rutEmpresa: string;
+  tipoDocumento: string;
+  documentosSii: number;
+  documentosXml: number;
+  diferenciaDocumentos: number;
+  montoNetoSii: number;
+  ivaSii: number;
+  montoTotalSii: number;
+  montoXml: number;
+  diferenciaMonto: number;
+  estado: "ok" | "faltan_documentos" | "diferencia_monto" | "requiere_detalle";
+  accionRecomendada: string;
+  sourceFile: string | null;
+  importedAt: string;
 };
 
 function sha256(buffer: Buffer) {
@@ -138,6 +157,140 @@ export async function importSiiRegistry({
   return { sourceHash, summary, upserted: upserted ?? [] };
 }
 
+export async function importSiiSummary({
+  buffer,
+  companyId,
+  fileName,
+  rows,
+  supabase,
+  tenantId,
+  userId
+}: {
+  buffer: Buffer;
+  companyId: string | null;
+  fileName: string;
+  rows: SiiSummaryRow[];
+  supabase: SupabaseClient;
+  tenantId: string;
+  userId: string;
+}) {
+  const sourceHash = sha256(buffer);
+  const keys = rows.map((row) => ({
+    periodo: row.periodo,
+    rutEmpresa: row.rutEmpresa,
+    tipoDocumento: row.tipoDocumento
+  }));
+  const { data: beforeRows } = keys.length
+    ? await supabase
+      .from("sii_purchase_summary")
+      .select("id,periodo,rut_empresa,tipo_documento")
+      .eq("tenant_id", tenantId)
+      .in("periodo", [...new Set(keys.map((key) => key.periodo))])
+      .limit(5000)
+    : { data: [] as Array<{ id: string; periodo: string; rut_empresa: string; tipo_documento: string }> };
+  const existingKeys = new Set((beforeRows ?? []).map((row) => `${row.periodo}:${row.rut_empresa}:${row.tipo_documento}`));
+  const now = new Date().toISOString();
+  const payload = rows.map((row) => ({
+    cantidad_documentos_sii: row.cantidadDocumentos,
+    company_id: companyId,
+    imported_at: now,
+    iva_sii: row.iva,
+    monto_neto_sii: row.montoNeto,
+    monto_total_sii: row.montoTotal,
+    periodo: row.periodo,
+    rut_empresa: row.rutEmpresa,
+    source_file: fileName,
+    source_hash: sourceHash,
+    tenant_id: tenantId,
+    tipo_documento: row.tipoDocumento
+  }));
+  const { error } = await supabase
+    .from("sii_purchase_summary")
+    .upsert(payload, { onConflict: "tenant_id,periodo,rut_empresa,tipo_documento" });
+  if (error) throw error;
+  const summary = {
+    actualizados: payload.filter((row) => existingKeys.has(`${row.periodo}:${row.rut_empresa}:${row.tipo_documento}`)).length,
+    leidos: rows.length,
+    nuevos: payload.filter((row) => !existingKeys.has(`${row.periodo}:${row.rut_empresa}:${row.tipo_documento}`)).length
+  };
+  await supabase.from("audit_events").insert({
+    actor_user_id: userId,
+    after_data: { filename: fileName, source_hash: sourceHash, ...summary },
+    company_id: companyId,
+    entity_type: "sii_purchase_summary",
+    event_type: "sii.summary_imported",
+    tenant_id: tenantId
+  });
+  return { sourceHash, summary };
+}
+
+export async function getSiiSummaryComparisons(supabase: SupabaseClient, tenantId: string): Promise<SiiSummaryComparisonRow[]> {
+  const { data, error } = await supabase
+    .from("sii_purchase_summary")
+    .select("*")
+    .eq("tenant_id", tenantId)
+    .order("periodo", { ascending: false })
+    .limit(5000);
+  if (error) throw error;
+
+  const summaries = data ?? [];
+  const periods = [...new Set(summaries.map((row) => String(row.periodo ?? "")).filter(Boolean))];
+  const docsByPeriod = new Map<string, Array<{ tipo_dte: string; monto_total: number; monto_neto: number; iva: number }>>();
+
+  for (const period of periods) {
+    const start = `${period}-01`;
+    const end = nextPeriodStart(period);
+    const { data: docs } = await supabase
+      .from("dte_documents")
+      .select("tipo_dte,monto_neto,iva,monto_total")
+      .eq("tenant_id", tenantId)
+      .gte("fecha_emision", start)
+      .lt("fecha_emision", end)
+      .limit(10000);
+    docsByPeriod.set(period, (docs ?? []) as Array<{ tipo_dte: string; monto_total: number; monto_neto: number; iva: number }>);
+  }
+
+  return summaries.map((row) => {
+    const period = String(row.periodo ?? "");
+    const type = String(row.tipo_documento ?? "");
+    const docs = (docsByPeriod.get(period) ?? []).filter((doc) => String(doc.tipo_dte) === type);
+    const documentosXml = docs.length;
+    const montoXml = docs.reduce((sum, doc) => sum + Number(doc.monto_total ?? 0), 0);
+    const documentosSii = Number(row.cantidad_documentos_sii ?? 0);
+    const montoTotalSii = Number(row.monto_total_sii ?? 0);
+    const diferenciaDocumentos = documentosSii - documentosXml;
+    const diferenciaMonto = montoTotalSii - montoXml;
+    const hasAmountDifference = Math.abs(diferenciaMonto) > 10;
+    const estado = diferenciaDocumentos === 0 && !hasAmountDifference
+      ? "ok"
+      : diferenciaDocumentos !== 0
+        ? "faltan_documentos"
+        : "diferencia_monto";
+    return {
+      accionRecomendada: estado === "ok"
+        ? "Control agregado consistente"
+        : diferenciaDocumentos !== 0
+          ? "Descargar detalle SII para identificar folios y solicitar XML a proveedores"
+          : "Revisar diferencia de monto entre XML recibidos y resumen SII",
+      diferenciaDocumentos,
+      diferenciaMonto,
+      documentosSii,
+      documentosXml,
+      estado,
+      id: String(row.id),
+      importedAt: String(row.imported_at ?? ""),
+      ivaSii: Number(row.iva_sii ?? 0),
+      montoNetoSii: Number(row.monto_neto_sii ?? 0),
+      montoTotalSii,
+      montoXml,
+      periodo: period,
+      rutEmpresa: String(row.rut_empresa ?? ""),
+      sourceFile: String(row.source_file ?? "") || null,
+      tipoDocumento: type
+    };
+  });
+}
+
 export async function syncSiiRegistryForDte({
   companyId,
   dteDocumentId,
@@ -211,4 +364,10 @@ export function toViewRow(row: Record<string, unknown>): SiiRegistryViewRow {
     tipoDte: String(row.tipo_dte ?? ""),
     xmlReceivedAt: String(row.xml_received_at ?? "") || null
   };
+}
+
+function nextPeriodStart(period: string) {
+  const [year, month] = period.split("-").map(Number);
+  const date = new Date(Date.UTC(year, (month || 1), 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-01`;
 }

@@ -33,6 +33,29 @@ type Summary = {
   documentosResueltos: number;
 };
 
+type SummaryComparison = {
+  id: string;
+  periodo: string;
+  rutEmpresa: string;
+  tipoDocumento: string;
+  documentosSii: number;
+  documentosXml: number;
+  diferenciaDocumentos: number;
+  montoTotalSii: number;
+  montoXml: number;
+  diferenciaMonto: number;
+  estado: "ok" | "faltan_documentos" | "diferencia_monto" | "requiere_detalle";
+  accionRecomendada: string;
+};
+
+type SummaryTotals = {
+  documentosSii: number;
+  documentosXml: number;
+  diferenciaDocumentos: number;
+  diferenciaMonto: number;
+  tiposConDiferencias: number;
+};
+
 const emptySummary: Summary = {
   diferenciasMonto: 0,
   documentosResueltos: 0,
@@ -41,6 +64,14 @@ const emptySummary: Summary = {
   proveedoresAReclamar: 0,
   total: 0,
   xmlRecibidos: 0
+};
+
+const emptySummaryTotals: SummaryTotals = {
+  diferenciaDocumentos: 0,
+  diferenciaMonto: 0,
+  documentosSii: 0,
+  documentosXml: 0,
+  tiposConDiferencias: 0
 };
 
 function stateLabel(state: ResultRow["estadoXml"]) {
@@ -52,6 +83,19 @@ function stateLabel(state: ResultRow["estadoXml"]) {
 
 function stateClass(state: ResultRow["estadoXml"]) {
   if (state === "xml_recibido") return "bg-emerald-50 text-emerald-800 border-emerald-200";
+  if (state === "diferencia_monto") return "bg-amber-50 text-amber-900 border-amber-200";
+  return "bg-rose-50 text-rose-800 border-rose-200";
+}
+
+function summaryStateLabel(state: SummaryComparison["estado"]) {
+  if (state === "ok") return "OK";
+  if (state === "faltan_documentos") return "Faltan documentos";
+  if (state === "diferencia_monto") return "Diferencia monto";
+  return "Requiere detalle";
+}
+
+function summaryStateClass(state: SummaryComparison["estado"]) {
+  if (state === "ok") return "bg-emerald-50 text-emerald-800 border-emerald-200";
   if (state === "diferencia_monto") return "bg-amber-50 text-amber-900 border-amber-200";
   return "bg-rose-50 text-rose-800 border-rose-200";
 }
@@ -74,6 +118,8 @@ function claimText(provider: string, rows: ResultRow[]) {
 export function SiiControlClient() {
   const [rows, setRows] = useState<ResultRow[]>([]);
   const [summary, setSummary] = useState<Summary>(emptySummary);
+  const [monthly, setMonthly] = useState<SummaryComparison[]>([]);
+  const [monthlyTotals, setMonthlyTotals] = useState<SummaryTotals>(emptySummaryTotals);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [filter, setFilter] = useState("");
@@ -87,8 +133,12 @@ export function SiiControlClient() {
     if (response.ok) {
       setRows(result.results ?? []);
       setSummary(result.summary ?? emptySummary);
+      setMonthly(result.summaryComparisons ?? []);
+      setMonthlyTotals(result.summaryTotals ?? emptySummaryTotals);
     } else if (result.error === "missing_sii_purchase_registry_migration") {
       setMessage("Falta aplicar la migracion sii_purchase_registry en Supabase.");
+    } else if (result.error === "missing_sii_purchase_summary_migration") {
+      setMessage("Falta aplicar la migracion sii_purchase_summary en Supabase.");
     }
   }, []);
 
@@ -124,13 +174,18 @@ export function SiiControlClient() {
     const result = await response.json();
     setBusy(false);
     if (!response.ok) {
-      setMessage(result.error === "summary_file_not_supported" ? "El archivo parece ser resumen RCV. Descarga el detalle con folios desde SII." : "No se pudo procesar el archivo SII. Revisa formato CSV/XLSX o migracion.");
+      setMessage(result.error === "no_supported_rows" ? "No se detectaron filas de detalle ni resumen en el archivo SII." : "No se pudo procesar el archivo SII. Revisa formato CSV/XLSX o migracion.");
       return;
     }
     setRows(result.results ?? []);
     setSummary(result.summary ?? emptySummary);
+    setMonthly(result.summaryComparisons ?? []);
+    setMonthlyTotals(result.summaryTotals ?? emptySummaryTotals);
     const imported = result.imported;
-    setMessage(`Importacion acumulativa lista: ${imported?.leidos ?? 0} leidos, ${imported?.nuevos ?? 0} nuevos, ${imported?.actualizados ?? 0} actualizados, ${imported?.faltanXml ?? 0} faltan XML.`);
+    const importedSummary = result.importedSummary;
+    setMessage(result.importMode === "summary"
+      ? `Resumen importado correctamente: ${importedSummary?.leidos ?? 0} tipos leidos, ${importedSummary?.nuevos ?? 0} nuevos, ${importedSummary?.actualizados ?? 0} actualizados. Para identificar folios faltantes sube el detalle del Registro de Compras.`
+      : `Importacion acumulativa lista: ${imported?.leidos ?? 0} leidos, ${imported?.nuevos ?? 0} nuevos, ${imported?.actualizados ?? 0} actualizados, ${imported?.faltanXml ?? 0} faltan XML.`);
   }
 
   async function markClaim(rutEmisor: string, status: ResultRow["claimStatus"]) {
@@ -182,7 +237,7 @@ export function SiiControlClient() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <h2 className="flex items-center gap-2 text-lg font-semibold text-brand-900"><UploadCloud className="h-5 w-5 text-brand-700" />Importar Registro de Compras SII</h2>
-            <p className="mt-1 text-sm text-[#667068]">Carga acumulativa CSV/XLSX detalle. Si subes el mismo archivo dos veces, actualiza sin duplicar.</p>
+            <p className="mt-1 text-sm text-[#667068]">Soporta CSV/XLSX detalle y resumen RCV. El detalle cruza por folio; el resumen controla totales mensuales agregados.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <input accept=".csv,.txt,.xlsx" className="rounded-md border border-[#dfe4dd] px-3 py-2 text-sm" name="file" required type="file" />
@@ -191,6 +246,44 @@ export function SiiControlClient() {
         </div>
         {message ? <p className="mt-3 rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-900">{message}</p> : null}
       </form>
+
+      <div className="rounded-2xl border border-[#eadfd9] bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-brand-900">Control por resumen mensual</h2>
+            <p className="mt-1 text-sm text-[#667068]">Comparacion agregada entre RCV resumen SII y XML recibidos. Para identificar folios exactos se requiere subir el detalle.</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-5">
+            <div className="rounded-lg bg-brand-50 p-3"><p className="text-xs text-[#667068]">Docs SII</p><p className="font-semibold text-brand-900">{monthlyTotals.documentosSii}</p></div>
+            <div className="rounded-lg bg-brand-50 p-3"><p className="text-xs text-[#667068]">XML recibidos</p><p className="font-semibold text-brand-900">{monthlyTotals.documentosXml}</p></div>
+            <div className="rounded-lg bg-brand-50 p-3"><p className="text-xs text-[#667068]">Dif. docs</p><p className="font-semibold text-brand-900">{monthlyTotals.diferenciaDocumentos}</p></div>
+            <div className="rounded-lg bg-brand-50 p-3"><p className="text-xs text-[#667068]">Dif. monto</p><p className="font-semibold text-brand-900">{formatClp(monthlyTotals.diferenciaMonto)}</p></div>
+            <div className="rounded-lg bg-brand-50 p-3"><p className="text-xs text-[#667068]">Tipos con dif.</p><p className="font-semibold text-brand-900">{monthlyTotals.tiposConDiferencias}</p></div>
+          </div>
+        </div>
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[980px] text-sm">
+            <thead className="text-left text-xs uppercase text-brand-700"><tr><th className="py-2">Periodo</th><th>Tipo DTE</th><th className="text-right">Docs SII</th><th className="text-right">XML recibidos</th><th className="text-right">Dif. docs</th><th className="text-right">Monto SII</th><th className="text-right">Monto XML</th><th className="text-right">Dif. monto</th><th>Estado</th><th>Accion recomendada</th></tr></thead>
+            <tbody>
+              {monthly.map((row) => (
+                <tr className="border-t border-[#edf2ee]" key={row.id}>
+                  <td className="py-3">{row.periodo}</td>
+                  <td>{row.tipoDocumento}</td>
+                  <td className="text-right">{row.documentosSii}</td>
+                  <td className="text-right">{row.documentosXml}</td>
+                  <td className="text-right">{row.diferenciaDocumentos}</td>
+                  <td className="text-right">{formatClp(row.montoTotalSii)}</td>
+                  <td className="text-right">{formatClp(row.montoXml)}</td>
+                  <td className="text-right">{formatClp(row.diferenciaMonto)}</td>
+                  <td><span className={`rounded-full border px-2 py-1 text-xs font-semibold ${summaryStateClass(row.estado)}`}>{summaryStateLabel(row.estado)}</span></td>
+                  <td className="max-w-[260px] text-xs text-[#667068]">{row.accionRecomendada}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!monthly.length ? <div className="p-8 text-center text-sm text-[#667068]">Sin resumen mensual importado. Sube el archivo RCV_RESUMEN para ver control ejecutivo agregado.</div> : null}
+        </div>
+      </div>
 
       <div className="rounded-2xl border border-[#eadfd9] bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">

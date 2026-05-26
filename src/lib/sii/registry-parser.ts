@@ -13,11 +13,23 @@ export type SiiRegistryRow = {
   montoTotal: number;
 };
 
+export type SiiSummaryRow = {
+  rowNumber: number;
+  periodo: string;
+  rutEmpresa: string;
+  tipoDocumento: string;
+  cantidadDocumentos: number;
+  montoNeto: number;
+  iva: number;
+  montoTotal: number;
+};
+
 export type SiiRegistryParseResult = {
   errors: string[];
   isSummary: boolean;
   period: string;
   rows: SiiRegistryRow[];
+  summaryRows: SiiSummaryRow[];
 };
 
 function normalizeHeader(value: string) {
@@ -35,6 +47,11 @@ function parseMoney(value: string) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function parseInteger(value: string) {
+  const parsed = Number(value.replace(/\./g, "").replace(/,/g, "").trim());
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function normalizeRut(value: string) {
   const clean = value.replace(/\./g, "").replace(/\s+/g, "").toUpperCase();
   if (clean.includes("-")) return clean;
@@ -44,6 +61,19 @@ function normalizeRut(value: string) {
 
 function normalizeTipoDte(value: string) {
   const digits = value.match(/\d+/)?.[0] ?? value.trim();
+  if (digits && /^\d+$/.test(digits)) return digits;
+  const normalized = normalizeHeader(value);
+  const byName: Record<string, string> = {
+    "factura electronica": "33",
+    "factura no afecta o exenta electronica": "34",
+    "factura de compra electronica": "46",
+    "guia de despacho electronica": "52",
+    "nota de debito electronica": "56",
+    "nota de credito electronica": "61"
+  };
+  for (const [name, code] of Object.entries(byName)) {
+    if (normalized.includes(name)) return code;
+  }
   return digits;
 }
 
@@ -65,6 +95,11 @@ function detectPeriod(name: string, rows: SiiRegistryRow[]) {
   if (fromName) return `${fromName[1]}-${fromName[2]}`;
   const firstDate = rows.find((row) => row.fecha)?.fecha;
   return firstDate ? firstDate.slice(0, 7) : "";
+}
+
+function detectCompanyRut(name: string) {
+  const match = name.match(/REGISTRO_(\d{7,9}[0-9Kk]?|\d{7,8}-[0-9Kk])/);
+  return match ? normalizeRut(match[1]) : "";
 }
 
 function pick(row: Record<string, string>, candidates: string[]) {
@@ -105,6 +140,36 @@ function toRows(matrix: string[][]) {
       tipoDte: normalizeTipoDte(tipoDte)
     };
   }).filter((row) => row.folio && row.rutProveedor);
+}
+
+function toSummaryRows(matrix: string[][], fileName: string) {
+  const headerRowIndex = matrix.findIndex((row) => {
+    const normalized = row.map(normalizeHeader);
+    return normalized.some((cell) => cell.includes("tipo")) &&
+      normalized.some((cell) => cell.includes("documento") || cell.includes("cantidad")) &&
+      normalized.some((cell) => cell.includes("monto") || cell === "total");
+  });
+  if (headerRowIndex < 0) return [];
+  const headers = matrix[headerRowIndex].map(normalizeHeader);
+  const rutEmpresa = detectCompanyRut(fileName);
+  return matrix.slice(headerRowIndex + 1).map((cells, index) => {
+    const row = Object.fromEntries(headers.map((header, column) => [header, cells[column] ?? ""]));
+    const tipoDocumento = pick(row, ["tipo dte", "tipo documento", "tipo doc", "tipo"]);
+    const cantidad = pick(row, ["total documentos", "cantidad documentos", "cantidad de documentos", "documentos", "cantidad", "nro documentos"]);
+    const montoNeto = pick(row, ["monto neto", "neto", "monto neto activo fijo"]);
+    const iva = pick(row, ["iva recuperable", "iva", "monto iva", "iva uso comun"]);
+    const total = pick(row, ["monto total", "total", "monto"]);
+    return {
+      cantidadDocumentos: parseInteger(cantidad),
+      iva: parseMoney(iva),
+      montoNeto: parseMoney(montoNeto),
+      montoTotal: parseMoney(total),
+      periodo: "",
+      rowNumber: headerRowIndex + index + 2,
+      rutEmpresa,
+      tipoDocumento: normalizeTipoDte(tipoDocumento)
+    };
+  }).filter((row) => row.tipoDocumento && (row.cantidadDocumentos > 0 || row.montoTotal > 0));
 }
 
 function parseCsv(text: string) {
@@ -150,12 +215,16 @@ export function parseSiiRegistryFile(file: { buffer: Buffer; name: string; type?
   const rows = toRows(matrix);
   const period = detectPeriod(file.name, rows);
   const withPeriod = rows.map((row) => ({ ...row, periodo: period || row.fecha.slice(0, 7) }));
+  const summaryRows = toSummaryRows(matrix, file.name);
+  const summaryPeriod = period || detectPeriod(file.name, []);
+  const summaryWithPeriod = summaryRows.map((row) => ({ ...row, periodo: summaryPeriod }));
   const flattened = matrix.flat().map(normalizeHeader).join(" ");
-  const isSummary = !rows.length && flattened.includes("resumen");
+  const isSummary = !rows.length && (flattened.includes("resumen") || summaryRows.length > 0);
   return {
-    errors: isSummary ? ["El archivo parece ser resumen RCV y no trae folio/documento para cruce. Descarga el detalle del Registro de Compras."] : [],
+    errors: isSummary && !summaryRows.length ? ["El archivo parece ser resumen RCV, pero no se pudieron detectar filas agregadas por tipo de documento."] : [],
     isSummary,
-    period,
-    rows: withPeriod
+    period: period || summaryPeriod,
+    rows: withPeriod,
+    summaryRows: summaryWithPeriod
   };
 }
