@@ -32,6 +32,8 @@ test("Control SII module exposes upload, comparison and missing XML claim text",
   const client = await readFile("src/components/sii/sii-control-client.tsx", "utf8");
   const route = await readFile("src/app/api/sii/compare/route.ts", "utf8");
   const store = await readFile("src/lib/sii/registry-store.ts", "utf8");
+  const provisional = await readFile("src/lib/sii/provisional.ts", "utf8");
+  const migration = await readFile("supabase/migrations/202605150017_sii_provisional_invoices.sql", "utf8");
   assert.match(page, /Control SII vs XML/);
   assert.match(client, /Importar y cruzar/);
   assert.match(client, /Importacion acumulativa/);
@@ -44,4 +46,8 @@ test("Control SII module exposes upload, comparison and missing XML claim text",
   assert.match(store, /sii\.registry_imported/);
   assert.match(store, /sii\.summary_imported/);
   assert.match(store, /sii\.xml_missing_resolved/);
+  assert.match(provisional, /is_payable_without_xml/);
+  assert.match(provisional, /sii\.provisional_invoice_sent_to_treasury/);
+  assert.match(migration, /provisional_dte_document_id/);
+  assert.match(migration, /payment_status/);
 });

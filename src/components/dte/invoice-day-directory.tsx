@@ -23,6 +23,7 @@ export function InvoiceDayDirectory({ invoices }: { invoices: DteOperationalInvo
   const [basis, setBasis] = useState<"received" | "issued">("received");
   const [quick, setQuick] = useState("mes");
   const [query, setQuery] = useState("");
+  const [xmlFilter, setXmlFilter] = useState("todas");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const range = relativeRange(quick);
@@ -46,8 +47,15 @@ export function InvoiceDayDirectory({ invoices }: { invoices: DteOperationalInvo
         invoice.paymentStatus
       ].join(" ").toLowerCase();
       return (!lower || date >= lower) && (!upper || date <= upper) && (!needle || haystack.includes(needle));
+    }).filter((invoice) => {
+      if (xmlFilter === "con_xml") return invoice.xmlStatus !== "pendiente_xml";
+      if (xmlFilter === "pendientes_xml") return invoice.xmlStatus === "pendiente_xml";
+      if (xmlFilter === "origen_sii") return invoice.sourceType === "sii";
+      if (xmlFilter === "pagadas") return invoice.paymentStatus === "paid";
+      if (xmlFilter === "pendientes_pago") return invoice.paymentStatus !== "paid";
+      return true;
     });
-  }, [basis, from, invoices, query, quick, range.end, range.start, to]);
+  }, [basis, from, invoices, query, quick, range.end, range.start, to, xmlFilter]);
 
   const groups = useMemo(() => {
     const grouped = new Map<string, DteOperationalInvoice[]>();
@@ -60,7 +68,7 @@ export function InvoiceDayDirectory({ invoices }: { invoices: DteOperationalInvo
 
   return (
     <section className="rounded-lg border border-[#eadfd9] bg-white p-5 shadow-sm">
-      <div className="grid gap-3 lg:grid-cols-[1.5fr_0.8fr_0.8fr_0.8fr_0.8fr]">
+      <div className="grid gap-3 lg:grid-cols-[1.5fr_0.8fr_0.8fr_0.8fr_0.8fr_0.8fr]">
         <label>
           <span className="flex items-center gap-2 text-sm font-medium text-[#6f6263]"><Search className="h-4 w-4" />Buscar</span>
           <input className="mt-2 w-full rounded-md border border-[#eadfd9] px-3 py-2 text-sm" onChange={(event) => setQuery(event.target.value)} placeholder="Folio, proveedor, RUT, producto, monto o estado" value={query} />
@@ -75,6 +83,12 @@ export function InvoiceDayDirectory({ invoices }: { invoices: DteOperationalInvo
           <span className="text-sm font-medium text-[#6f6263]">Periodo</span>
           <select className="mt-2 w-full rounded-md border border-[#eadfd9] px-3 py-2 text-sm" onChange={(event) => setQuick(event.target.value)} value={quick}>
             <option value="hoy">Hoy</option><option value="ayer">Ayer</option><option value="7">Ultimos 7 dias</option><option value="mes">Mes actual</option><option value="custom">Rango</option>
+          </select>
+        </label>
+        <label>
+          <span className="text-sm font-medium text-[#6f6263]">Estado</span>
+          <select className="mt-2 w-full rounded-md border border-[#eadfd9] px-3 py-2 text-sm" onChange={(event) => setXmlFilter(event.target.value)} value={xmlFilter}>
+            <option value="todas">Todas</option><option value="con_xml">Con XML</option><option value="pendientes_xml">Pendientes XML</option><option value="origen_sii">Origen SII</option><option value="pagadas">Pagadas</option><option value="pendientes_pago">Pendientes pago</option>
           </select>
         </label>
         <label><span className="flex items-center gap-2 text-sm font-medium text-[#6f6263]"><CalendarDays className="h-4 w-4" />Desde</span><input className="mt-2 w-full rounded-md border border-[#eadfd9] px-3 py-2 text-sm" onChange={(event) => { setQuick("custom"); setFrom(event.target.value); }} type="date" value={from} /></label>
@@ -92,7 +106,7 @@ export function InvoiceDayDirectory({ invoices }: { invoices: DteOperationalInvo
                 <p className="font-semibold text-brand-900">{formatClp(total)}</p>
               </header>
               <div className="overflow-x-auto"><table className="w-full min-w-[1080px] text-sm"><thead className="bg-white text-left text-xs uppercase text-brand-700"><tr><th className="px-3 py-2">Folio</th><th>Proveedor</th><th>Emision</th><th>Recepcion</th><th className="text-right">Neto</th><th className="text-right">IVA</th><th className="text-right">Total</th><th>XML</th><th>Pago</th><th>Acciones</th></tr></thead><tbody>
-                {rows.map((invoice) => <tr className="border-t border-[#f0e5df]" key={invoice.id}><td className="px-3 py-3 font-semibold text-brand-900">{invoice.tipoDte}-{invoice.folio}</td><td><p>{invoice.supplier}</p><p className="text-xs text-[#7b6f70]">{invoice.rut}</p></td><td>{localDate(invoice.issuedAt)}</td><td>{localDate(invoice.receivedAt)}</td><td className="text-right">{formatClp(invoice.net)}</td><td className="text-right">{formatClp(invoice.iva)}</td><td className="text-right font-semibold">{formatClp(invoice.total)}</td><td>{invoice.xmlStatus}</td><td>{invoice.paymentStatus}</td><td className="space-x-2 whitespace-nowrap"><a className="font-semibold text-brand-700 hover:underline" href={`/api/invoices/${invoice.folio}/pdf`} target="_blank">PDF</a><a className="font-semibold text-brand-700 hover:underline" href={`/api/invoices/${invoice.folio}/xml`}>XML</a><a className="font-semibold text-brand-700 hover:underline" href={`/facturas?folio=${invoice.folio}`}>Detalle</a></td></tr>)}
+                {rows.map((invoice) => <tr className="border-t border-[#f0e5df]" key={invoice.id}><td className="px-3 py-3 font-semibold text-brand-900">{invoice.tipoDte}-{invoice.folio}</td><td><p>{invoice.supplier}</p><p className="text-xs text-[#7b6f70]">{invoice.rut}</p>{invoice.sourceType === "sii" ? <p className="text-xs font-semibold text-amber-800">Origen: SII</p> : null}</td><td>{localDate(invoice.issuedAt)}</td><td>{localDate(invoice.receivedAt)}</td><td className="text-right">{formatClp(invoice.net)}</td><td className="text-right">{formatClp(invoice.iva)}</td><td className="text-right font-semibold">{formatClp(invoice.total)}</td><td>{invoice.xmlStatus === "pendiente_xml" ? "Pendiente XML" : invoice.xmlStatus}</td><td>{invoice.paymentStatus}</td><td className="space-x-2 whitespace-nowrap">{invoice.xmlStatus === "pendiente_xml" ? <span className="text-xs text-[#7b6f70]">PDF/XML no disponible</span> : <><a className="font-semibold text-brand-700 hover:underline" href={`/api/invoices/${invoice.folio}/pdf`} target="_blank">PDF</a><a className="font-semibold text-brand-700 hover:underline" href={`/api/invoices/${invoice.folio}/xml`}>XML</a></>}<a className="font-semibold text-brand-700 hover:underline" href={`/facturas?folio=${invoice.folio}`}>Detalle</a></td></tr>)}
               </tbody></table></div>
             </article>
           );

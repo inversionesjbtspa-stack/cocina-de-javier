@@ -388,6 +388,14 @@ export async function syncSiiRegistryForDte({
     gmail_message_id: gmailMessageId,
     xml_received_at: receivedAt ?? new Date().toISOString()
   }).eq("id", existing.id);
+  await supabase.from("dte_documents").update({
+    source_type: "xml",
+    xml_status: "received"
+  }).eq("id", dteDocumentId);
+  await supabase.from("accounts_payable").update({
+    dte_document_id: dteDocumentId,
+    xml_status: "received"
+  }).eq("tenant_id", tenantId).eq("sii_purchase_registry_id", existing.id);
   await supabase.from("audit_events").insert({
     after_data: { estado_xml: estadoXml, folio, rut_emisor: rutEmisor },
     company_id: companyId,

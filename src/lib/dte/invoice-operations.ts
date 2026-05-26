@@ -17,6 +17,7 @@ export type DteOperationalInvoice = {
   paymentStatus: string;
   itemNames: string[];
   gmailMessageId: string | null;
+  sourceType: string;
 };
 
 export async function getDteOperationalInvoices(): Promise<DteOperationalInvoice[]> {
@@ -25,7 +26,7 @@ export async function getDteOperationalInvoices(): Promise<DteOperationalInvoice
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("dte_documents")
-    .select("id,folio,tipo_dte,rut_emisor,razon_social_emisor,fecha_emision,fecha_recepcion,gmail_received_at,monto_neto,iva,monto_total,status,validation_status,gmail_message_id,dte_items(name),accounts_payable(status)")
+    .select("id,folio,tipo_dte,rut_emisor,razon_social_emisor,fecha_emision,fecha_recepcion,gmail_received_at,monto_neto,iva,monto_total,status,validation_status,gmail_message_id,source_type,xml_status,payment_status,dte_items(name),accounts_payable(status)")
     .order("fecha_recepcion", { ascending: false })
     .limit(1200);
 
@@ -45,7 +46,8 @@ export async function getDteOperationalInvoices(): Promise<DteOperationalInvoice
       supplier: row.razon_social_emisor ?? row.rut_emisor,
       tipoDte: row.tipo_dte,
       total: Number(row.monto_total ?? 0),
-      xmlStatus: row.validation_status ?? row.status
+      sourceType: row.source_type ?? "xml",
+      xmlStatus: row.xml_status === "missing" ? "pendiente_xml" : row.validation_status ?? row.status
     };
   });
 }

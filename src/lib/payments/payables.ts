@@ -23,6 +23,9 @@ export type PayableCandidate = {
   email: string;
   alerts: string[];
   ok: boolean;
+  sourceType: string;
+  xmlStatus: string;
+  payableWithoutXml: boolean;
 };
 
 export async function getPayableCandidates(): Promise<PayableCandidate[]> {
@@ -31,7 +34,7 @@ export async function getPayableCandidates(): Promise<PayableCandidate[]> {
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("accounts_payable")
-    .select("id,document_number,issue_date,due_date,total_amount,balance_amount,status,suppliers(id,rut,legal_name,email,payment_email,status,supplier_bank_accounts(bank_name,bank_name_normalized,bank_code,bank_mapping_needs_review,account_type,account_number,status))")
+    .select("id,document_number,issue_date,due_date,total_amount,balance_amount,status,source_type,xml_status,is_payable_without_xml,suppliers(id,rut,legal_name,email,payment_email,status,supplier_bank_accounts(bank_name,bank_name_normalized,bank_code,bank_mapping_needs_review,account_type,account_number,status))")
     .not("status", "in", "(paid,rejected,cancelled)")
     .order("due_date")
     .limit(1200);
@@ -58,10 +61,13 @@ export async function getPayableCandidates(): Promise<PayableCandidate[]> {
       id: row.id,
       issueDate: row.issue_date,
       ok: alerts.length === 0 && Number(row.balance_amount ?? 0) > 0,
+      payableWithoutXml: Boolean(row.is_payable_without_xml),
+      sourceType: row.source_type ?? "xml",
       status: row.status,
       supplierId: supplier.id,
       supplierName: supplier.legal_name,
-      supplierRut: supplier.rut
+      supplierRut: supplier.rut,
+      xmlStatus: row.xml_status ?? "received"
     };
   });
 }

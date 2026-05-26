@@ -259,6 +259,7 @@ export async function persistExtractedDteInvoices(invoices: PersistInput) {
           rut_receptor: invoice.rutReceptor,
           sii_status: "pending_validation",
           source_provider: "gmail",
+          source_type: "xml",
           status: "parsed",
           supplier_id: supplier.id,
           tasa_iva: invoice.tasaIva,
@@ -273,6 +274,7 @@ export async function persistExtractedDteInvoices(invoices: PersistInput) {
           validation_warnings: invoice.raw.validation.warnings,
           vlr_pagar: invoice.valorPagar,
           xml_original: item.xml,
+          xml_status: "received",
           xml_sha256: xmlHash
         },
         { onConflict: "tenant_id,rut_emisor,tipo_dte,folio" }
@@ -436,12 +438,14 @@ export async function persistExtractedDteInvoices(invoices: PersistInput) {
           dte_document_id: dte.id,
           due_date: invoice.fechaVencimiento ?? addDays(invoice.fechaEmision, 30),
           issue_date: invoice.fechaEmision,
+          source_type: "xml",
           status: "pending_approval",
           subtotal: invoice.montoNeto + invoice.montoExento,
           supplier_id: supplier.id,
           tax_amount: invoice.iva,
           tenant_id: tenant.id,
-          total_amount: invoice.montoTotal
+          total_amount: invoice.montoTotal,
+          xml_status: "received"
         },
         { onConflict: "tenant_id,supplier_id,document_number" }
       );

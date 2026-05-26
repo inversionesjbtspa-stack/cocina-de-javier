@@ -207,6 +207,27 @@ export function SiiControlClient() {
     if (response.ok) await load();
   }
 
+  async function sendToTreasury(ids?: string[]) {
+    setBusy(true);
+    setMessage("");
+    setTechnicalDetail(null);
+    const response = await fetch("/api/sii/provisionalize", {
+      body: JSON.stringify({ ids }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST"
+    });
+    const result = await response.json().catch(() => null);
+    setBusy(false);
+    if (!response.ok) {
+      setMessage(`No se pudo enviar a Facturas/Tesoreria: ${result?.error ?? "error desconocido"}`);
+      setTechnicalDetail(result?.detail ?? result);
+      return;
+    }
+    setMessage(`Enviado a Facturas/Tesoreria: ${result.facturasProvisionalesCreadas ?? 0} facturas provisionales, ${result.cuentasPorPagarCreadas ?? 0} cuentas por pagar, ${result.yaExistian ?? 0} ya existentes, ${result.errores?.length ?? 0} errores.`);
+    if (result.errores?.length) setTechnicalDetail(result);
+    await load();
+  }
+
   async function copyClaim(provider: string, rutEmisor: string, providerRows: ResultRow[]) {
     await navigator.clipboard.writeText(claimText(provider, providerRows));
     await markClaim(rutEmisor, "copiado");
@@ -252,6 +273,7 @@ export function SiiControlClient() {
           <div className="flex flex-wrap gap-2">
             <input accept=".csv,.txt,.xlsx" className="rounded-md border border-[#dfe4dd] px-3 py-2 text-sm" name="file" required type="file" />
             <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60" disabled={busy} type="submit">{busy ? "Importando..." : "Importar y cruzar"}</button>
+            <button className="rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700 disabled:opacity-60" disabled={busy || !missing.length} onClick={() => sendToTreasury(missing.map((row) => row.id))} type="button">Enviar faltantes a Facturas/Tesoreria</button>
           </div>
         </div>
         {message ? <p className="mt-3 rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-900">{message}</p> : null}
@@ -321,6 +343,7 @@ export function SiiControlClient() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button className="rounded-md bg-brand-700 px-3 py-2 text-xs font-semibold text-white" onClick={() => copyClaim(provider.proveedor, provider.rut, provider.rows)} type="button">Copiar reclamo</button>
+                  <button className="rounded-md bg-brand-700 px-3 py-2 text-xs font-semibold text-white" disabled={busy} onClick={() => sendToTreasury(provider.rows.map((row) => row.id))} type="button">Enviar a Tesoreria</button>
                   <button className="rounded-md border border-[#dfe4dd] px-3 py-2 text-xs font-semibold text-brand-900" onClick={() => markClaim(provider.rut, "enviado_manualmente")} type="button">Marcar enviado</button>
                   <button className="rounded-md border border-[#dfe4dd] px-3 py-2 text-xs font-semibold text-brand-900" onClick={() => markClaim(provider.rut, "resuelto")} type="button">Resolver</button>
                 </div>
@@ -363,7 +386,15 @@ export function SiiControlClient() {
                   <td className="text-right">{row.montoXml ? formatClp(row.montoXml) : "-"}</td>
                   <td><span className={`rounded-full border px-2 py-1 text-xs font-semibold ${stateClass(row.estadoXml)}`}>{stateLabel(row.estadoXml)}</span></td>
                   <td>{row.claimStatus}</td>
-                  <td>{row.dteDocumentId ? <a className="font-semibold text-brand-700 hover:underline" href={`/facturas?folio=${encodeURIComponent(row.folio)}`}>Ver factura</a> : <button className="font-semibold text-brand-700" onClick={() => copyClaim(row.razonSocial, row.rutEmisor, [row])} type="button">Copiar reclamo</button>}</td>
+                  <td>
+                    <div className="flex flex-col gap-1">
+                      {row.dteDocumentId ? <a className="font-semibold text-brand-700 hover:underline" href={`/facturas?folio=${encodeURIComponent(row.folio)}`}>Ver factura</a> : null}
+                      {!row.dteDocumentId && row.estadoXml === "falta_xml" ? <button className="text-left font-semibold text-brand-700" disabled={busy} onClick={() => sendToTreasury([row.id])} type="button">Crear factura provisional</button> : null}
+                      {!row.dteDocumentId && row.estadoXml === "falta_xml" ? <button className="text-left font-semibold text-brand-700" disabled={busy} onClick={() => sendToTreasury([row.id])} type="button">Crear cuenta por pagar</button> : null}
+                      {!row.dteDocumentId ? <button className="text-left font-semibold text-brand-700" onClick={() => copyClaim(row.razonSocial, row.rutEmisor, [row])} type="button">Copiar reclamo</button> : null}
+                      {row.dteDocumentId ? <a className="font-semibold text-brand-700 hover:underline" href="/tesoreria#nomina-pagos">Ver en Tesoreria</a> : null}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
