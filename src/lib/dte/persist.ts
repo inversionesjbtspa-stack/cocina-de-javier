@@ -446,20 +446,22 @@ export async function persistExtractedDteInvoices(invoices: PersistInput) {
       );
     }
 
-    await supabase.from("audit_events").insert({
-      after_data: {
-        duplicate: Boolean(existing),
-        folio: invoice.folio,
-        gmail_message_id: invoice.sourceMessageId,
-        rut_emisor: invoice.rutEmisor,
-        xml_sha256: xmlHash
-      },
-      company_id: company.id,
-      entity_id: dte.id,
-      entity_type: "dte_document",
-      event_type: existing ? "dte.xml_duplicate_seen" : "dte.xml_processed",
-      tenant_id: tenant.id
-    });
+    if (!existing) {
+      await supabase.from("audit_events").insert({
+        after_data: {
+          duplicate: false,
+          folio: invoice.folio,
+          gmail_message_id: invoice.sourceMessageId,
+          rut_emisor: invoice.rutEmisor,
+          xml_sha256: xmlHash
+        },
+        company_id: company.id,
+        entity_id: dte.id,
+        entity_type: "dte_document",
+        event_type: "dte.xml_processed",
+        tenant_id: tenant.id
+      });
+    }
 
     results.push({
       dteDocumentId: dte.id,
@@ -487,6 +489,22 @@ export async function persistExtractedDteInvoices(invoices: PersistInput) {
       })
       .eq("id", syncRun.id);
   }
+
+  await supabase.from("audit_events").insert({
+    after_data: {
+      duplicates: duplicateCount,
+      duration_ms: null,
+      errors: 0,
+      new_xml: newCount,
+      processed: invoices.length,
+      sync_run_id: syncRun?.id ?? null
+    },
+    company_id: company.id,
+    entity_id: syncRun?.id ?? null,
+    entity_type: "dte_sync_run",
+    event_type: "dte.xml_sync_completed",
+    tenant_id: tenant.id
+  });
 
   return results;
 }

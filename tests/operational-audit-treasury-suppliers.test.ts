@@ -48,3 +48,12 @@ test("Santander bank mapping handles dirty master bank names from treasury captu
     ]
   );
 });
+
+test("audit timeline hides technical duplicate XML events by default", async () => {
+  const auditFile = await readFile("src/components/audit/audit-timeline.tsx", "utf8");
+  const eventsFile = await readFile("src/lib/audit/events.ts", "utf8");
+  assert.match(auditFile, /Mostrar eventos tecnicos/);
+  assert.match(auditFile, /showTechnical \|\| !event\.technical/);
+  assert.match(eventsFile, /dte\.xml_duplicate_seen/);
+  assert.match(eventsFile, /technical: isTechnicalEvent/);
+});

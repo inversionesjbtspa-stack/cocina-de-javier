@@ -5,6 +5,8 @@ const publicRoutes = new Set(["/login"]);
 const publicAssets = new Set([
   "/logo-lcdj.gif",
   "/logo-lcdj.svg",
+  "/favicon.svg",
+  "/apple-touch-icon.svg",
   "/icon.svg",
   "/favicon.ico"
 ]);
@@ -76,5 +78,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|logo-lcdj.gif|logo-lcdj.svg|icon.svg).*)"]
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|favicon.svg|apple-touch-icon.svg|logo-lcdj.gif|logo-lcdj.svg|icon.svg).*)"]
 };

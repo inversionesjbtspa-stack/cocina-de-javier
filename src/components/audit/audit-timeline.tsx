@@ -21,6 +21,7 @@ export function AuditTimeline({ events, initialQuery = "" }: { events: AuditEven
   const [state, setState] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [showTechnical, setShowTechnical] = useState(false);
   const modules = useMemo(() => [...new Set(events.map((event) => event.module))].sort(), [events]);
   const actors = useMemo(() => [...new Set(events.map((event) => event.actor))].sort(), [events]);
   const filtered = useMemo(() => events.filter((event) => {
@@ -36,13 +37,14 @@ export function AuditTimeline({ events, initialQuery = "" }: { events: AuditEven
       JSON.stringify(event.afterData ?? {})
     ].join(" ").toLowerCase();
     const day = event.createdAt.slice(0, 10);
-    return (!needle || haystack.includes(needle)) &&
+    return (showTechnical || !event.technical) &&
+      (!needle || haystack.includes(needle)) &&
       (!module || event.module === module) &&
       (!actor || event.actor === actor) &&
       (!state || event.state === state) &&
       (!from || day >= from) &&
       (!to || day <= to);
-  }), [actor, events, from, module, query, state, to]);
+  }), [actor, events, from, module, query, showTechnical, state, to]);
 
   const exportQuery = new URLSearchParams({ actor, from, module, query, state, to }).toString();
 
@@ -57,7 +59,14 @@ export function AuditTimeline({ events, initialQuery = "" }: { events: AuditEven
         <a className="inline-flex items-center gap-2 rounded-md border border-[#dfe4dd] px-3 py-2 text-sm font-semibold text-brand-900" href={`/api/audit/export?format=pdf&${exportQuery}`} target="_blank"><Download className="h-4 w-4" />PDF</a>
       </div>
     </div>
-    <div className="mt-5 grid gap-3 lg:grid-cols-[1.5fr_repeat(5,1fr)]">
+    <div className="mt-5 flex flex-wrap items-center gap-3">
+      <label className="inline-flex items-center gap-2 rounded-md border border-[#dfe4dd] bg-[#fffdfb] px-3 py-2 text-sm font-semibold text-brand-900">
+        <input checked={showTechnical} onChange={(event) => setShowTechnical(event.target.checked)} type="checkbox" />
+        Mostrar eventos tecnicos
+      </label>
+      {!showTechnical ? <span className="text-xs text-[#667068]">Duplicados XML y healthchecks quedan ocultos por defecto.</span> : null}
+    </div>
+    <div className="mt-3 grid gap-3 lg:grid-cols-[1.5fr_repeat(5,1fr)]">
       <label className="relative"><Search className="absolute left-3 top-2.5 h-4 w-4 text-[#667068]" /><input className="w-full rounded-md border border-[#dfe4dd] py-2 pl-9 pr-3 text-sm" onChange={(event) => setQuery(event.target.value)} placeholder="Buscar accion, folio, RUT, entidad" value={query} /></label>
       <select className="rounded-md border border-[#dfe4dd] px-3 py-2 text-sm" onChange={(event) => setModule(event.target.value)} value={module}><option value="">Todo modulo</option>{modules.map((item) => <option key={item} value={item}>{item}</option>)}</select>
       <select className="rounded-md border border-[#dfe4dd] px-3 py-2 text-sm" onChange={(event) => setActor(event.target.value)} value={actor}><option value="">Todo usuario</option>{actors.map((item) => <option key={item} value={item}>{item}</option>)}</select>
@@ -73,6 +82,7 @@ export function AuditTimeline({ events, initialQuery = "" }: { events: AuditEven
             <p className="mt-1 text-sm text-[#5d665f]">{event.actor} / {event.module} / {event.entityType}{event.entityId ? ` / ${event.entityId}` : ""}</p>
           </div>
           <div className="flex items-center gap-2">
+            {event.technical ? <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">Tecnico</span> : null}
             <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${stateClass(event.state)}`}>{event.state === "ok" ? "OK" : event.state === "warning" ? "Atencion" : "Error"}</span>
             <ChevronDown className="h-4 w-4 text-[#667068]" />
           </div>

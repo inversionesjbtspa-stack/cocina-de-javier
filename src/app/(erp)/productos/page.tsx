@@ -2,14 +2,16 @@ import { PackageSearch } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { ProductExplorer } from "@/components/products/product-explorer";
 import { MetricCard, PremiumPanel } from "@/components/ui/enterprise";
-import { productAnalytics } from "@/lib/finance/enterprise-analytics";
-import { formatClp, purchasesData } from "@/lib/dte/purchases-data";
+import { productAnalyticsFromData } from "@/lib/finance/enterprise-analytics";
+import { getDtePurchaseData } from "@/lib/dte/supabase-data";
+import { formatClp } from "@/lib/dte/purchases-data";
 
-export default function ProductosPage() {
-  const products = productAnalytics(80);
+export default async function ProductosPage() {
+  const dteData = await getDtePurchaseData();
+  const products = productAnalyticsFromData(dteData, 80);
   const critical = products.filter((product) => product.risk === "critical");
   const top = products[0];
-  const totalProducts = purchasesData.summaries.products.length;
+  const totalProducts = dteData.summaries.products.length;
   const movedAmount = products.reduce((sum, product) => sum + product.total, 0);
 
   return (

@@ -17,33 +17,36 @@ export default async function LoginPage({
   const error = params.error ? errorMessages[params.error] : null;
 
   return (
-    <main className="grid min-h-screen bg-[#f6f2ef] lg:grid-cols-[1.05fr_0.95fr]">
-      <section className="hidden border-r border-[#eadfd9] bg-brand-900 px-10 py-12 text-white lg:flex lg:flex-col lg:justify-between">
+    <main className="grid min-h-screen bg-[radial-gradient(circle_at_top_left,#fffaf6_0,#f7eee8_38%,#efe0d8_100%)] lg:grid-cols-[1.05fr_0.95fr]">
+      <section className="hidden border-r border-[#eadfd9] bg-[#fffaf6]/70 px-10 py-12 text-brand-900 lg:flex lg:flex-col lg:justify-between">
         <div>
-          <BrandLogo />
+          <div className="inline-flex rounded-2xl border border-[#eadfd9] bg-white px-5 py-4 shadow-sm">
+            <BrandLogo />
+          </div>
           <h1 className="mt-8 max-w-xl text-5xl font-semibold leading-tight tracking-tight">
             ERP financiero para control administrativo real.
           </h1>
-          <p className="mt-5 max-w-lg text-base leading-7 text-[#f3e5dc]">
+          <p className="mt-5 max-w-lg text-base leading-7 text-[#5d514f]">
             Acceso privado para compras, tesoreria, facturas DTE, pagos,
             proveedores y auditoria operacional.
           </p>
         </div>
 
-        <div className="grid grid-cols-3 gap-3 text-sm">
-          {["Supabase Auth", "RLS activo", "Vercel Cloud"].map((item) => (
-            <div
-              className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-[#f3e5dc]"
-              key={item}
-            >
-              {item}
-            </div>
-          ))}
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <div className="rounded-lg border border-[#eadfd9] bg-white px-4 py-3 text-brand-900">
+            Cocina de Javier 1995
+          </div>
+          <div className="rounded-lg border border-[#eadfd9] bg-white px-4 py-3 text-brand-900">
+            © by Jesús Betancourt
+          </div>
         </div>
       </section>
 
       <section className="grid place-items-center px-5 py-10">
-        <div className="w-full max-w-md rounded-lg border border-[#eadfd9] bg-white p-7 shadow-[0_24px_70px_rgba(43,16,24,0.14)]">
+        <div className="w-full max-w-md rounded-2xl border border-[#eadfd9] bg-white/92 p-7 shadow-[0_24px_70px_rgba(43,16,24,0.12)] backdrop-blur">
+          <div className="mb-6 flex justify-center rounded-xl border border-[#f0e4dc] bg-[#fffaf6] px-4 py-3 lg:hidden">
+            <BrandLogo compact />
+          </div>
           <div>
             <p className="text-sm font-semibold uppercase tracking-wide text-brand-700">
               Acceso seguro
@@ -52,8 +55,8 @@ export default async function LoginPage({
               Entrar al ERP
             </h2>
             <p className="mt-2 text-sm leading-6 text-[#5d665f]">
-              Usa tu cuenta autorizada. Las sesiones se validan contra Supabase
-              Auth y permisos por empresa.
+              Usa tu cuenta autorizada para ingresar al panel financiero y
+              operativo de La Cocina de Javier.
             </p>
           </div>
 
@@ -100,6 +103,10 @@ export default async function LoginPage({
             Acceso restringido. Toda actividad queda sujeta a trazabilidad y
             auditoria del sistema.
           </p>
+          <div className="mt-5 flex items-center justify-between border-t border-[#f0e4dc] pt-4 text-xs font-semibold text-brand-700">
+            <span>Cocina de Javier 1995</span>
+            <span>© by Jesús Betancourt</span>
+          </div>
         </div>
       </section>
     </main>

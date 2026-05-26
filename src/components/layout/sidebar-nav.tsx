@@ -6,6 +6,7 @@ import { useState } from "react";
 import {
   BarChart3,
   FileText,
+  FileSearch,
   Landmark,
   Menu,
   Package,
@@ -23,6 +24,7 @@ const navigation = [
   { href: "/proveedores", label: "Proveedores", section: "Operacion", icon: UsersRound },
   { href: "/productos", label: "Productos", section: "Operacion", icon: ShoppingBasket },
   { href: "/facturas", label: "Facturas DTE", section: "Operacion", icon: FileText },
+  { href: "/control-sii", label: "Control SII vs XML", section: "Operacion", icon: FileSearch },
   { href: "/compras", label: "Compras", section: "Operacion", icon: Package },
   { href: "/tesoreria", label: "Tesoreria", section: "Finanzas", icon: Landmark },
   { href: "/recursos-humanos", label: "Recursos Humanos", section: "Gestion", icon: Users },
@@ -92,7 +94,7 @@ export function SidebarNav() {
                           ? "bg-white text-brand-900 shadow-sm ring-1 ring-[#eadfd9]"
                           : "text-[#55484a] hover:bg-white/80 hover:text-brand-900"
                       ].join(" ")}
-                      href={item.href}
+                      href={item.href as never}
                       key={item.href}
                     >
                       <span

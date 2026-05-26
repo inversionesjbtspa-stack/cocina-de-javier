@@ -15,6 +15,7 @@ export type IntelligentPriceAlert = {
   latestDate: string;
   state: "estable" | "atencion" | "critico" | "dato sospechoso";
   recommendation: string;
+  unit?: string;
 };
 
 export async function getIntelligentPriceAlerts(threshold = Number(process.env.PRICE_ALERT_THRESHOLD ?? 20)) {
@@ -22,30 +23,37 @@ export async function getIntelligentPriceAlerts(threshold = Number(process.env.P
   if (!hasSupabaseAdminConfig()) return [] as IntelligentPriceAlert[];
   const supabase = createAdminClient();
   const { data } = await supabase
-    .from("product_price_history")
-    .select("product_id,price,effective_date,products(name),suppliers(legal_name)")
-    .eq("source_entity_type", "dte_document")
-    .gt("price", 0)
-    .order("effective_date", { ascending: false })
-    .limit(1800);
+    .from("dte_items")
+    .select("id,product_id,name,unit,unit_price,quantity,line_total,price_confidence_score,item_validation_status,dte_documents!inner(fecha_emision,supplier_id,suppliers(legal_name))")
+    .not("product_id", "is", null)
+    .gte("price_confidence_score", 90)
+    .gt("unit_price", 0)
+    .order("created_at", { ascending: false })
+    .limit(2500);
 
   const rows = new Map<string, Array<Record<string, unknown>>>();
-  (data ?? []).forEach((row) => rows.set(row.product_id, [...(rows.get(row.product_id) ?? []), row]));
+  (data ?? []).forEach((row) => {
+    const key = `${row.product_id}:${String(row.unit ?? "unidad").toUpperCase()}`;
+    rows.set(key, [...(rows.get(key) ?? []), row]);
+  });
 
-  return [...rows.entries()].flatMap(([productId, history]) => {
-    const latest = history[0];
-    const lastThreePrevious = history.slice(1, 4);
+  return [...rows.values()].flatMap((history) => {
+    const sorted = history.sort((a, b) => String((b.dte_documents as { fecha_emision?: string })?.fecha_emision).localeCompare(String((a.dte_documents as { fecha_emision?: string })?.fecha_emision)));
+    const latest = sorted[0];
+    const lastThreePrevious = sorted.slice(1, 4);
     if (!latest || !lastThreePrevious.length) return [];
-    const latestPrice = Number(latest.price ?? 0);
-    const averageLastThree = lastThreePrevious.reduce((sum, row) => sum + Number(row.price ?? 0), 0) / lastThreePrevious.length;
-    const monthlyRows = history.filter((row) => String(row.effective_date).slice(0, 7) === String(latest.effective_date).slice(0, 7));
-    const monthlyAverage = monthlyRows.reduce((sum, row) => sum + Number(row.price ?? 0), 0) / Math.max(1, monthlyRows.length);
-    const bestHistorical = history.reduce((best, row) => Math.min(best, Number(row.price ?? best)), latestPrice);
+    const latestDoc = latest.dte_documents as { fecha_emision?: string; suppliers?: { legal_name?: string } | null } | null;
+    const latestPrice = Number(latest.unit_price ?? 0);
+    const averageLastThree = lastThreePrevious.reduce((sum, row) => sum + Number(row.unit_price ?? 0), 0) / lastThreePrevious.length;
+    const monthlyRows = sorted.filter((row) => String((row.dte_documents as { fecha_emision?: string } | null)?.fecha_emision).slice(0, 7) === String(latestDoc?.fecha_emision).slice(0, 7));
+    const monthlyAverage = monthlyRows.reduce((sum, row) => sum + Number(row.unit_price ?? 0), 0) / Math.max(1, monthlyRows.length);
+    const bestHistorical = sorted.reduce((best, row) => Math.min(best, Number(row.unit_price ?? best)), latestPrice);
     const variation = averageLastThree > 0 ? ((latestPrice - averageLastThree) / averageLastThree) * 100 : 0;
-    const suppliers = latest.suppliers as { legal_name?: string } | null;
-    const products = latest.products as { name?: string } | null;
+    const unit = String(latest.unit ?? "unidad");
+    const confidence = Number(latest.price_confidence_score ?? 0);
+    const status = String(latest.item_validation_status ?? "");
     const state: IntelligentPriceAlert["state"] =
-      !Number.isFinite(variation) || averageLastThree <= 0
+      confidence < 90 || status === "warning" || !Number.isFinite(variation) || averageLastThree <= 0
         ? "dato sospechoso"
         : variation >= threshold
           ? "critico"
@@ -57,14 +65,15 @@ export async function getIntelligentPriceAlerts(threshold = Number(process.env.P
       averageLastThree,
       bestHistorical,
       impact: Math.max(0, latestPrice - Math.min(averageLastThree, monthlyAverage, bestHistorical)),
-      latestDate: String(latest.effective_date),
+      latestDate: String(latestDoc?.fecha_emision ?? ""),
       latestPrice,
       monthlyAverage,
-      product: products?.name ?? "Producto sin nombre",
-      productId,
-      recommendation: state === "critico" ? "Revisar proveedor alternativo o negociar antes de la proxima compra." : "Comparar la proxima factura con promedio y mejor precio historico.",
+      product: String(latest.name ?? "Producto sin nombre"),
+      productId: String(latest.product_id),
+      recommendation: state === "dato sospechoso" ? "Revisar unidad, cantidad o pack antes de usar este precio para alertas." : state === "critico" ? "Revisar proveedor alternativo o negociar antes de la proxima compra." : "Comparar la proxima factura con promedio y mejor precio historico.",
       state,
-      supplier: suppliers?.legal_name ?? "Proveedor no informado",
+      supplier: latestDoc?.suppliers?.legal_name ?? "Proveedor no informado",
+      unit,
       variation
     }];
   }).sort((a, b) => b.variation - a.variation).slice(0, 12);

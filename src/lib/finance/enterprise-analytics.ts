@@ -1,6 +1,7 @@
 import {
   formatClp,
   purchasesData,
+  type DtePurchaseData,
   type DtePurchaseInvoice
 } from "@/lib/dte/purchases-data";
 import {
@@ -68,10 +69,10 @@ export function supplierProfiles(limit = 12) {
     .slice(0, limit);
 }
 
-export function productAnalytics(limit = 14) {
+export function productAnalyticsFromData(data: DtePurchaseData, limit = 14) {
   const increases = priceIncreaseProducts(100);
 
-  return purchasesData.summaries.products
+  return data.summaries.products
     .map((product) => {
       const increase = increases.find((item) => item.description === product.description);
       const last = product.lastPrices[0];
@@ -98,6 +99,10 @@ export function productAnalytics(limit = 14) {
     })
     .sort((a, b) => b.total - a.total)
     .slice(0, limit);
+}
+
+export function productAnalytics(limit = 14) {
+  return productAnalyticsFromData(purchasesData, limit);
 }
 
 export function cashflowDays() {

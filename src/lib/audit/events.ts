@@ -19,6 +19,7 @@ export type AuditEventView = {
   requestId: string;
   ipAddress: string;
   userAgent: string;
+  technical: boolean;
 };
 
 type RawAuditEvent = {
@@ -56,13 +57,20 @@ function moduleFromEvent(eventType: string, entityType: string | null) {
 function stateFromPayload(eventType: string, afterData: Record<string, unknown> | null) {
   const error = afterData?.error ?? afterData?.errors;
   if (eventType.includes("reject") || eventType.includes("failed") || error) return "error";
-  if (eventType.includes("duplicate") || eventType.includes("warning")) return "warning";
+  if (eventType.includes("warning")) return "warning";
   return "ok";
 }
 
 function errorFromPayload(afterData: Record<string, unknown> | null) {
   const error = afterData?.error ?? afterData?.reason;
   return typeof error === "string" ? error : "";
+}
+
+function isTechnicalEvent(eventType: string, afterData: Record<string, unknown> | null) {
+  if (eventType === "dte.xml_duplicate_seen") return true;
+  if (eventType.includes("duplicate") && !afterData?.requires_action) return true;
+  if (eventType.startsWith("health.")) return true;
+  return Boolean(afterData?.technical);
 }
 
 export async function getAuditEvents(limit = 500): Promise<AuditEventView[]> {
@@ -97,6 +105,7 @@ export async function getAuditEvents(limit = 500): Promise<AuditEventView[]> {
     module: moduleFromEvent(row.event_type, row.entity_type),
     requestId: row.request_id ?? "",
     state: stateFromPayload(row.event_type, row.after_data),
+    technical: isTechnicalEvent(row.event_type, row.after_data),
     userAgent: row.user_agent ?? ""
   }));
 }

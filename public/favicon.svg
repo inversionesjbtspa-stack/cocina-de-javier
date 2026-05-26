@@ -1,0 +1,6 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <rect width="64" height="64" rx="14" fill="#fffaf6"/>
+  <text x="32" y="24" text-anchor="middle" fill="#a5122b" font-family="Georgia, serif" font-size="12" font-weight="700">COCINA</text>
+  <text x="32" y="39" text-anchor="middle" fill="#a5122b" font-family="Georgia, serif" font-size="15" font-weight="700">JAVIER</text>
+  <path d="M15 48c7 4 27 4 34 0" fill="none" stroke="#b9975b" stroke-width="2" stroke-linecap="round"/>
+</svg>

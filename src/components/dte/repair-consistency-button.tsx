@@ -7,7 +7,7 @@ export function RepairConsistencyButton() {
   const [busy, setBusy] = useState(false);
   async function repair() {
     setBusy(true); setMessage("");
-    const response = await fetch("/api/admin/dte/repair-consistency", { method: "POST" });
+    const response = await fetch("/api/admin/rebuild-dte-consistency", { method: "POST" });
     const result = await response.json();
     setMessage(response.ok ? `Reparacion ejecutada: ${result.rebuilt ?? 0} DTE procesados.` : "No se pudo reparar con la sesion actual.");
     setBusy(false);
