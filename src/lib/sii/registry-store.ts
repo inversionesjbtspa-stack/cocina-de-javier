@@ -17,6 +17,7 @@ export type SiiRegistryViewRow = {
   periodo: string;
   rutEmisor: string;
   razonSocial: string;
+  supplierEmail: string | null;
   tipoDte: string;
   folio: string;
   fechaEmision: string;
@@ -79,7 +80,8 @@ export async function importSiiRegistry({
   userId: string;
 }) {
   const sourceHash = sha256(buffer);
-  const keys = rows.map((row) => ({
+  const uniqueRows = [...new Map(rows.map((row) => [`${row.rutProveedor}:${row.tipoDte}:${row.folio}`, row])).values()];
+  const keys = uniqueRows.map((row) => ({
     folio: row.folio,
     rut: row.rutProveedor,
     tipo: row.tipoDte
@@ -107,7 +109,7 @@ export async function importSiiRegistry({
     : { data: [] as Array<{ id: string; rut_emisor: string; tipo_dte: string; folio: string }> };
   const existingKeys = new Set((beforeRows ?? []).map((row) => `${row.rut_emisor}:${row.tipo_dte}:${row.folio}`));
   const now = new Date().toISOString();
-  const payload = rows.map((row) => {
+  const payload = uniqueRows.map((row) => {
     const doc = docMap.get(`${row.rutProveedor}:${row.tipoDte}:${row.folio}`) ?? null;
     const estadoXml = estadoFor(row, doc);
     return {
@@ -140,7 +142,7 @@ export async function importSiiRegistry({
   const summary = {
     actualizados: payload.filter((row) => existingKeys.has(`${row.rut_emisor}:${row.tipo_dte}:${row.folio}`)).length,
     diferenciasMonto: payload.filter((row) => row.estado_xml === "diferencia_monto").length,
-    duplicadosIgnorados: Math.max(0, rows.length - new Set(rows.map((row) => `${row.rutProveedor}:${row.tipoDte}:${row.folio}`)).size),
+    duplicadosIgnorados: Math.max(0, rows.length - uniqueRows.length),
     faltanXml: payload.filter((row) => row.estado_xml === "falta_xml").length,
     leidos: rows.length,
     nuevos: payload.filter((row) => !existingKeys.has(`${row.rut_emisor}:${row.tipo_dte}:${row.folio}`)).length,
@@ -361,6 +363,7 @@ export function toViewRow(row: Record<string, unknown>): SiiRegistryViewRow {
     razonSocial: String(row.razon_social ?? ""),
     rutEmisor: String(row.rut_emisor ?? ""),
     sourceFile: String(row.source_file ?? "") || null,
+    supplierEmail: String(row.supplier_email ?? "") || null,
     tipoDte: String(row.tipo_dte ?? ""),
     xmlReceivedAt: String(row.xml_received_at ?? "") || null
   };

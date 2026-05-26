@@ -11,6 +11,7 @@ type ResultRow = {
   folio: string;
   rutEmisor: string;
   razonSocial: string;
+  supplierEmail: string | null;
   fechaEmision: string;
   montoNeto: number;
   iva: number;
@@ -314,6 +315,7 @@ export function SiiControlClient() {
                 <div>
                   <p className="font-semibold text-brand-900">{provider.proveedor}</p>
                   <p className="text-xs text-[#667068]">{provider.rut} / {provider.rows.length} facturas / {formatClp(provider.total)} / antigua {provider.oldest || "-"}</p>
+                  <p className="mt-1 text-xs text-[#667068]">Email: {provider.rows.find((row) => row.supplierEmail)?.supplierEmail ?? "No registrado"}</p>
                   <p className="mt-2 text-xs text-[#667068]">Folios: {provider.rows.slice(0, 8).map((row) => row.folio).join(", ")}{provider.rows.length > 8 ? "..." : ""}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">

@@ -42,7 +42,7 @@ export async function GET() {
     }
     throw error;
   }
-  const results = (data ?? []).map((row) => toViewRow(row as Record<string, unknown>));
+  const results = await enrichSupplierEmails(supabase, ctx.membership.tenant_id, (data ?? []).map((row) => toViewRow(row as Record<string, unknown>)));
   return NextResponse.json({ ok: true, results, summary: summarize(results), summaryComparisons, summaryTotals: summarizeMonthly(summaryComparisons) });
 }
 
@@ -97,7 +97,7 @@ export async function POST(request: Request) {
       .eq("tenant_id", ctx.membership.tenant_id)
       .order("fecha_emision", { ascending: false })
       .limit(5000);
-    const results = (data ?? []).map((row) => toViewRow(row as Record<string, unknown>));
+    const results = await enrichSupplierEmails(supabase, ctx.membership.tenant_id, (data ?? []).map((row) => toViewRow(row as Record<string, unknown>)));
     const summaryComparisons = await getSiiSummaryComparisons(supabase, ctx.membership.tenant_id);
     return NextResponse.json({
       ok: true,
@@ -143,6 +143,26 @@ function summarize(results: ReturnType<typeof toViewRow>[]) {
     total: results.length,
     xmlRecibidos: results.filter((row) => row.estadoXml === "xml_recibido").length
   };
+}
+
+async function enrichSupplierEmails(
+  supabase: ReturnType<typeof createAdminClient>,
+  tenantId: string,
+  rows: ReturnType<typeof toViewRow>[]
+) {
+  const ruts = [...new Set(rows.map((row) => row.rutEmisor).filter(Boolean))];
+  if (!ruts.length) return rows;
+  const { data } = await supabase
+    .from("suppliers")
+    .select("rut,email,payment_email,commercial_email")
+    .eq("tenant_id", tenantId)
+    .in("rut", ruts)
+    .limit(5000);
+  const emailByRut = new Map((data ?? []).map((row) => [
+    String(row.rut),
+    String(row.payment_email ?? row.email ?? row.commercial_email ?? "") || null
+  ]));
+  return rows.map((row) => ({ ...row, supplierEmail: emailByRut.get(row.rutEmisor) ?? null }));
 }
 
 function summarizeMonthly(results: Awaited<ReturnType<typeof getSiiSummaryComparisons>>) {

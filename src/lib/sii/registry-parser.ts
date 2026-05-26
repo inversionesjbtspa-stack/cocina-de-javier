@@ -124,9 +124,9 @@ function toRows(matrix: string[][]) {
     const folio = pick(row, ["folio"]);
     const rutProveedor = pick(row, ["rut proveedor", "rut emisor", "rut"]);
     const razonSocial = pick(row, ["razon social", "proveedor", "razon social proveedor", "nombre proveedor"]);
-    const fecha = pick(row, ["fecha emision", "fecha documento", "fecha"]);
+    const fecha = pick(row, ["fecha emision", "fecha documento", "fecha docto", "fecha documento tributario", "fecha"]);
     const montoNeto = pick(row, ["monto neto", "neto"]);
-    const iva = pick(row, ["iva", "monto iva"]);
+    const iva = pick(row, ["monto iva recuperable", "iva recuperable", "iva", "monto iva"]);
     const monto = pick(row, ["monto total", "total", "monto"]);
     return {
       fecha: normalizeDate(fecha),
