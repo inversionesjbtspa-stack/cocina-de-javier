@@ -2,12 +2,22 @@ import AdmZip from "adm-zip";
 
 export type SiiRegistryRow = {
   rowNumber: number;
+  periodo: string;
   tipoDte: string;
   folio: string;
   rutProveedor: string;
   razonSocial: string;
   fecha: string;
+  montoNeto: number;
+  iva: number;
   montoTotal: number;
+};
+
+export type SiiRegistryParseResult = {
+  errors: string[];
+  isSummary: boolean;
+  period: string;
+  rows: SiiRegistryRow[];
 };
 
 function normalizeHeader(value: string) {
@@ -23,6 +33,38 @@ function parseMoney(value: string) {
   const clean = value.replace(/\$/g, "").replace(/\./g, "").replace(/,/g, ".").trim();
   const parsed = Number(clean);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeRut(value: string) {
+  const clean = value.replace(/\./g, "").replace(/\s+/g, "").toUpperCase();
+  if (clean.includes("-")) return clean;
+  if (clean.length < 2) return clean;
+  return `${clean.slice(0, -1)}-${clean.slice(-1)}`;
+}
+
+function normalizeTipoDte(value: string) {
+  const digits = value.match(/\d+/)?.[0] ?? value.trim();
+  return digits;
+}
+
+function normalizeFolio(value: string) {
+  return value.replace(/\./g, "").trim();
+}
+
+function normalizeDate(value: string) {
+  const clean = value.trim();
+  const dmy = clean.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+  const ymd = clean.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (ymd) return `${ymd[1]}-${ymd[2].padStart(2, "0")}-${ymd[3].padStart(2, "0")}`;
+  return clean;
+}
+
+function detectPeriod(name: string, rows: SiiRegistryRow[]) {
+  const fromName = name.match(/(20\d{2})(0[1-9]|1[0-2])/);
+  if (fromName) return `${fromName[1]}-${fromName[2]}`;
+  const firstDate = rows.find((row) => row.fecha)?.fecha;
+  return firstDate ? firstDate.slice(0, 7) : "";
 }
 
 function pick(row: Record<string, string>, candidates: string[]) {
@@ -47,15 +89,20 @@ function toRows(matrix: string[][]) {
     const rutProveedor = pick(row, ["rut proveedor", "rut emisor", "rut"]);
     const razonSocial = pick(row, ["razon social", "proveedor", "razon social proveedor", "nombre proveedor"]);
     const fecha = pick(row, ["fecha emision", "fecha documento", "fecha"]);
+    const montoNeto = pick(row, ["monto neto", "neto"]);
+    const iva = pick(row, ["iva", "monto iva"]);
     const monto = pick(row, ["monto total", "total", "monto"]);
     return {
-      fecha,
-      folio,
+      fecha: normalizeDate(fecha),
+      folio: normalizeFolio(folio),
+      iva: parseMoney(iva),
+      montoNeto: parseMoney(montoNeto),
       montoTotal: parseMoney(monto),
       razonSocial,
       rowNumber: headerRowIndex + index + 2,
-      rutProveedor,
-      tipoDte
+      rutProveedor: normalizeRut(rutProveedor),
+      periodo: "",
+      tipoDte: normalizeTipoDte(tipoDte)
     };
   }).filter((row) => row.folio && row.rutProveedor);
 }
@@ -97,8 +144,18 @@ function parseXlsx(buffer: Buffer) {
   return rows;
 }
 
-export function parseSiiRegistryFile(file: { buffer: Buffer; name: string; type?: string }) {
+export function parseSiiRegistryFile(file: { buffer: Buffer; name: string; type?: string }): SiiRegistryParseResult {
   const lower = file.name.toLowerCase();
-  if (lower.endsWith(".xlsx")) return toRows(parseXlsx(file.buffer));
-  return toRows(parseCsv(file.buffer.toString("utf8")));
+  const matrix = lower.endsWith(".xlsx") ? parseXlsx(file.buffer) : parseCsv(file.buffer.toString("utf8"));
+  const rows = toRows(matrix);
+  const period = detectPeriod(file.name, rows);
+  const withPeriod = rows.map((row) => ({ ...row, periodo: period || row.fecha.slice(0, 7) }));
+  const flattened = matrix.flat().map(normalizeHeader).join(" ");
+  const isSummary = !rows.length && flattened.includes("resumen");
+  return {
+    errors: isSummary ? ["El archivo parece ser resumen RCV y no trae folio/documento para cruce. Descarga el detalle del Registro de Compras."] : [],
+    isSummary,
+    period,
+    rows: withPeriod
+  };
 }

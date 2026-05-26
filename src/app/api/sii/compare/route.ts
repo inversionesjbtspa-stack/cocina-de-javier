@@ -2,58 +2,85 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { parseSiiRegistryFile } from "@/lib/sii/registry-parser";
+import { importSiiRegistry, toViewRow } from "@/lib/sii/registry-store";
 
-export async function POST(request: Request) {
+async function context() {
   const auth = await createClient();
   const { data: { user } } = await auth.auth.getUser();
-  if (!user) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  if (!user) return { auth, error: NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 }), user: null };
+  const membership = await auth.from("user_memberships").select("tenant_id,company_id,role").eq("user_id", user.id).eq("status", "active").maybeSingle();
+  if (!membership.data || !["owner", "admin", "finance_manager", "accountant"].includes(membership.data.role)) {
+    return { auth, error: NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 }), user: null };
+  }
+  return { auth, error: null, membership: membership.data, user };
+}
+
+export async function GET() {
+  const ctx = await context();
+  if (ctx.error) return ctx.error;
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("sii_purchase_registry")
+    .select("*,dte_documents(monto_total)")
+    .eq("tenant_id", ctx.membership.tenant_id)
+    .order("fecha_emision", { ascending: false })
+    .limit(5000);
+  if (error) {
+    return NextResponse.json({ ok: false, error: error.code === "42P01" ? "missing_sii_purchase_registry_migration" : error.message }, { status: 500 });
+  }
+  const results = (data ?? []).map((row) => toViewRow(row as Record<string, unknown>));
+  return NextResponse.json({ ok: true, results, summary: summarize(results) });
+}
+
+export async function POST(request: Request) {
+  const ctx = await context();
+  if (ctx.error) return ctx.error;
 
   const form = await request.formData();
   const upload = form.get("file");
   if (!(upload instanceof File)) return NextResponse.json({ ok: false, error: "file_required" }, { status: 400 });
 
   const buffer = Buffer.from(await upload.arrayBuffer());
-  const rows = parseSiiRegistryFile({ buffer, name: upload.name, type: upload.type });
+  const parsed = parseSiiRegistryFile({ buffer, name: upload.name, type: upload.type });
+  if (parsed.isSummary || !parsed.rows.length) {
+    return NextResponse.json({ ok: false, error: "summary_file_not_supported", errors: parsed.errors, results: [], summary: summarize([]) }, { status: 422 });
+  }
+
   const supabase = createAdminClient();
-  const rutList = [...new Set(rows.map((row) => row.rutProveedor).filter(Boolean))];
-  const folios = [...new Set(rows.map((row) => row.folio).filter(Boolean))];
-  const { data: docs } = rutList.length && folios.length
-    ? await supabase
-      .from("dte_documents")
-      .select("id,tipo_dte,folio,rut_emisor,razon_social_emisor,fecha_emision,monto_total")
-      .in("rut_emisor", rutList)
-      .in("folio", folios)
-      .limit(5000)
-    : { data: [] };
-  const docMap = new Map((docs ?? []).map((doc) => [`${doc.rut_emisor}:${doc.tipo_dte}:${doc.folio}`, doc]));
-  const results = rows.map((row) => {
-    const doc = docMap.get(`${row.rutProveedor}:${row.tipoDte}:${row.folio}`) ?? docMap.get(`${row.rutProveedor}:33:${row.folio}`) ?? null;
-    const montoXml = Number(doc?.monto_total ?? 0);
-    const diff = Math.abs(montoXml - row.montoTotal);
-    const state = !doc ? "falta_xml" : diff > 10 ? "diferencia_monto" : "xml_recibido";
-    return {
-      ...row,
-      dteDocumentId: doc?.id ?? null,
-      montoXml,
-      estado: state,
-      accion: state === "falta_xml"
-        ? `Solicitar XML a proveedor para folio ${row.folio}.`
-        : state === "diferencia_monto"
-          ? "Revisar diferencia entre Registro SII y XML recibido."
-          : "Documento conciliado con XML recibido."
-    };
-  });
-  const summary = {
-    diferenciaMonto: results.filter((row) => row.estado === "diferencia_monto").length,
-    faltanXml: results.filter((row) => row.estado === "falta_xml").length,
+  try {
+    const imported = await importSiiRegistry({
+      buffer,
+      companyId: ctx.membership.company_id,
+      fileName: upload.name,
+      rows: parsed.rows,
+      supabase,
+      tenantId: ctx.membership.tenant_id,
+      userId: ctx.user.id
+    });
+    const { data } = await supabase
+      .from("sii_purchase_registry")
+      .select("*,dte_documents(monto_total)")
+      .eq("tenant_id", ctx.membership.tenant_id)
+      .order("fecha_emision", { ascending: false })
+      .limit(5000);
+    const results = (data ?? []).map((row) => toViewRow(row as Record<string, unknown>));
+    return NextResponse.json({ ok: true, imported: imported.summary, results, summary: summarize(results) });
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : "unknown_import_error";
+    return NextResponse.json({ ok: false, error: message.includes("sii_purchase_registry") ? "missing_sii_purchase_registry_migration" : message }, { status: 500 });
+  }
+}
+
+function summarize(results: ReturnType<typeof toViewRow>[]) {
+  const missing = results.filter((row) => row.estadoXml === "falta_xml");
+  const providers = new Set(missing.map((row) => row.rutEmisor));
+  return {
+    diferenciasMonto: results.filter((row) => row.estadoXml === "diferencia_monto").length,
+    documentosResueltos: results.filter((row) => row.claimStatus === "resuelto").length,
+    faltanXml: missing.length,
+    montoSinXml: missing.reduce((sum, row) => sum + row.montoTotal, 0),
+    proveedoresAReclamar: providers.size,
     total: results.length,
-    xmlRecibido: results.filter((row) => row.estado === "xml_recibido").length
+    xmlRecibidos: results.filter((row) => row.estadoXml === "xml_recibido").length
   };
-  await supabase.from("audit_events").insert({
-    actor_user_id: user.id,
-    after_data: { filename: upload.name, ...summary },
-    entity_type: "sii_registry_import",
-    event_type: "sii.registry_compared"
-  });
-  return NextResponse.json({ ok: true, results, summary });
 }

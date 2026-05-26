@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { DTE_XML_GMAIL_QUERY } from "@/lib/dte/inbox";
+import { syncSiiRegistryForDte } from "@/lib/sii/registry-store";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ExtractedDteInvoice } from "@/lib/dte/types";
 
@@ -445,6 +446,19 @@ export async function persistExtractedDteInvoices(invoices: PersistInput) {
         { onConflict: "tenant_id,supplier_id,document_number" }
       );
     }
+
+    await syncSiiRegistryForDte({
+      companyId: company.id,
+      dteDocumentId: dte.id,
+      folio: invoice.folio,
+      gmailMessageId: invoice.sourceMessageId,
+      montoTotal: invoice.montoTotal,
+      receivedAt: invoice.sourceReceivedAt,
+      rutEmisor: invoice.rutEmisor,
+      supabase,
+      tenantId: tenant.id,
+      tipoDte: invoice.tipoDte
+    }).catch(() => null);
 
     if (!existing) {
       await supabase.from("audit_events").insert({
