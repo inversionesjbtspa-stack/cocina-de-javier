@@ -80,9 +80,17 @@ test("Compras uses unified XML and SII pending purchases without product side ef
   assert.match(comprasTable, /Enviar a Tesoreria/);
   assert.match(comprasTable, /api\/sii\/provisionalize/);
   assert.match(facturasPage, /XML recibidos \+ SII pendientes \+ manuales/);
-  assert.match(facturasPage, /PDF no disponible/);
+  assert.match(facturasPage, /Detectadas SII/);
+  assert.match(facturasPage, /XML pendientes/);
+  assert.match(facturasPage, /XML recibidos/);
+  assert.match(facturasPage, /XML pendiente proveedor/);
+  assert.match(facturasPage, /Documento provisional/);
   assert.match(invoiceDirectory, /Copiar reclamo/);
   assert.match(invoiceDirectory, /Marcar enviado/);
+  assert.match(invoiceDirectory, /Detectado SII/);
+  assert.match(invoiceDirectory, /Pendiente XML/);
+  assert.match(invoiceDirectory, /Reclamo pendiente/);
+  assert.match(invoiceDirectory, /XML pendiente proveedor/);
   assert.match(invoiceDirectory, /sourceType === "manual"/);
   assert.match(invoiceOps, /sourceType: "manual"/);
   assert.match(exportRoute, /getUnifiedPurchasesByMonth/);

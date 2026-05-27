@@ -13,9 +13,11 @@ test("HR vacation helpers count business days and accrue Chile base vacation day
 
 test("HR module exposes operational tables, storage buckets and payment template flow", async () => {
   const migration = await readFile("supabase/migrations/202605150018_hr_module.sql", "utf8");
+  const repairMigration = await readFile("supabase/migrations/202605150022_hr_schema_repair.sql", "utf8");
   const page = await readFile("src/app/(erp)/recursos-humanos/page.tsx", "utf8");
   const client = await readFile("src/components/hr/hr-dashboard-client.tsx", "utf8");
   const paymentRoute = await readFile("src/app/api/hr/payment-template/route.ts", "utf8");
+  const accountantRoute = await readFile("src/app/api/hr/accountant-data/route.ts", "utf8");
   const employeesRoute = await readFile("src/app/api/hr/employees/route.ts", "utf8");
   const payslipsRoute = await readFile("src/app/api/hr/payslips/route.ts", "utf8");
   const vacationRoute = await readFile("src/app/api/hr/vacations/route.ts", "utf8");
@@ -37,6 +39,10 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(migration, /hr-payslips/);
   assert.match(migration, /hr-vacation-documents/);
   assert.match(migration, /hr-employee-documents/);
+  assert.match(repairMigration, /hr_accountant_data_rows/);
+  assert.match(repairMigration, /employee_name text/);
+  assert.match(repairMigration, /net_pay numeric/);
+  assert.match(repairMigration, /create index if not exists hr_accountant_data_rows_tenant_period_idx/);
   assert.match(page, /RRHH operativo/);
   assert.match(client, /Template Pagos JESUS/);
   assert.match(client, /Habilitar pagos/);
@@ -46,6 +52,8 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(employeesRoute, /hr\.employee_created/);
   assert.match(payslipsRoute, /hr\.payslip_uploaded/);
   assert.match(vacationRoute, /businessDaysInclusive/);
+  assert.match(accountantRoute, /Migracion RRHH pendiente/);
+  assert.match(accountantRoute, /employee_name/);
 });
 
 test("HR payroll import parser reads the real April 2026 payslips and Datos Sueldos files", { skip: !existsSync("C:/Users/Jose Luis/Downloads/Liquidaciones de Abril 2026 (1).pdf") || !existsSync("C:/Users/Jose Luis/Downloads/4.- Datos sueldos abril 2026 V0.xlsx") }, () => {

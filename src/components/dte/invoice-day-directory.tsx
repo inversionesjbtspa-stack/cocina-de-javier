@@ -19,6 +19,34 @@ function relativeRange(quick: string) {
   return { end, start: start.toISOString().slice(0, 10) };
 }
 
+function badgeClass(tone: "green" | "orange" | "blue" | "violet" | "red" | "neutral") {
+  const tones = {
+    blue: "border-blue-200 bg-blue-50 text-blue-700",
+    green: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    neutral: "border-[#eadfd9] bg-white text-[#6f6263]",
+    orange: "border-amber-200 bg-amber-50 text-amber-800",
+    red: "border-red-200 bg-red-50 text-red-700",
+    violet: "border-violet-200 bg-violet-50 text-violet-700"
+  };
+  return `inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${tones[tone]}`;
+}
+
+function claimLabel(status?: string | null) {
+  if (status === "enviado" || status === "enviado_manualmente") return "Reclamo enviado";
+  if (status === "resuelto") return "XML recibido";
+  if (status === "ignorado") return "Reclamo ignorado";
+  return "Reclamo pendiente";
+}
+
+function paymentBadge(invoice: DteOperationalInvoice) {
+  const status = invoice.paymentStatus.toLowerCase();
+  const isPastDue = localDate(invoice.issuedAt) < new Date().toISOString().slice(0, 10) && status !== "paid";
+  if (status === "paid" || status === "pagada") return { label: "Pagada", tone: "blue" as const };
+  if (["scheduled", "in_batch", "en_nomina", "en nomina", "en_tesoreria"].includes(status)) return { label: "En nomina", tone: "violet" as const };
+  if (isPastDue) return { label: "Vencida", tone: "red" as const };
+  return { label: invoice.paymentStatus, tone: "neutral" as const };
+}
+
 export function InvoiceDayDirectory({ invoices }: { invoices: DteOperationalInvoice[] }) {
   const [basis, setBasis] = useState<"received" | "issued">("received");
   const [quick, setQuick] = useState("mes");
@@ -135,7 +163,61 @@ export function InvoiceDayDirectory({ invoices }: { invoices: DteOperationalInvo
                 <p className="font-semibold text-brand-900">{formatClp(total)}</p>
               </header>
               <div className="overflow-x-auto"><table className="w-full min-w-[1080px] text-sm"><thead className="bg-white text-left text-xs uppercase text-brand-700"><tr><th className="px-3 py-2">Folio</th><th>Proveedor</th><th>Emision</th><th>Recepcion</th><th className="text-right">Neto</th><th className="text-right">IVA</th><th className="text-right">Total</th><th>XML</th><th>Pago</th><th>Acciones</th></tr></thead><tbody>
-                {rows.map((invoice) => <tr className="border-t border-[#f0e5df]" key={invoice.id}><td className="px-3 py-3 font-semibold text-brand-900">{invoice.tipoDte}-{invoice.folio}</td><td><p>{invoice.supplier}</p><p className="text-xs text-[#7b6f70]">{invoice.rut}</p>{invoice.sourceType === "sii" ? <p className="text-xs font-semibold text-amber-800">Origen: SII / Reclamo: {invoice.claimStatus ?? "pendiente"}</p> : invoice.sourceType === "manual" ? <p className="text-xs font-semibold text-[#6f6263]">Origen: Manual</p> : null}</td><td>{localDate(invoice.issuedAt)}</td><td>{localDate(invoice.receivedAt)}</td><td className="text-right">{formatClp(invoice.net)}</td><td className="text-right">{formatClp(invoice.iva)}</td><td className="text-right font-semibold">{formatClp(invoice.total)}</td><td>{invoice.xmlStatus === "pendiente_xml" ? "Pendiente XML" : invoice.xmlStatus}</td><td>{invoice.paymentStatus}</td><td className="space-x-2 whitespace-nowrap">{invoice.xmlStatus === "pendiente_xml" ? <><span className="text-xs text-[#7b6f70]">PDF/XML no disponible</span>{invoice.sourceType === "sii" ? <><button className="font-semibold text-amber-800 hover:underline" onClick={() => copyClaim(invoice)} type="button"><Clipboard className="mr-1 inline h-3.5 w-3.5" />Copiar reclamo</button><button className="font-semibold text-brand-700 hover:underline" onClick={() => markClaim(invoice, "enviado")} type="button">Marcar enviado</button><button className="font-semibold text-emerald-700 hover:underline" onClick={() => markClaim(invoice, "resuelto")} type="button">Resolver</button></> : null}</> : <><a className="font-semibold text-brand-700 hover:underline" href={`/api/invoices/${invoice.folio}/pdf`} target="_blank">PDF</a><a className="font-semibold text-brand-700 hover:underline" href={`/api/invoices/${invoice.folio}/xml`}>XML</a></>}<a className="font-semibold text-brand-700 hover:underline" href={`/facturas?folio=${invoice.folio}`}>Detalle</a></td></tr>)}
+                {rows.map((invoice) => {
+                  const isPendingXml = invoice.xmlStatus === "pendiente_xml";
+                  const isSii = invoice.sourceType === "sii";
+                  const isSiiPending = invoice.sourceType === "sii" && isPendingXml;
+                  const payment = paymentBadge(invoice);
+                  return (
+                    <tr className="border-t border-[#f0e5df]" key={invoice.id}>
+                      <td className="px-3 py-3 font-semibold text-brand-900">{invoice.tipoDte}-{invoice.folio}</td>
+                      <td>
+                        <p>{invoice.supplier}</p>
+                        <p className="text-xs text-[#7b6f70]">{invoice.rut}</p>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {invoice.sourceType === "sii" ? <span className={badgeClass("orange")}>Detectado SII</span> : null}
+                          {invoice.sourceType === "manual" ? <span className={badgeClass("neutral")}>Origen Manual</span> : null}
+                          {isSiiPending ? <span className={badgeClass("orange")}>Documento provisional</span> : null}
+                          {invoice.sourceType === "sii" ? <span className={badgeClass(invoice.claimStatus === "resuelto" ? "green" : "orange")}>{claimLabel(invoice.claimStatus)}</span> : null}
+                        </div>
+                      </td>
+                      <td>{localDate(invoice.issuedAt)}</td>
+                      <td>{localDate(invoice.receivedAt)}</td>
+                      <td className="text-right">{formatClp(invoice.net)}</td>
+                      <td className="text-right">{formatClp(invoice.iva)}</td>
+                      <td className="text-right font-semibold">{formatClp(invoice.total)}</td>
+                      <td>
+                        <span className={badgeClass(isPendingXml ? "orange" : "green")}>{isPendingXml ? "Pendiente XML" : "XML recibido"}</span>
+                      </td>
+                      <td>
+                        <span className={badgeClass(payment.tone)}>{payment.label}</span>
+                      </td>
+                      <td className="space-x-2 whitespace-nowrap">
+                        {isSii ? (
+                          <>
+                            {isPendingXml ? <span className="text-xs font-semibold text-amber-800">XML pendiente proveedor</span> : null}
+                            {isPendingXml ? <button className="font-semibold text-amber-800 hover:underline" onClick={() => copyClaim(invoice)} type="button"><Clipboard className="mr-1 inline h-3.5 w-3.5" />Copiar reclamo</button> : null}
+                            {isPendingXml ? <button className="font-semibold text-brand-700 hover:underline" onClick={() => markClaim(invoice, "enviado")} type="button">Marcar enviado</button> : null}
+                            {isPendingXml ? <button className="font-semibold text-emerald-700 hover:underline" onClick={() => markClaim(invoice, "resuelto")} type="button">Resolver</button> : null}
+                            <a className="font-semibold text-brand-700 hover:underline" href={`/facturas?folio=${invoice.folio}`}>Detalle</a>
+                          </>
+                        ) : isPendingXml ? (
+                          <>
+                            <span className="text-xs font-semibold text-amber-800">XML pendiente proveedor</span>
+                            <a className="font-semibold text-brand-700 hover:underline" href={`/facturas?folio=${invoice.folio}`}>Detalle</a>
+                          </>
+                        ) : (
+                          <>
+                            <a className="font-semibold text-brand-700 hover:underline" href={`/api/invoices/${invoice.folio}/pdf`} target="_blank">Ver</a>
+                            <a className="font-semibold text-brand-700 hover:underline" href={`/api/invoices/${invoice.folio}/pdf?download=1`}>Descargar</a>
+                            <a className="font-semibold text-brand-700 hover:underline" href={`/api/invoices/${invoice.folio}/xml`}>XML</a>
+                            <a className="font-semibold text-brand-700 hover:underline" href={`/facturas?folio=${invoice.folio}`}>Detalle</a>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody></table></div>
             </article>
           );

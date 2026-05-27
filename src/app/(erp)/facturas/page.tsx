@@ -16,6 +16,11 @@ export default async function FacturasPage() {
   const total = invoices.reduce((sum, invoice) => sum + invoice.montoTotal, 0);
   const creditNotes = invoices.filter((invoice) => invoice.tipoDte === "61");
   const parsedItems = invoices.reduce((sum, invoice) => sum + invoice.items.length, 0);
+  const detectedSii = dteData.invoices.filter((invoice) => invoice.source === "sii").length;
+  const pendingXml = dteData.invoices.filter((invoice) => invoice.xmlStatus === "missing").length;
+  const receivedXml = dteData.invoices.filter((invoice) => invoice.xmlStatus !== "missing").length;
+  const paid = dteData.invoices.filter((invoice) => ["paid", "pagada"].includes(invoice.paymentStatus.toLowerCase())).length;
+  const inBatch = dteData.invoices.filter((invoice) => ["scheduled", "in_batch", "en_nomina", "en nomina", "en_tesoreria"].includes(invoice.paymentStatus.toLowerCase())).length;
 
   return (
     <AppShell>
@@ -40,6 +45,13 @@ export default async function FacturasPage() {
           <MetricCard detail="Muestra mensual con IVA" href="/facturas?filter=monto" label="Monto facturado" value={formatClp(total)} />
           <MetricCard detail="Ajustes tributarios recibidos" href="/facturas?tipo=61" label="Notas credito" tone={creditNotes.length ? "warning" : "neutral"} value={String(creditNotes.length)} />
           <MetricCard detail="Lineas de detalle parseadas" href="/facturas?filter=items" label="Items XML" value={String(parsedItems)} />
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <MetricCard detail="Documentos provisionales" href="/facturas?estado=origen_sii" label="Detectadas SII" tone={detectedSii ? "warning" : "neutral"} value={String(detectedSii)} />
+          <MetricCard detail="XML pendiente proveedor" href="/facturas?estado=pendientes_xml" label="XML pendientes" tone={pendingXml ? "warning" : "neutral"} value={String(pendingXml)} />
+          <MetricCard detail="Con respaldo XML" href="/facturas?estado=con_xml" label="XML recibidos" tone="success" value={String(receivedXml)} />
+          <MetricCard detail="Estado financiero" href="/facturas?estado=pagadas" label="Pagadas" value={String(paid)} />
+          <MetricCard detail="Incluidas en nomina" href="/facturas?estado=en_nomina" label="En nomina" value={String(inBatch)} />
         </div>
         <InvoiceDayDirectory invoices={operationalInvoices} />
 
@@ -76,11 +88,17 @@ export default async function FacturasPage() {
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
+                      {invoice.source === "sii" ? (
+                        <StatusPill tone="warning">Detectado SII</StatusPill>
+                      ) : null}
+                      {invoice.source === "sii" && invoice.xmlStatus === "missing" ? (
+                        <StatusPill tone="warning">Documento provisional</StatusPill>
+                      ) : null}
                       <StatusPill tone={invoice.xmlStatus === "missing" ? "warning" : invoice.tipoDte === "61" ? "warning" : "success"}>
                         {invoice.xmlStatus === "missing" ? "Pendiente XML" : invoice.tipoDte === "61" ? "Nota credito" : "Validado"}
                       </StatusPill>
                       <StatusPill>{invoice.xmlStatus === "missing" ? "Pendiente XML" : "XML asociado"}</StatusPill>
-                      <StatusPill>{invoice.xmlStatus === "missing" ? "PDF no disponible" : "PDF versionado"}</StatusPill>
+                      <StatusPill>{invoice.xmlStatus === "missing" ? "XML pendiente proveedor" : "PDF versionado"}</StatusPill>
                       <StatusPill>{invoice.sourceLabel ?? "XML"}</StatusPill>
                     </div>
                   </div>
@@ -130,7 +148,7 @@ export default async function FacturasPage() {
                   <div className="mt-4 flex flex-wrap gap-2">
                     {invoice.xmlStatus === "missing" ? (
                       <span className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
-                        XML pendiente · reenviar a dte@lacocinadejavier.cl
+                        XML pendiente proveedor - Documento provisional
                       </span>
                     ) : (
                       <>
