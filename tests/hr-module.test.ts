@@ -18,6 +18,9 @@ test("HR module exposes operational tables, storage buckets and payment template
   const client = await readFile("src/components/hr/hr-dashboard-client.tsx", "utf8");
   const paymentRoute = await readFile("src/app/api/hr/payment-template/route.ts", "utf8");
   const accountantRoute = await readFile("src/app/api/hr/accountant-data/route.ts", "utf8");
+  const bankImportRoute = await readFile("src/app/api/hr/bank-import/route.ts", "utf8");
+  const bankImportParser = await readFile("src/lib/hr/bank-import-parser.ts", "utf8");
+  const bankMigration = await readFile("supabase/migrations/202605150023_hr_bank_import_and_accountant_columns.sql", "utf8");
   const employeesRoute = await readFile("src/app/api/hr/employees/route.ts", "utf8");
   const payslipsRoute = await readFile("src/app/api/hr/payslips/route.ts", "utf8");
   const vacationRoute = await readFile("src/app/api/hr/vacations/route.ts", "utf8");
@@ -49,6 +52,15 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(paymentRoute, /generateSantanderTemplateFromRows/);
   assert.match(paymentRoute, /hr_payment_batches/);
   assert.match(paymentRoute, /payment_enabled/);
+  assert.match(paymentRoute, /Honorarios/);
+  assert.match(paymentRoute, /Aguinaldo/);
+  assert.match(bankImportRoute, /parseHrBankWorkbook/);
+  assert.match(bankImportRoute, /glosa_tef/);
+  assert.match(bankImportRoute, /validation_status: valid \? "valid" : "pending"/);
+  assert.match(bankImportParser, /glosa_tef/i);
+  assert.match(bankImportParser, /0x00fd/);
+  assert.match(bankMigration, /add column if not exists glosa_tef/);
+  assert.match(bankMigration, /add column if not exists row_number integer/);
   assert.match(employeesRoute, /hr\.employee_created/);
   assert.match(payslipsRoute, /hr\.payslip_uploaded/);
   assert.match(vacationRoute, /businessDaysInclusive/);

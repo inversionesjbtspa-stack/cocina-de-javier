@@ -110,6 +110,20 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
     form.reset();
   }
 
+  async function importBankAccounts(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    setMessage("Importando cuentas bancarias RRHH...");
+    const response = await fetch("/api/hr/bank-import", { body: new FormData(form), method: "POST" });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      setMessage(payload?.error ?? "No se pudo importar cuentas bancarias.");
+      return;
+    }
+    setMessage(`Cuentas bancarias importadas: ${payload.imported} filas, ${payload.inserted} nuevas, ${payload.updated} actualizadas, ${payload.enabled} trabajadores habilitados, ${payload.unmatched?.length ?? 0} sin match.`);
+    form.reset();
+  }
+
   async function generatePayroll() {
     if (!paymentSelection.length) {
       setMessage("Selecciona pagos aprobados antes de exportar.");
@@ -207,6 +221,17 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
           <label className="text-sm font-medium text-[#667068] md:col-span-1">Datos sueldos Excel<input accept=".xlsx" className="mt-1 w-full rounded-md border px-3 py-2 text-sm" name="salaryDataXlsx" type="file" /></label>
           <div className="flex items-end"><button className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" type="submit"><Upload className="h-4 w-4" /> Importar reales</button></div>
         </form>
+        <form className="mt-4 grid gap-3 border-t border-[#dfe4dd] pt-4 md:grid-cols-[1fr_auto]" onSubmit={importBankAccounts}>
+          <label className="text-sm font-medium text-[#667068]">
+            Excel bancario trabajadores
+            <input accept=".xls,.xlsx" className="mt-1 w-full rounded-md border px-3 py-2 text-sm" name="bankFile" required type="file" />
+          </label>
+          <div className="flex items-end">
+            <button className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" type="submit">
+              <Upload className="h-4 w-4" /> Importar cuentas bancarias
+            </button>
+          </div>
+        </form>
       </article>
 
       <div className="grid gap-5 xl:grid-cols-3">
@@ -241,7 +266,7 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
           <form className="mt-4 space-y-3" onSubmit={(event) => submitJson(event, "/api/hr/payments", "Pago RRHH creado.")}>
             <select className="w-full rounded-md border px-3 py-2 text-sm" name="employeeId">{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.fullName}</option>)}</select>
             <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={monthToday()} name="period" type="month" />
-            <select className="w-full rounded-md border px-3 py-2 text-sm" name="paymentType"><option value="remuneracion_mensual">Remuneracion mensual</option><option value="anticipo">Anticipo</option><option value="bono_compensatorio">Bono compensatorio</option><option value="bono_extra">Bono extra</option><option value="finiquito">Finiquito</option><option value="otro">Otro</option></select>
+            <select className="w-full rounded-md border px-3 py-2 text-sm" name="paymentType"><option value="remuneracion_mensual">Remuneracion mensual</option><option value="anticipo">Anticipo</option><option value="honorarios">Honorarios</option><option value="finiquito">Finiquito</option><option value="bono_compensatorio">Bono compensatorio</option><option value="bono_extra">Bono extra</option><option value="aguinaldo">Aguinaldo</option><option value="compensacion">Compensacion</option><option value="otro">Otro</option></select>
             <input className="w-full rounded-md border px-3 py-2 text-sm" name="amount" placeholder="Monto" required type="number" />
             <input className="w-full rounded-md border px-3 py-2 text-sm" name="glosa" placeholder="Glosa individual" />
             <input className="w-full rounded-md border px-3 py-2 text-sm" name="scheduledDate" type="date" />

@@ -7,7 +7,7 @@ const paymentSchema = z.object({
   amount: z.coerce.number().positive(),
   employeeId: z.string().uuid(),
   glosa: z.string().trim().max(240).optional().default(""),
-  paymentType: z.enum(["remuneracion_mensual", "anticipo", "bono_compensatorio", "bono_extra", "gratificacion", "ajuste", "prestamo_trabajador", "devolucion", "finiquito", "otro"]),
+  paymentType: z.enum(["remuneracion_mensual", "anticipo", "honorarios", "finiquito", "bono_compensatorio", "bono_extra", "aguinaldo", "compensacion", "gratificacion", "ajuste", "prestamo_trabajador", "devolucion", "otro"]),
   period: z.string().regex(/^\d{4}-\d{2}$/),
   scheduledDate: z.string().date().optional().or(z.literal("")).default(""),
   status: z.enum(["borrador", "pendiente_aprobacion", "aprobado", "incluido_en_nomina", "pagado", "anulado"]).default("aprobado")

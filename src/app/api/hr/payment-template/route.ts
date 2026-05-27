@@ -18,6 +18,24 @@ type InvalidHrPayment = {
   rut: string;
 };
 
+const paymentLabels: Record<string, string> = {
+  aguinaldo: "Aguinaldo",
+  anticipo: "Anticipo",
+  bono_compensatorio: "Bono compensatorio",
+  bono_extra: "Bono extra",
+  compensacion: "Compensacion",
+  finiquito: "Finiquito",
+  honorarios: "Honorarios",
+  remuneracion_mensual: "Remuneracion"
+};
+
+function glosaFor(paymentType: string, period: string) {
+  const [year, month] = period.split("-");
+  const date = new Date(`${period}-01T00:00:00`);
+  const monthName = Number.isNaN(date.valueOf()) ? month : date.toLocaleDateString("es-CL", { month: "long" });
+  return `${paymentLabels[paymentType] ?? paymentType.replace(/_/g, " ")} ${monthName} ${year}`.trim();
+}
+
 export async function POST(request: Request) {
   const ctx = await requireHrContext();
   if (ctx.error) return ctx.error;
@@ -52,7 +70,7 @@ export async function POST(request: Request) {
       invalid.push({ alerts, employeeId: employee?.id ?? "", employeeName: employee?.full_name ?? "Trabajador sin ficha", itemId: item.id, rut: employee?.rut ?? "" });
       continue;
     }
-    const glosa = item.glosa || body.glosaGlobal || `${item.payment_type.replace(/_/g, " ")} ${item.period}`;
+    const glosa = item.glosa || body.glosaGlobal || glosaFor(item.payment_type, item.period);
     rows.push({
       amount: Number(item.amount),
       folio: item.period.replace("-", ""),
