@@ -65,7 +65,9 @@ test("Compras uses unified XML and SII pending purchases without product side ef
   assert.match(purchasesStore, /sii_purchase_registry/);
   assert.match(purchasesStore, /accounts_payable/);
   assert.match(purchasesStore, /source: "manual"/);
-  assert.match(purchasesStore, /estado_xml\.eq\.falta_xml,dte_document_id\.is\.null/);
+  assert.match(purchasesStore, /diagnostics\.siiRows/);
+  assert.doesNotMatch(purchasesStore, /estado_xml\.eq\.falta_xml,dte_document_id\.is\.null/);
+  assert.match(purchasesStore, /siiRowsDiscardedByDedup/);
   assert.match(purchasesStore, /normalizeKey\(row\.rut_emisor, String\(row\.tipo_dte\), String\(row\.folio\)\)/);
   assert.match(purchasesStore, /items: \[\]/);
   assert.match(comprasPage, /Documentos con XML/);
