@@ -19,7 +19,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
   const { id } = await params;
   const supabase = createAdminClient();
   const paidAt = new Date().toISOString();
-  const { data: payable, error } = await supabase
+  const richUpdate = await supabase
     .from("accounts_payable")
     .update({
       balance_amount: 0,
@@ -32,12 +32,26 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
     .eq("tenant_id", ctx.membership.tenant_id)
     .select("id,dte_document_id,sii_purchase_registry_id,source_type,xml_status")
     .single();
+  const fallbackUpdate = richUpdate.error
+    ? await supabase
+      .from("accounts_payable")
+      .update({
+        balance_amount: 0,
+        status: "paid"
+      })
+      .eq("id", id)
+      .eq("tenant_id", ctx.membership.tenant_id)
+      .select("id,dte_document_id")
+      .single()
+    : null;
+  const payable = richUpdate.data ?? fallbackUpdate?.data;
+  const error = fallbackUpdate?.error ?? richUpdate.error;
   if (error || !payable) return NextResponse.json({ ok: false, error: error?.message ?? "payable_not_found" }, { status: 404 });
 
   if (payable.dte_document_id) {
     await supabase.from("dte_documents").update({ payment_status: "paid" }).eq("id", payable.dte_document_id);
   }
-  if (payable.sii_purchase_registry_id) {
+  if ("sii_purchase_registry_id" in payable && payable.sii_purchase_registry_id) {
     await supabase.from("sii_purchase_registry").update({
       paid_at: paidAt,
       paid_by: ctx.user.id,
@@ -50,13 +64,13 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
       accounts_payable_id: payable.id,
       dte_document_id: payable.dte_document_id,
       paid_at: paidAt,
-      sii_purchase_registry_id: payable.sii_purchase_registry_id,
-      xml_status: payable.xml_status
+      sii_purchase_registry_id: "sii_purchase_registry_id" in payable ? payable.sii_purchase_registry_id : null,
+      xml_status: "xml_status" in payable ? payable.xml_status : "received"
     },
     company_id: ctx.membership.company_id,
     entity_id: payable.id,
     entity_type: "accounts_payable",
-    event_type: payable.xml_status === "missing" ? "sii.invoice_paid_without_xml" : "accounts_payable.paid",
+    event_type: "xml_status" in payable && payable.xml_status === "missing" ? "sii.invoice_paid_without_xml" : "accounts_payable.paid",
     tenant_id: ctx.membership.tenant_id
   });
 

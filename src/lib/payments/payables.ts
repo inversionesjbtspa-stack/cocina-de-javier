@@ -47,22 +47,27 @@ export async function getPayableCandidatesResult(): Promise<PayablesResult> {
     return { candidates: [], diagnostics: { error: "Supabase admin no configurado", fetched: 0, invalid: 0, totalBalance: 0, valid: 0 } };
   }
   const supabase = createAdminClient();
+  const richSelect = "id,document_number,issue_date,due_date,total_amount,balance_amount,status,source_type,xml_status,is_payable_without_xml,suppliers(id,rut,legal_name,email,payment_email,status,supplier_bank_accounts(bank_name,bank_name_normalized,bank_code,bank_mapping_needs_review,account_type,account_number,status))";
+  const legacySelect = "id,document_number,issue_date,due_date,total_amount,balance_amount,status,suppliers(id,rut,legal_name,email,payment_email,status,supplier_bank_accounts(bank_name,bank_name_normalized,bank_code,bank_mapping_needs_review,account_type,account_number,status))";
   const query = supabase
     .from("accounts_payable")
-    .select("id,document_number,issue_date,due_date,total_amount,balance_amount,status,source_type,xml_status,is_payable_without_xml,suppliers(id,rut,legal_name,email,payment_email,status,supplier_bank_accounts(bank_name,bank_name_normalized,bank_code,bank_mapping_needs_review,account_type,account_number,status))")
+    .select(richSelect)
     .order("due_date")
     .limit(1200);
   const { data, error } = await query.not("status", "in", "(paid,rejected,cancelled)");
-  const rows = error
-    ? (await supabase
+  const legacyResult = error
+    ? await supabase
       .from("accounts_payable")
-      .select("id,document_number,issue_date,due_date,total_amount,balance_amount,status,source_type,xml_status,is_payable_without_xml,suppliers(id,rut,legal_name,email,payment_email,status,supplier_bank_accounts(bank_name,bank_name_normalized,bank_code,bank_mapping_needs_review,account_type,account_number,status))")
+      .select(legacySelect)
       .order("due_date")
-      .limit(1200)).data ?? []
-    : data ?? [];
+      .limit(1200)
+    : null;
+  const rows = (error ? legacyResult?.data : data) ?? [];
+  const diagnosticsError = legacyResult?.error?.message ?? error?.message ?? null;
 
   const candidates = rows.filter((row) => !["paid", "rejected", "cancelled"].includes(String(row.status))).map((row) => {
     type SupplierRow = { id: string; rut: string; legal_name: string; email: string | null; payment_email: string | null; status: string; supplier_bank_accounts?: Array<{ bank_name: string; bank_name_normalized: string | null; bank_code: string | null; bank_mapping_needs_review: boolean; account_type: string; account_number: string; status: string }> };
+    const record = row as Record<string, unknown>;
     const supplier = (Array.isArray(row.suppliers) ? row.suppliers[0] : row.suppliers) as SupplierRow | null;
     const bank = supplier?.supplier_bank_accounts?.find((account) => account.status !== "disabled") ?? supplier?.supplier_bank_accounts?.[0];
     const validation = { accountNumber: bank?.account_number ?? "", accountType: bank?.account_type ?? "", bankCode: bank?.bank_code ?? "", bankName: bank?.bank_name ?? "", email: supplier?.email ?? "", legalName: supplier?.legal_name ?? "", paymentEmail: supplier?.payment_email ?? "", rut: supplier?.rut ?? "", status: supplier?.status ?? "" };
@@ -85,19 +90,19 @@ export async function getPayableCandidatesResult(): Promise<PayablesResult> {
       id: row.id,
       issueDate: row.issue_date,
       ok: alerts.length === 0 && Number(row.balance_amount ?? 0) > 0,
-      payableWithoutXml: Boolean(row.is_payable_without_xml),
-      sourceType: row.source_type ?? "xml",
+      payableWithoutXml: Boolean(record.is_payable_without_xml ?? false),
+      sourceType: typeof record.source_type === "string" ? record.source_type : "xml",
       status: row.status,
       supplierId: supplier?.id ?? "",
       supplierName: supplier?.legal_name ?? "Cuenta por pagar sin proveedor",
       supplierRut: supplier?.rut ?? "",
-      xmlStatus: row.xml_status ?? "received"
+      xmlStatus: typeof record.xml_status === "string" ? record.xml_status : "received"
     };
   });
   return {
     candidates,
     diagnostics: {
-      error: error?.message ?? null,
+      error: diagnosticsError,
       fetched: candidates.length,
       invalid: candidates.filter((row) => !row.ok).length,
       totalBalance: candidates.reduce((sum, row) => sum + row.balance, 0),

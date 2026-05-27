@@ -15,9 +15,12 @@ test("treasury export handles validation in the UI and preserves supplier detail
   const template = await readFile("src/lib/payments/santander-template.ts", "utf8");
   const route = await readFile("src/app/api/payment-template/route.ts", "utf8");
   const payables = await readFile("src/lib/payments/payables.ts", "utf8");
+  const migration = await readFile("supabase/migrations/202605150020_accounts_payable_sii_manual_safe_columns.sql", "utf8");
+  const manualRoute = await readFile("src/app/api/accounts-payable/manual/route.ts", "utf8");
   assert.match(panel, /fetch\(`\/api\/payment-template/);
   assert.match(panel, /Descargar reporte de errores/);
   assert.match(panel, /Traer facturas SII pendientes/);
+  assert.match(panel, /Agregar factura manual/);
   assert.match(panel, /Todos los vencimientos/);
   assert.match(panel, /Origen XML\/SII/);
   assert.doesNotMatch(panel, /href=\{`\/api\/payment-template/);
@@ -30,6 +33,10 @@ test("treasury export handles validation in the UI and preserves supplier detail
   assert.match(payables, /getPayableCandidatesResult/);
   assert.match(payables, /proveedor sin enlace/);
   assert.match(payables, /diagnostics/);
+  assert.match(payables, /legacySelect/);
+  assert.match(migration, /add column if not exists source_type/);
+  assert.match(migration, /included_in_batch_at/);
+  assert.match(manualRoute, /source_type: "manual"/);
 });
 
 test("official Santander template keeps columns through provider code", () => {

@@ -216,7 +216,15 @@ export async function generateSantanderTemplateFromPayables(payableIds: string[]
   const entry = zip.getEntry("xl/worksheets/sheet1.xml");
   if (!entry) throw new Error("Template Santander no contiene xl/worksheets/sheet1.xml.");
   zip.updateFile("xl/worksheets/sheet1.xml", Buffer.from(sheetDataWithRows(entry.getData().toString("utf8"), rows), "utf8"));
-  await supabase.from("accounts_payable").update({ status: "scheduled" }).in("id", rows.map((row) => row.payableId));
+  const payableIdsToUpdate = rows.map((row) => row.payableId);
+  const scheduledAt = new Date().toISOString();
+  const richUpdate = await supabase
+    .from("accounts_payable")
+    .update({ included_in_batch_at: scheduledAt, payment_status: "in_batch", status: "scheduled" })
+    .in("id", payableIdsToUpdate);
+  if (richUpdate.error) {
+    await supabase.from("accounts_payable").update({ status: "scheduled" }).in("id", payableIdsToUpdate);
+  }
   const first = (data ?? [])[0];
   await supabase.from("audit_events").insert({ after_data: { accounts_payable_ids: rows.map((row) => row.payableId), count: rows.length, pay_date: payDate ?? null }, company_id: first?.company_id, entity_type: "payment_nomina", event_type: "payment.santander_exported", tenant_id: first?.tenant_id });
   return { buffer: zip.toBuffer(), invalid, ok: true as const, rows };

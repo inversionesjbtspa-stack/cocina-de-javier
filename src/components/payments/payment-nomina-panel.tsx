@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { FormEvent } from "react";
 import { FileSpreadsheet, Link2, RefreshCw, X } from "lucide-react";
 import { formatClp } from "@/lib/dte/purchases-data";
 import { mapBankName } from "@/lib/payments/bank-mappings";
@@ -39,6 +40,7 @@ export function PaymentNominaPanel({ candidates, diagnostics }: { candidates: Pa
   const [issue, setIssue] = useState<ExportIssue | null>(null);
   const [busy, setBusy] = useState(false);
   const [repairMessage, setRepairMessage] = useState("");
+  const [manualOpen, setManualOpen] = useState(false);
   const suppliers = useMemo(() => [...new Map(candidates.map((row) => [row.supplierId, row.supplierName])).entries()], [candidates]);
   const filtered = useMemo(() => {
     const today = new Date();
@@ -123,8 +125,23 @@ export function PaymentNominaPanel({ candidates, diagnostics }: { candidates: Pa
     });
     const body = await response.json().catch(() => null);
     setRepairMessage(response.ok
-      ? `SII enviado a Tesoreria: ${body?.createdPayables ?? 0} cuentas creadas, ${body?.existing ?? 0} ya existentes.`
+      ? `SII enviado a Tesoreria: ${body?.cuentasPorPagarCreadas ?? 0} cuentas creadas, ${body?.yaExistian ?? 0} ya existentes.`
       : body?.error ?? "No se pudieron traer facturas SII pendientes.");
+    setBusy(false);
+    if (response.ok) window.location.reload();
+  }
+  async function createManualPayable(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setRepairMessage("");
+    const form = event.currentTarget;
+    const response = await fetch("/api/accounts-payable/manual", {
+      body: JSON.stringify(Object.fromEntries(new FormData(form).entries())),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+    const body = await response.json().catch(() => null);
+    setRepairMessage(response.ok ? (body?.existing ? "La factura manual ya existia en Tesoreria." : "Factura manual creada en Tesoreria.") : body?.error ?? "No se pudo crear la factura manual.");
     setBusy(false);
     if (response.ok) window.location.reload();
   }
@@ -138,6 +155,7 @@ export function PaymentNominaPanel({ candidates, diagnostics }: { candidates: Pa
         <button className="rounded-md border px-3 py-2 text-sm font-semibold" onClick={selectVisible} type="button">Seleccionar todo visible</button>
         <button className="rounded-md border px-3 py-2 text-sm font-semibold" onClick={() => setSelected([])} type="button">Quitar seleccion</button>
         <button className="rounded-md border border-amber-700 px-3 py-2 text-sm font-semibold text-amber-800" disabled={busy} onClick={bringSiiPending} type="button">Traer facturas SII pendientes</button>
+        <button className="rounded-md border px-3 py-2 text-sm font-semibold" onClick={() => setManualOpen((value) => !value)} type="button">Agregar factura manual</button>
         <button className="rounded-md border px-3 py-2 text-sm font-semibold" disabled={busy} onClick={repairSuppliers} type="button"><RefreshCw className="mr-1 inline h-4 w-4" />Reparar proveedores</button>
         <button className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" disabled={busy} onClick={repairBankCodes} type="button"><RefreshCw className="mr-1 inline h-4 w-4" />Reparar codigos banco</button>
         <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white disabled:bg-[#d8d0cc]" disabled={!selected.length || invalidSelected.length > 0 || busy} onClick={exportSantander} type="button"><FileSpreadsheet className="mr-1 inline h-4 w-4" />{busy ? "Generando..." : "Exportar Santander"}</button>
@@ -145,6 +163,16 @@ export function PaymentNominaPanel({ candidates, diagnostics }: { candidates: Pa
     </div>
     {diagnostics?.error ? <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">Diagnostico query cuentas por pagar: {diagnostics.error}</p> : null}
     {repairMessage ? <p className="rounded-md bg-brand-50 p-3 text-sm text-brand-900">{repairMessage}</p> : null}
+    {manualOpen ? <form className="grid gap-3 rounded-lg border border-[#eadfd9] bg-[#fbf8f5] p-4 lg:grid-cols-8" onSubmit={createManualPayable}>
+      <input className="rounded-md border px-3 py-2 text-sm lg:col-span-2" name="supplierName" placeholder="Proveedor" required />
+      <input className="rounded-md border px-3 py-2 text-sm" name="rut" placeholder="RUT" required />
+      <input className="rounded-md border px-3 py-2 text-sm" name="documentType" placeholder="Tipo doc" defaultValue="manual" required />
+      <input className="rounded-md border px-3 py-2 text-sm" name="folio" placeholder="Folio" required />
+      <input className="rounded-md border px-3 py-2 text-sm" name="issueDate" type="date" required />
+      <input className="rounded-md border px-3 py-2 text-sm" name="dueDate" type="date" required />
+      <input className="rounded-md border px-3 py-2 text-sm" name="amount" placeholder="Monto" type="number" min="1" required />
+      <button className="rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white disabled:bg-[#d8d0cc]" disabled={busy} type="submit">Crear</button>
+    </form> : null}
     <div className="grid gap-3 lg:grid-cols-6">
       <input className="rounded-md border px-3 py-2 text-sm lg:col-span-2" onChange={(event) => setQuery(event.target.value)} placeholder="Folio, proveedor, RUT o monto" value={query} />
       <select className="rounded-md border px-3 py-2 text-sm lg:col-span-2" onChange={(event) => setSupplierId(event.target.value)} value={supplierId}><option value="">Todos los proveedores</option>{suppliers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
