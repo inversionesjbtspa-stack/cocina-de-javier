@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarDays, FileWarning, Search, Send } from "lucide-react";
+import { CalendarDays, Clipboard, FileWarning, Search, Send } from "lucide-react";
 import { formatClp, formatDate, type DtePurchaseInvoice } from "@/lib/dte/purchases-data";
 
 function normalize(value: string) {
@@ -61,6 +61,22 @@ export function PurchaseSearchTable({ invoices }: { invoices: DtePurchaseInvoice
     setBusyRegistryId(null);
   }
 
+  function claimText(invoice: DtePurchaseInvoice) {
+    return `Asunto:\n[XML PENDIENTE] Folio ${invoice.folio} - La Cocina de Javier\n\nCuerpo:\nEstimado proveedor,\n\nDetectamos en el Registro de Compras del SII una factura emitida a La Cocina de Javier, pero aun no hemos recibido el XML en nuestro correo:\n\ndte@lacocinadejavier.cl\n\nDocumento pendiente:\n- Folio ${invoice.folio}\n- Fecha ${invoice.fechaEmision}\n- Monto ${formatClp(invoice.montoTotal)}\n\nFavor reenviar el XML correspondiente a dte@lacocinadejavier.cl para poder procesar pago y registro interno.\n\nSaludos,\nLa Cocina de Javier`;
+  }
+
+  async function copyClaim(invoice: DtePurchaseInvoice) {
+    await navigator.clipboard.writeText(claimText(invoice));
+    if (invoice.siiRegistryId) {
+      await fetch("/api/sii/claim", {
+        body: JSON.stringify({ claimStatus: "copiado", ids: [invoice.siiRegistryId] }),
+        headers: { "content-type": "application/json" },
+        method: "POST"
+      });
+    }
+    setMessage(`Reclamo copiado para folio ${invoice.folio}. Enviar a dte@lacocinadejavier.cl.`);
+  }
+
   return (
     <>
       <div className="mt-5 grid gap-3 lg:grid-cols-6">
@@ -94,6 +110,7 @@ export function PurchaseSearchTable({ invoices }: { invoices: DtePurchaseInvoice
             <option value="todos">Todos</option>
             <option value="xml">XML</option>
             <option value="sii">SII pendiente XML</option>
+            <option value="manual">Manual</option>
           </select>
         </label>
         <label className="block">
@@ -164,7 +181,7 @@ export function PurchaseSearchTable({ invoices }: { invoices: DtePurchaseInvoice
                   </td>
                   <td className="px-4 py-3">
                     <span className={`rounded-full px-2 py-1 text-xs font-semibold ${isPendingXml ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-800"}`}>
-                      {isPendingXml ? "SII" : "XML"}
+                      {invoice.source === "manual" ? "Manual" : isPendingXml ? "SII" : "XML"}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-[#4e5a52]">{formatClp(invoice.montoNeto)}</td>
@@ -183,6 +200,14 @@ export function PurchaseSearchTable({ invoices }: { invoices: DtePurchaseInvoice
                     {isPendingXml ? (
                       <div className="space-y-2">
                         <p className="text-xs text-[#667068]">PDF no disponible</p>
+                        <button
+                          className="inline-flex items-center gap-1 rounded-md border border-amber-700 px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-50"
+                          onClick={() => copyClaim(invoice)}
+                          type="button"
+                        >
+                          <Clipboard className="h-3.5 w-3.5" />
+                          Copiar reclamo
+                        </button>
                         {invoice.accountsPayableId ? (
                           <a className="rounded-md border border-brand-700 px-3 py-2 text-xs font-semibold text-brand-700 hover:bg-[#edf2ee]" href="/tesoreria#nomina-pagos">
                             En Tesoreria

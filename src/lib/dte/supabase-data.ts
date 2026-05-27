@@ -59,6 +59,31 @@ type SiiRegistryRow = {
   dte_document_id: string | null;
   provisional_dte_document_id: string | null;
   accounts_payable_id: string | null;
+  claim_status: string | null;
+};
+
+type ManualPayableRow = {
+  id: string;
+  document_number: string;
+  issue_date: string;
+  due_date: string;
+  subtotal: number | null;
+  tax_amount: number | null;
+  total_amount: number | null;
+  balance_amount: number | null;
+  status: string;
+  payment_status?: string | null;
+  source_type?: string | null;
+  xml_status?: string | null;
+  suppliers?: {
+    rut: string;
+    legal_name: string | null;
+    trade_name: string | null;
+  } | Array<{
+    rut: string;
+    legal_name: string | null;
+    trade_name: string | null;
+  }>;
 };
 
 function documentType(tipoDte: string) {
@@ -136,6 +161,7 @@ function toSiiInvoice(row: SiiRegistryRow): DtePurchaseInvoice {
     montoTotal: toNumber(row.monto_total),
     normalizedKey: normalizeKey(row.rut_emisor, String(row.tipo_dte), String(row.folio)),
     paymentStatus: row.payment_status ?? (row.accounts_payable_id ? "En tesoreria" : "Pendiente"),
+    claimStatus: row.claim_status,
     razonSocialEmisor: supplier,
     razonSocialReceptor: "La Cocina de Javier",
     rutEmisor: row.rut_emisor,
@@ -146,6 +172,46 @@ function toSiiInvoice(row: SiiRegistryRow): DtePurchaseInvoice {
     tipoDte: String(row.tipo_dte),
     iva: toNumber(row.iva),
     xmlStatus: "missing"
+  };
+}
+
+function splitDocumentNumber(documentNumber: string) {
+  const match = String(documentNumber).match(/^(.+?)-(.+)$/);
+  return {
+    folio: match?.[2] ?? documentNumber,
+    tipoDte: match?.[1] ?? "manual"
+  };
+}
+
+function toManualInvoice(row: ManualPayableRow): DtePurchaseInvoice {
+  const supplier = Array.isArray(row.suppliers) ? row.suppliers[0] : row.suppliers;
+  const split = splitDocumentNumber(row.document_number);
+  const supplierRut = supplier?.rut ?? "";
+  const supplierName = supplier?.legal_name ?? supplier?.trade_name ?? "Factura manual";
+  const tax = toNumber(row.tax_amount);
+  const total = toNumber(row.total_amount);
+
+  return {
+    accountsPayableId: row.id,
+    documentType: split.tipoDte === "manual" ? "Factura manual" : documentType(split.tipoDte),
+    fechaEmision: row.issue_date,
+    fechaVencimiento: row.due_date,
+    folio: split.folio,
+    items: [],
+    montoExento: 0,
+    montoNeto: toNumber(row.subtotal) || Math.max(0, total - tax),
+    montoTotal: total,
+    normalizedKey: normalizeKey(supplierRut, split.tipoDte, split.folio),
+    paymentStatus: row.payment_status ?? row.status,
+    razonSocialEmisor: supplierName,
+    razonSocialReceptor: "La Cocina de Javier",
+    rutEmisor: supplierRut,
+    rutReceptor: "",
+    source: "manual",
+    sourceLabel: "Manual",
+    tipoDte: split.tipoDte,
+    iva: tax,
+    xmlStatus: row.xml_status === "received" ? "received" : "missing"
   };
 }
 
@@ -271,13 +337,38 @@ export async function getUnifiedPurchasesByMonth(): Promise<DtePurchaseData> {
 
   const { data: registryData } = await supabase
     .from("sii_purchase_registry")
-    .select("id,periodo,rut_emisor,proveedor,razon_social,tipo_dte,folio,fecha_emision,monto_neto,iva,monto_total,estado_xml,payment_status,dte_document_id,provisional_dte_document_id,accounts_payable_id")
+    .select("id,periodo,rut_emisor,proveedor,razon_social,tipo_dte,folio,fecha_emision,monto_neto,iva,monto_total,estado_xml,payment_status,dte_document_id,provisional_dte_document_id,accounts_payable_id,claim_status")
     .or("estado_xml.eq.falta_xml,dte_document_id.is.null")
     .order("fecha_emision", { ascending: false })
     .limit(5000);
 
   for (const row of ((registryData ?? []) as SiiRegistryRow[])) {
     const invoice = toSiiInvoice(row);
+    const key = invoice.normalizedKey ?? normalizeKey(invoice.rutEmisor, invoice.tipoDte, invoice.folio);
+    if (!byKey.has(key)) {
+      byKey.set(key, invoice);
+    }
+  }
+
+  const manualRich = await supabase
+    .from("accounts_payable")
+    .select("id,document_number,issue_date,due_date,subtotal,tax_amount,total_amount,balance_amount,status,payment_status,source_type,xml_status,suppliers(rut,legal_name,trade_name)")
+    .eq("source_type", "manual")
+    .order("issue_date", { ascending: false })
+    .limit(5000);
+  const manualLegacy = manualRich.error
+    ? await supabase
+      .from("accounts_payable")
+      .select("id,document_number,issue_date,due_date,subtotal,tax_amount,total_amount,balance_amount,status,suppliers(rut,legal_name,trade_name)")
+      .order("issue_date", { ascending: false })
+      .limit(5000)
+    : null;
+  const manualRows = ((manualRich.error ? manualLegacy?.data : manualRich.data) ?? []) as ManualPayableRow[];
+  for (const row of manualRows) {
+    const record = row as Record<string, unknown>;
+    if (manualRich.error && !String(row.document_number ?? "").toLowerCase().startsWith("manual-")) continue;
+    if (!manualRich.error && record.source_type !== "manual") continue;
+    const invoice = toManualInvoice(row);
     const key = invoice.normalizedKey ?? normalizeKey(invoice.rutEmisor, invoice.tipoDte, invoice.folio);
     if (!byKey.has(key)) {
       byKey.set(key, invoice);

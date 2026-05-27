@@ -41,6 +41,9 @@ export default async function ComprasPage() {
   const xmlTotals = totalsFor(xmlInvoices);
   const pendingXmlTotals = totalsFor(pendingXmlInvoices);
   const pendingXmlSuppliers = new Set(pendingXmlInvoices.map((invoice) => invoice.rutEmisor)).size;
+  const paidInvoices = invoices.filter((invoice) => ["paid", "pagada", "Pagada"].includes(invoice.paymentStatus));
+  const inBatchInvoices = invoices.filter((invoice) => ["scheduled", "in_batch", "en_nomina", "En nomina"].includes(invoice.paymentStatus));
+  const unpaidInvoices = invoices.filter((invoice) => !paidInvoices.includes(invoice));
   const categories = metrics.categorySpend();
   const suppliers = metrics.supplierSpend(8);
   const increases = metrics.priceIncreaseProducts(8);
@@ -108,6 +111,24 @@ export default async function ComprasPage() {
             <p className="text-sm font-medium text-[#667068]">Proveedores con XML pendiente</p>
             <p className="mt-2 text-2xl font-semibold text-brand-900">{pendingXmlSuppliers}</p>
             <p className="mt-1 text-xs text-[#667068]">Cruce Control SII vs XML</p>
+          </article>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          <article className="rounded-lg border border-[#dfe4dd] bg-white p-4 shadow-sm">
+            <p className="text-sm font-medium text-[#667068]">Pagadas</p>
+            <p className="mt-2 text-xl font-semibold text-emerald-800">{paidInvoices.length}</p>
+            <p className="mt-1 text-xs text-[#667068]">{formatClp(totalsFor(paidInvoices).total)}</p>
+          </article>
+          <article className="rounded-lg border border-[#dfe4dd] bg-white p-4 shadow-sm">
+            <p className="text-sm font-medium text-[#667068]">No pagadas</p>
+            <p className="mt-2 text-xl font-semibold text-amber-800">{unpaidInvoices.length}</p>
+            <p className="mt-1 text-xs text-[#667068]">{formatClp(totalsFor(unpaidInvoices).total)}</p>
+          </article>
+          <article className="rounded-lg border border-[#dfe4dd] bg-white p-4 shadow-sm">
+            <p className="text-sm font-medium text-[#667068]">En nomina</p>
+            <p className="mt-2 text-xl font-semibold text-brand-900">{inBatchInvoices.length}</p>
+            <p className="mt-1 text-xs text-[#667068]">{formatClp(totalsFor(inBatchInvoices).total)}</p>
           </article>
         </div>
 

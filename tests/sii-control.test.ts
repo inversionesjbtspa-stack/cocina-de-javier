@@ -56,10 +56,15 @@ test("Compras uses unified XML and SII pending purchases without product side ef
   const purchasesStore = await readFile("src/lib/dte/supabase-data.ts", "utf8");
   const comprasPage = await readFile("src/app/(erp)/compras/page.tsx", "utf8");
   const comprasTable = await readFile("src/components/purchases/purchase-search-table.tsx", "utf8");
+  const facturasPage = await readFile("src/app/(erp)/facturas/page.tsx", "utf8");
+  const invoiceDirectory = await readFile("src/components/dte/invoice-day-directory.tsx", "utf8");
+  const invoiceOps = await readFile("src/lib/dte/invoice-operations.ts", "utf8");
   const exportRoute = await readFile("src/app/api/exports/purchases/route.ts", "utf8");
 
   assert.match(purchasesStore, /getUnifiedPurchasesByMonth/);
   assert.match(purchasesStore, /sii_purchase_registry/);
+  assert.match(purchasesStore, /accounts_payable/);
+  assert.match(purchasesStore, /source: "manual"/);
   assert.match(purchasesStore, /estado_xml\.eq\.falta_xml,dte_document_id\.is\.null/);
   assert.match(purchasesStore, /normalizeKey\(row\.rut_emisor, String\(row\.tipo_dte\), String\(row\.folio\)\)/);
   assert.match(purchasesStore, /items: \[\]/);
@@ -68,7 +73,15 @@ test("Compras uses unified XML and SII pending purchases without product side ef
   assert.match(comprasPage, /getUnifiedPurchasesByMonth/);
   assert.match(comprasTable, /SII pendiente XML/);
   assert.match(comprasTable, /PDF no disponible/);
+  assert.match(comprasTable, /Copiar reclamo/);
+  assert.match(comprasTable, /dte@lacocinadejavier\.cl/);
   assert.match(comprasTable, /Enviar a Tesoreria/);
   assert.match(comprasTable, /api\/sii\/provisionalize/);
+  assert.match(facturasPage, /XML recibidos \+ SII pendientes \+ manuales/);
+  assert.match(facturasPage, /PDF no disponible/);
+  assert.match(invoiceDirectory, /Copiar reclamo/);
+  assert.match(invoiceDirectory, /Marcar enviado/);
+  assert.match(invoiceDirectory, /sourceType === "manual"/);
+  assert.match(invoiceOps, /sourceType: "manual"/);
   assert.match(exportRoute, /getUnifiedPurchasesByMonth/);
 });

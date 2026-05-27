@@ -13,9 +13,9 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as {
     rutEmisor?: string;
     ids?: string[];
-    claimStatus?: "copiado" | "enviado_manualmente" | "resuelto" | "ignorado" | "pendiente";
+    claimStatus?: "copiado" | "enviado" | "enviado_manualmente" | "resuelto" | "ignorado" | "pendiente";
   };
-  const status = body.claimStatus ?? "copiado";
+  const status = body.claimStatus === "enviado" ? "enviado_manualmente" : body.claimStatus ?? "copiado";
   const supabase = createAdminClient();
   let query = supabase.from("sii_purchase_registry").update({ claim_status: status }).eq("tenant_id", membership.data.tenant_id);
   if (body.rutEmisor) query = query.eq("rut_emisor", body.rutEmisor).eq("estado_xml", "falta_xml");

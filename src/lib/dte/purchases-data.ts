@@ -17,9 +17,10 @@ export type DtePurchaseInvoice = {
   id?: string;
   accountsPayableId?: string | null;
   normalizedKey?: string;
-  source?: "xml" | "sii";
+  source?: "xml" | "sii" | "manual";
   sourceLabel?: string;
   siiRegistryId?: string | null;
+  claimStatus?: string | null;
   tipoDte: string;
   documentType: string;
   folio: string;

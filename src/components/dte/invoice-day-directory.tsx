@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarDays, Search } from "lucide-react";
+import { CalendarDays, Clipboard, Search } from "lucide-react";
 import { formatClp } from "@/lib/dte/purchases-data";
 import type { DteOperationalInvoice } from "@/lib/dte/invoice-operations";
 
@@ -26,6 +26,7 @@ export function InvoiceDayDirectory({ invoices }: { invoices: DteOperationalInvo
   const [xmlFilter, setXmlFilter] = useState("todas");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [message, setMessage] = useState("");
   const range = relativeRange(quick);
 
   const filtered = useMemo(() => {
@@ -51,6 +52,7 @@ export function InvoiceDayDirectory({ invoices }: { invoices: DteOperationalInvo
       if (xmlFilter === "con_xml") return invoice.xmlStatus !== "pendiente_xml";
       if (xmlFilter === "pendientes_xml") return invoice.xmlStatus === "pendiente_xml";
       if (xmlFilter === "origen_sii") return invoice.sourceType === "sii";
+      if (xmlFilter === "manuales") return invoice.sourceType === "manual";
       if (xmlFilter === "pagadas") return invoice.paymentStatus === "paid";
       if (xmlFilter === "pendientes_pago") return invoice.paymentStatus !== "paid";
       return true;
@@ -65,6 +67,32 @@ export function InvoiceDayDirectory({ invoices }: { invoices: DteOperationalInvo
     });
     return [...grouped.entries()].sort((a, b) => b[0].localeCompare(a[0]));
   }, [basis, filtered]);
+
+  function claimText(invoice: DteOperationalInvoice) {
+    return `Asunto:\n[XML PENDIENTE] Folio ${invoice.folio} - La Cocina de Javier\n\nCuerpo:\nEstimado proveedor,\n\nDetectamos en el Registro de Compras del SII una factura emitida a La Cocina de Javier, pero aun no hemos recibido el XML en nuestro correo:\n\ndte@lacocinadejavier.cl\n\nDocumento pendiente:\n- Folio ${invoice.folio}\n- Fecha ${localDate(invoice.issuedAt)}\n- Monto ${formatClp(invoice.total)}\n\nFavor reenviar el XML correspondiente a dte@lacocinadejavier.cl para poder procesar pago y registro interno.\n\nSaludos,\nLa Cocina de Javier`;
+  }
+
+  async function copyClaim(invoice: DteOperationalInvoice) {
+    await navigator.clipboard.writeText(claimText(invoice));
+    if (invoice.siiRegistryId) {
+      await fetch("/api/sii/claim", {
+        body: JSON.stringify({ claimStatus: "copiado", ids: [invoice.siiRegistryId] }),
+        headers: { "content-type": "application/json" },
+        method: "POST"
+      });
+    }
+    setMessage(`Reclamo XML copiado para folio ${invoice.folio}.`);
+  }
+
+  async function markClaim(invoice: DteOperationalInvoice, claimStatus: "enviado" | "resuelto" | "ignorado") {
+    if (!invoice.siiRegistryId) return;
+    await fetch("/api/sii/claim", {
+      body: JSON.stringify({ claimStatus, ids: [invoice.siiRegistryId] }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+    setMessage(`Reclamo folio ${invoice.folio}: ${claimStatus}.`);
+  }
 
   return (
     <section className="rounded-lg border border-[#eadfd9] bg-white p-5 shadow-sm">
@@ -88,12 +116,13 @@ export function InvoiceDayDirectory({ invoices }: { invoices: DteOperationalInvo
         <label>
           <span className="text-sm font-medium text-[#6f6263]">Estado</span>
           <select className="mt-2 w-full rounded-md border border-[#eadfd9] px-3 py-2 text-sm" onChange={(event) => setXmlFilter(event.target.value)} value={xmlFilter}>
-            <option value="todas">Todas</option><option value="con_xml">Con XML</option><option value="pendientes_xml">Pendientes XML</option><option value="origen_sii">Origen SII</option><option value="pagadas">Pagadas</option><option value="pendientes_pago">Pendientes pago</option>
+            <option value="todas">Todas</option><option value="con_xml">Con XML</option><option value="pendientes_xml">Pendientes XML</option><option value="origen_sii">Origen SII</option><option value="manuales">Manuales</option><option value="pagadas">Pagadas</option><option value="pendientes_pago">Pendientes pago</option>
           </select>
         </label>
         <label><span className="flex items-center gap-2 text-sm font-medium text-[#6f6263]"><CalendarDays className="h-4 w-4" />Desde</span><input className="mt-2 w-full rounded-md border border-[#eadfd9] px-3 py-2 text-sm" onChange={(event) => { setQuick("custom"); setFrom(event.target.value); }} type="date" value={from} /></label>
         <label><span className="text-sm font-medium text-[#6f6263]">Hasta</span><input className="mt-2 w-full rounded-md border border-[#eadfd9] px-3 py-2 text-sm" onChange={(event) => { setQuick("custom"); setTo(event.target.value); }} type="date" value={to} /></label>
       </div>
+      {message ? <p className="mt-3 rounded-md border border-[#eadfd9] bg-[#fffdfb] px-3 py-2 text-sm text-brand-900">{message}</p> : null}
       <p className="mt-3 text-sm text-[#6f6263]">{filtered.length} documentos visibles en {groups.length} dia(s).</p>
       <div className="mt-5 space-y-4">
         {groups.map(([date, rows]) => {
@@ -106,7 +135,7 @@ export function InvoiceDayDirectory({ invoices }: { invoices: DteOperationalInvo
                 <p className="font-semibold text-brand-900">{formatClp(total)}</p>
               </header>
               <div className="overflow-x-auto"><table className="w-full min-w-[1080px] text-sm"><thead className="bg-white text-left text-xs uppercase text-brand-700"><tr><th className="px-3 py-2">Folio</th><th>Proveedor</th><th>Emision</th><th>Recepcion</th><th className="text-right">Neto</th><th className="text-right">IVA</th><th className="text-right">Total</th><th>XML</th><th>Pago</th><th>Acciones</th></tr></thead><tbody>
-                {rows.map((invoice) => <tr className="border-t border-[#f0e5df]" key={invoice.id}><td className="px-3 py-3 font-semibold text-brand-900">{invoice.tipoDte}-{invoice.folio}</td><td><p>{invoice.supplier}</p><p className="text-xs text-[#7b6f70]">{invoice.rut}</p>{invoice.sourceType === "sii" ? <p className="text-xs font-semibold text-amber-800">Origen: SII</p> : null}</td><td>{localDate(invoice.issuedAt)}</td><td>{localDate(invoice.receivedAt)}</td><td className="text-right">{formatClp(invoice.net)}</td><td className="text-right">{formatClp(invoice.iva)}</td><td className="text-right font-semibold">{formatClp(invoice.total)}</td><td>{invoice.xmlStatus === "pendiente_xml" ? "Pendiente XML" : invoice.xmlStatus}</td><td>{invoice.paymentStatus}</td><td className="space-x-2 whitespace-nowrap">{invoice.xmlStatus === "pendiente_xml" ? <span className="text-xs text-[#7b6f70]">PDF/XML no disponible</span> : <><a className="font-semibold text-brand-700 hover:underline" href={`/api/invoices/${invoice.folio}/pdf`} target="_blank">PDF</a><a className="font-semibold text-brand-700 hover:underline" href={`/api/invoices/${invoice.folio}/xml`}>XML</a></>}<a className="font-semibold text-brand-700 hover:underline" href={`/facturas?folio=${invoice.folio}`}>Detalle</a></td></tr>)}
+                {rows.map((invoice) => <tr className="border-t border-[#f0e5df]" key={invoice.id}><td className="px-3 py-3 font-semibold text-brand-900">{invoice.tipoDte}-{invoice.folio}</td><td><p>{invoice.supplier}</p><p className="text-xs text-[#7b6f70]">{invoice.rut}</p>{invoice.sourceType === "sii" ? <p className="text-xs font-semibold text-amber-800">Origen: SII / Reclamo: {invoice.claimStatus ?? "pendiente"}</p> : invoice.sourceType === "manual" ? <p className="text-xs font-semibold text-[#6f6263]">Origen: Manual</p> : null}</td><td>{localDate(invoice.issuedAt)}</td><td>{localDate(invoice.receivedAt)}</td><td className="text-right">{formatClp(invoice.net)}</td><td className="text-right">{formatClp(invoice.iva)}</td><td className="text-right font-semibold">{formatClp(invoice.total)}</td><td>{invoice.xmlStatus === "pendiente_xml" ? "Pendiente XML" : invoice.xmlStatus}</td><td>{invoice.paymentStatus}</td><td className="space-x-2 whitespace-nowrap">{invoice.xmlStatus === "pendiente_xml" ? <><span className="text-xs text-[#7b6f70]">PDF/XML no disponible</span>{invoice.sourceType === "sii" ? <><button className="font-semibold text-amber-800 hover:underline" onClick={() => copyClaim(invoice)} type="button"><Clipboard className="mr-1 inline h-3.5 w-3.5" />Copiar reclamo</button><button className="font-semibold text-brand-700 hover:underline" onClick={() => markClaim(invoice, "enviado")} type="button">Marcar enviado</button><button className="font-semibold text-emerald-700 hover:underline" onClick={() => markClaim(invoice, "resuelto")} type="button">Resolver</button></> : null}</> : <><a className="font-semibold text-brand-700 hover:underline" href={`/api/invoices/${invoice.folio}/pdf`} target="_blank">PDF</a><a className="font-semibold text-brand-700 hover:underline" href={`/api/invoices/${invoice.folio}/xml`}>XML</a></>}<a className="font-semibold text-brand-700 hover:underline" href={`/facturas?folio=${invoice.folio}`}>Detalle</a></td></tr>)}
               </tbody></table></div>
             </article>
           );

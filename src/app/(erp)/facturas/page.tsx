@@ -36,7 +36,7 @@ export default async function FacturasPage() {
         </PremiumPanel>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard detail="XML DTE procesados" href="/facturas?filter=documentos" label="Documentos" value={String(dteData.invoiceCount)} />
+          <MetricCard detail="XML recibidos + SII pendientes + manuales" href="/facturas?filter=documentos" label="Documentos" value={String(dteData.invoiceCount)} />
           <MetricCard detail="Muestra mensual con IVA" href="/facturas?filter=monto" label="Monto facturado" value={formatClp(total)} />
           <MetricCard detail="Ajustes tributarios recibidos" href="/facturas?tipo=61" label="Notas credito" tone={creditNotes.length ? "warning" : "neutral"} value={String(creditNotes.length)} />
           <MetricCard detail="Lineas de detalle parseadas" href="/facturas?filter=items" label="Items XML" value={String(parsedItems)} />
@@ -76,11 +76,12 @@ export default async function FacturasPage() {
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <StatusPill tone={invoice.tipoDte === "61" ? "warning" : "success"}>
-                        {invoice.tipoDte === "61" ? "Nota credito" : "Validado"}
+                      <StatusPill tone={invoice.xmlStatus === "missing" ? "warning" : invoice.tipoDte === "61" ? "warning" : "success"}>
+                        {invoice.xmlStatus === "missing" ? "Pendiente XML" : invoice.tipoDte === "61" ? "Nota credito" : "Validado"}
                       </StatusPill>
-                      <StatusPill>XML asociado</StatusPill>
-                      <StatusPill>PDF versionado</StatusPill>
+                      <StatusPill>{invoice.xmlStatus === "missing" ? "Pendiente XML" : "XML asociado"}</StatusPill>
+                      <StatusPill>{invoice.xmlStatus === "missing" ? "PDF no disponible" : "PDF versionado"}</StatusPill>
+                      <StatusPill>{invoice.sourceLabel ?? "XML"}</StatusPill>
                     </div>
                   </div>
 
@@ -127,18 +128,26 @@ export default async function FacturasPage() {
                   </div>
 
                   <div className="mt-4 flex flex-wrap gap-2">
-                    <a className="rounded-md bg-brand-700 px-3 py-2 text-xs font-semibold text-white" href={`/api/invoices/${invoice.folio}/pdf`} target="_blank">
-                      Preview PDF
-                    </a>
-                    <a className="rounded-md border border-brand-700 px-3 py-2 text-xs font-semibold text-brand-700" href={`/api/invoices/${invoice.folio}/pdf?download=1`}>
-                      Descargar PDF
-                    </a>
-                    <a className="rounded-md border border-[#eadfd9] px-3 py-2 text-xs font-semibold text-brand-700" href={`/api/invoices/${invoice.folio}/xml`}>
-                      Descargar XML
-                    </a>
-                    <a className="rounded-md border border-[#eadfd9] px-3 py-2 text-xs font-semibold text-brand-700" href={`/api/invoices/${invoice.folio}/pdf`} target="_blank">
-                      Imprimir
-                    </a>
+                    {invoice.xmlStatus === "missing" ? (
+                      <span className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                        XML pendiente · reenviar a dte@lacocinadejavier.cl
+                      </span>
+                    ) : (
+                      <>
+                        <a className="rounded-md bg-brand-700 px-3 py-2 text-xs font-semibold text-white" href={`/api/invoices/${invoice.folio}/pdf`} target="_blank">
+                          Preview PDF
+                        </a>
+                        <a className="rounded-md border border-brand-700 px-3 py-2 text-xs font-semibold text-brand-700" href={`/api/invoices/${invoice.folio}/pdf?download=1`}>
+                          Descargar PDF
+                        </a>
+                        <a className="rounded-md border border-[#eadfd9] px-3 py-2 text-xs font-semibold text-brand-700" href={`/api/invoices/${invoice.folio}/xml`}>
+                          Descargar XML
+                        </a>
+                        <a className="rounded-md border border-[#eadfd9] px-3 py-2 text-xs font-semibold text-brand-700" href={`/api/invoices/${invoice.folio}/pdf`} target="_blank">
+                          Imprimir
+                        </a>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
