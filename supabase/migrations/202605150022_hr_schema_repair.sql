@@ -555,3 +555,5 @@ values
   ('hr-vacation-documents', 'hr-vacation-documents', false, 20971520, array['application/pdf']::text[]),
   ('hr-employee-documents', 'hr-employee-documents', false, 52428800, array['application/pdf', 'image/jpeg', 'image/png', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/csv']::text[])
 on conflict (id) do nothing;
+
+notify pgrst, 'reload schema';

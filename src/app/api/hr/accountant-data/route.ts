@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
+import pg from "pg";
 import { requireHrContext } from "@/lib/hr/auth";
 import { generateAccountantWorkbook, type AccountantRow } from "@/lib/hr/payroll-parser";
 import { createAdminClient } from "@/lib/supabase/admin";
+
+export const runtime = "nodejs";
+
+type AccountantDataRecord = Record<string, unknown>;
 
 function htmlError(title: string, detail: string, action: string, status = 422) {
   return new NextResponse(
@@ -10,53 +15,120 @@ function htmlError(title: string, detail: string, action: string, status = 422) 
   );
 }
 
+async function readRowsWithPg(tenantId: string, period: string): Promise<AccountantDataRecord[] | null> {
+  const connectionString = process.env.DATABASE_URL ?? process.env.SUPABASE_DB_URL;
+  if (!connectionString) return null;
+  const client = new pg.Client({
+    connectionString,
+    ssl: { rejectUnauthorized: false }
+  });
+  await client.connect();
+  try {
+    const result = await client.query(
+      "select * from public.hr_accountant_data_rows where tenant_id = $1 and period = $2 order by coalesce(row_number, 0) asc",
+      [tenantId, period]
+    );
+    return result.rows;
+  } finally {
+    await client.end();
+  }
+}
+
+function textValue(value: unknown, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function numberValue(value: unknown) {
+  return Number(value ?? 0);
+}
+
+function rawValue(value: unknown): Record<string, string | number> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const raw: Record<string, string | number> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === "string" || typeof entry === "number") raw[key] = entry;
+  }
+  return raw;
+}
+
 export async function GET(request: Request) {
   const ctx = await requireHrContext();
   if (ctx.error) return ctx.error;
   const period = new URL(request.url).searchParams.get("period") ?? "2026-04";
   const supabase = createAdminClient();
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("hr_accountant_data_rows")
     .select("*")
     .eq("tenant_id", ctx.membership.tenant_id)
     .eq("period", period)
     .order("row_number", { ascending: true });
+
+  if (error?.code === "PGRST205") {
+    try {
+      const directRows = await readRowsWithPg(ctx.membership.tenant_id, period);
+      if (directRows) {
+        data = directRows;
+        error = null;
+      }
+    } catch (pgError) {
+      console.error({
+        error: pgError instanceof Error ? pgError.message : String(pgError),
+        stage: "hr_accountant_data_pg_fallback_failed"
+      });
+    }
+  }
+
   if (error) {
-    const isMissingTable = error.code === "PGRST205" || error.message.includes("hr_accountant_data_rows");
+    const isSchemaCacheStale = error.code === "PGRST205";
+    const referencesTable = error.message.includes("hr_accountant_data_rows");
     return htmlError(
-      isMissingTable ? "Migracion RRHH pendiente" : "No se pudo exportar Datos Sueldos",
-      isMissingTable
-        ? "Supabase produccion no tiene la tabla public.hr_accountant_data_rows requerida para exportar Datos Sueldos."
-        : error.message,
-      isMissingTable
-        ? "Ejecuta la migracion 202605150022_hr_schema_repair.sql en Supabase SQL Editor y vuelve a intentar la descarga."
-        : "Revisa la carga del periodo y vuelve a intentar. Si persiste, valida permisos RLS y columnas RRHH.",
-      isMissingTable ? 503 : 422
+      isSchemaCacheStale ? "Schema cache de Supabase desactualizado" : referencesTable ? "No se pudo leer Datos Sueldos" : "No se pudo exportar Datos Sueldos",
+      isSchemaCacheStale
+        ? "La tabla public.hr_accountant_data_rows existe, pero la API REST de Supabase aun no la ve en el schema cache de PostgREST."
+        : referencesTable
+          ? "Supabase devolvio un error al leer public.hr_accountant_data_rows aunque la tabla existe."
+          : error.message,
+      isSchemaCacheStale
+        ? "Ejecuta en Supabase SQL Editor: notify pgrst, 'reload schema';. Para evitar depender del cache REST, configura DATABASE_URL o SUPABASE_DB_URL como variable server-side en Vercel."
+        : referencesTable
+          ? `Error tecnico: ${error.message}`
+          : "Revisa la carga del periodo y vuelve a intentar. Si persiste, valida permisos RLS y columnas RRHH.",
+      isSchemaCacheStale ? 503 : 422
     );
   }
-  const rows: AccountantRow[] = (data ?? []).map((row) => ({
-    absences: Number(row.absences ?? 0),
-    advances: Number(row.advances_amount ?? row.advances ?? 0),
-    aguinaldo: Number(row.aguinaldo_amount ?? row.aguinaldo ?? 0),
-    cashAllowance: Number(row.cash_allowance_amount ?? 0),
-    ccafLoan: Number(row.ccaf_loan_amount ?? 0),
-    compensatoryBonus: Number(row.compensatory_bonus_amount ?? row.compensatory_bonus ?? 0),
-    companyLoan: Number(row.company_loan_amount ?? 0),
-    costCenter: row.cost_center ?? "",
-    fullName: row.full_name ?? row.employee_name ?? "",
-    licenses: Number(row.licenses ?? 0),
-    movilization: Number(row.movilization_amount ?? 0),
-    observations: row.observations ?? row.notes ?? "",
-    overtimeHours: Number(row.overtime_hours ?? 0),
-    phoneAllowance: Number(row.phone_allowance_amount ?? 0),
-    productionBonus: Number(row.production_bonus_amount ?? 0),
-    raw: row.raw_row ?? {},
-    reason: row.reason ?? "",
-    responsibilityBonus: Number(row.responsibility_bonus_amount ?? 0),
-    rowNumber: Number(row.row_number ?? 0),
-    rut: row.rut,
-    sheetName: row.sheet_name ?? "LIBRO REMUNERACIONES",
-    sundaySurcharge: Number(row.sunday_surcharge_amount ?? 0)
+
+  if (!data?.length) {
+    return htmlError(
+      "Sin datos de sueldos para exportar",
+      `No existen filas en Datos Sueldos para el periodo ${period}.`,
+      "Carga o importa el archivo Datos Sueldos del periodo desde Recursos Humanos y vuelve a exportar.",
+      404
+    );
+  }
+
+  const rows: AccountantRow[] = (data as AccountantDataRecord[]).map((row) => ({
+    absences: numberValue(row.absences),
+    advances: numberValue(row.advances_amount ?? row.advances),
+    aguinaldo: numberValue(row.aguinaldo_amount ?? row.aguinaldo),
+    cashAllowance: numberValue(row.cash_allowance_amount),
+    ccafLoan: numberValue(row.ccaf_loan_amount),
+    compensatoryBonus: numberValue(row.compensatory_bonus_amount ?? row.compensatory_bonus),
+    companyLoan: numberValue(row.company_loan_amount),
+    costCenter: textValue(row.cost_center),
+    fullName: textValue(row.full_name ?? row.employee_name),
+    licenses: numberValue(row.licenses),
+    movilization: numberValue(row.movilization_amount),
+    observations: textValue(row.observations ?? row.notes),
+    overtimeHours: numberValue(row.overtime_hours),
+    phoneAllowance: numberValue(row.phone_allowance_amount),
+    productionBonus: numberValue(row.production_bonus_amount),
+    raw: rawValue(row.raw_row),
+    reason: textValue(row.reason),
+    responsibilityBonus: numberValue(row.responsibility_bonus_amount),
+    rowNumber: numberValue(row.row_number),
+    rut: textValue(row.rut),
+    sheetName: textValue(row.sheet_name, "LIBRO REMUNERACIONES"),
+    sundaySurcharge: numberValue(row.sunday_surcharge_amount)
   }));
   const buffer = generateAccountantWorkbook(rows);
   await supabase.from("audit_events").insert({

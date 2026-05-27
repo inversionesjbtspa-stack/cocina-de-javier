@@ -52,7 +52,9 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(employeesRoute, /hr\.employee_created/);
   assert.match(payslipsRoute, /hr\.payslip_uploaded/);
   assert.match(vacationRoute, /businessDaysInclusive/);
-  assert.match(accountantRoute, /Migracion RRHH pendiente/);
+  assert.match(accountantRoute, /Schema cache de Supabase desactualizado/);
+  assert.match(accountantRoute, /notify pgrst, 'reload schema'/);
+  assert.match(accountantRoute, /readRowsWithPg/);
   assert.match(accountantRoute, /employee_name/);
 });
 
