@@ -318,30 +318,20 @@ export async function getUnifiedPurchasesByMonth(): Promise<DtePurchaseData> {
   const supabase = createAdminClient();
   const diagnostics: NonNullable<DtePurchaseData["diagnostics"]> = {
     dteRows: 0,
-    dteRowsFallback: false,
     errors: [],
     finalUnifiedRows: 0,
     manualRows: 0,
     manualRowsDiscarded: 0,
-    manualRowsFallback: false,
     siiRows: 0,
     siiRowsDiscardedByDedup: 0,
-    siiRowsDiscardedByPeriod: 0,
-    siiRowsFallback: false
+    siiRowsDiscardedByPeriod: 0
   };
-  const { data, error } = await supabase
+  const { data: dteRows, error } = await supabase
     .from("dte_documents")
     .select("id,source_type,xml_status,payment_status,sii_purchase_registry_id,tipo_dte,folio,rut_emisor,razon_social_emisor,rut_receptor,razon_social_receptor,fecha_emision,fecha_vencimiento,monto_neto,monto_exento,iva,monto_total,idempotency_key,dte_items(line_number,name,description,item_description_raw,quantity,unit,unit_price,line_total,item_validation_status,price_confidence_score)")
     .order("fecha_emision", { ascending: false })
     .limit(5000);
-
-  const dteRows = error
-    ? (diagnostics.dteRowsFallback = true, diagnostics.errors.push(`dte_documents.rich: ${error.message}`), (await supabase
-      .from("dte_documents")
-      .select("id,tipo_dte,folio,rut_emisor,razon_social_emisor,rut_receptor,razon_social_receptor,fecha_emision,fecha_vencimiento,monto_neto,monto_exento,iva,monto_total,idempotency_key,dte_items(line_number,name,description,item_description_raw,quantity,unit,unit_price,line_total,item_validation_status,price_confidence_score)")
-      .order("fecha_emision", { ascending: false })
-      .limit(5000)).data)
-    : data;
+  if (error) diagnostics.errors.push(`dte_documents: ${error.message}`);
   diagnostics.dteRows = dteRows?.length ?? 0;
 
   const byKey = new Map<string, DtePurchaseInvoice>();
@@ -349,20 +339,13 @@ export async function getUnifiedPurchasesByMonth(): Promise<DtePurchaseData> {
     byKey.set(invoice.normalizedKey ?? normalizeKey(invoice.rutEmisor, invoice.tipoDte, invoice.folio), invoice);
   }
 
-  const registryRich = await supabase
+  const registryResult = await supabase
     .from("sii_purchase_registry")
     .select("id,periodo,rut_emisor,proveedor,razon_social,tipo_dte,folio,fecha_emision,monto_neto,iva,monto_total,estado_xml,payment_status,dte_document_id,provisional_dte_document_id,accounts_payable_id,claim_status")
     .order("fecha_emision", { ascending: false })
     .limit(5000);
-  const registryFallback = registryRich.error
-    ? (diagnostics.siiRowsFallback = true, diagnostics.errors.push(`sii_purchase_registry.rich: ${registryRich.error.message}`), await supabase
-      .from("sii_purchase_registry")
-      .select("id,periodo,rut_emisor,proveedor,razon_social,tipo_dte,folio,fecha_emision,monto_neto,iva,monto_total,estado_xml,dte_document_id,claim_status")
-      .order("fecha_emision", { ascending: false })
-      .limit(5000))
-    : null;
-  if (registryFallback?.error) diagnostics.errors.push(`sii_purchase_registry.fallback: ${registryFallback.error.message}`);
-  const registryData = registryRich.error ? registryFallback?.data : registryRich.data;
+  if (registryResult.error) diagnostics.errors.push(`sii_purchase_registry: ${registryResult.error.message}`);
+  const registryData = registryResult.data;
   diagnostics.siiRows = registryData?.length ?? 0;
 
   for (const row of ((registryData ?? []) as SiiRegistryRow[])) {
@@ -375,29 +358,18 @@ export async function getUnifiedPurchasesByMonth(): Promise<DtePurchaseData> {
     }
   }
 
-  const manualRich = await supabase
+  const manualResult = await supabase
     .from("accounts_payable")
     .select("id,document_number,issue_date,due_date,subtotal,tax_amount,total_amount,balance_amount,status,payment_status,source_type,xml_status,suppliers(rut,legal_name,trade_name)")
     .eq("source_type", "manual")
     .order("issue_date", { ascending: false })
     .limit(5000);
-  const manualLegacy = manualRich.error
-    ? (diagnostics.manualRowsFallback = true, diagnostics.errors.push(`accounts_payable.manual.rich: ${manualRich.error.message}`), await supabase
-      .from("accounts_payable")
-      .select("id,document_number,issue_date,due_date,subtotal,tax_amount,total_amount,balance_amount,status,suppliers(rut,legal_name,trade_name)")
-      .order("issue_date", { ascending: false })
-      .limit(5000))
-    : null;
-  if (manualLegacy?.error) diagnostics.errors.push(`accounts_payable.manual.fallback: ${manualLegacy.error.message}`);
-  const manualRows = ((manualRich.error ? manualLegacy?.data : manualRich.data) ?? []) as ManualPayableRow[];
+  if (manualResult.error) diagnostics.errors.push(`accounts_payable.manual: ${manualResult.error.message}`);
+  const manualRows = (manualResult.data ?? []) as ManualPayableRow[];
   diagnostics.manualRows = manualRows.length;
   for (const row of manualRows) {
     const record = row as Record<string, unknown>;
-    if (manualRich.error && !String(row.document_number ?? "").toLowerCase().startsWith("manual-")) {
-      diagnostics.manualRowsDiscarded += 1;
-      continue;
-    }
-    if (!manualRich.error && record.source_type !== "manual") {
+    if (record.source_type !== "manual") {
       diagnostics.manualRowsDiscarded += 1;
       continue;
     }

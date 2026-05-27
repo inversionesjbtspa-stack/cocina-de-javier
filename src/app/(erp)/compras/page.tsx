@@ -254,9 +254,9 @@ export default async function ComprasPage() {
           <details className="rounded-lg border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950">
             <summary className="cursor-pointer font-semibold">Diagnostico integracion Compras / SII</summary>
             <div className="mt-4 grid gap-3 md:grid-cols-3">
-              <p>DTE encontrados: <b>{dteData.diagnostics.dteRows}</b>{dteData.diagnostics.dteRowsFallback ? " (fallback)" : ""}</p>
-              <p>SII encontrados: <b>{dteData.diagnostics.siiRows}</b>{dteData.diagnostics.siiRowsFallback ? " (fallback)" : ""}</p>
-              <p>Manuales encontrados: <b>{dteData.diagnostics.manualRows}</b>{dteData.diagnostics.manualRowsFallback ? " (fallback)" : ""}</p>
+              <p>DTE encontrados: <b>{dteData.diagnostics.dteRows}</b></p>
+              <p>SII encontrados: <b>{dteData.diagnostics.siiRows}</b></p>
+              <p>Manuales encontrados: <b>{dteData.diagnostics.manualRows}</b></p>
               <p>SII descartados por deduplicacion: <b>{dteData.diagnostics.siiRowsDiscardedByDedup}</b></p>
               <p>Descartados por periodo: <b>{dteData.diagnostics.siiRowsDiscardedByPeriod}</b></p>
               <p>Manuales descartados: <b>{dteData.diagnostics.manualRowsDiscarded}</b></p>

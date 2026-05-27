@@ -85,16 +85,13 @@ type RawDtePurchaseData = Omit<DtePurchaseData, "summaries"> & {
 export type DtePurchaseData = {
   diagnostics?: {
     dteRows: number;
-    dteRowsFallback: boolean;
     errors: string[];
     finalUnifiedRows: number;
     manualRows: number;
     manualRowsDiscarded: number;
-    manualRowsFallback: boolean;
     siiRows: number;
     siiRowsDiscardedByDedup: number;
     siiRowsDiscardedByPeriod: number;
-    siiRowsFallback: boolean;
   };
   generatedAt: string;
   invoiceCount: number;

@@ -31,7 +31,8 @@ const migrations = [
   "202605150017_sii_provisional_invoices.sql",
   "202605150018_hr_module.sql",
   "202605150019_hr_payroll_import.sql",
-  "202605150020_accounts_payable_sii_manual_safe_columns.sql"
+  "202605150020_accounts_payable_sii_manual_safe_columns.sql",
+  "202605150021_sii_dte_schema_consistency.sql"
 ];
 
 const client = new Client({
