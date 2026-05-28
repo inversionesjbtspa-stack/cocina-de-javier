@@ -42,6 +42,8 @@ test("Control SII module exposes upload, comparison and missing XML claim text",
   assert.match(client, /Proveedores a reclamar XML/);
   assert.match(client, /Favor reenviar los XML correspondientes/);
   assert.match(route, /sii_purchase_registry/);
+  assert.match(route, /dte_documents!sii_purchase_registry_dte_document_id_fkey\(monto_total\)/);
+  assert.match(route, /PGRST201/);
   assert.match(route, /importedSummary/);
   assert.match(store, /sii\.registry_imported/);
   assert.match(store, /sii\.summary_imported/);

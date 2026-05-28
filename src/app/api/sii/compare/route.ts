@@ -5,6 +5,9 @@ import { parseSiiRegistryFile } from "@/lib/sii/registry-parser";
 import type { SiiRegistryRow } from "@/lib/sii/registry-parser";
 import { getSiiSummaryComparisons, importSiiRegistry, importSiiSummary, toViewRow } from "@/lib/sii/registry-store";
 
+const SII_REGISTRY_WITH_XML_SELECT =
+  "*,dte_documents!sii_purchase_registry_dte_document_id_fkey(monto_total)";
+
 async function context() {
   const auth = await createClient();
   const { data: { user } } = await auth.auth.getUser();
@@ -24,14 +27,19 @@ export async function GET() {
   if (!schema.ok) return schema.response;
   const { data, error } = await supabase
     .from("sii_purchase_registry")
-    .select("*,dte_documents(monto_total)")
+    .select(SII_REGISTRY_WITH_XML_SELECT)
     .eq("tenant_id", ctx.membership.tenant_id)
     .order("fecha_emision", { ascending: false })
     .limit(5000);
   if (error) {
+    const detail = technicalError(error, {
+      query: SII_REGISTRY_WITH_XML_SELECT,
+      stage: "select_sii_purchase_registry",
+      table: "sii_purchase_registry"
+    });
     return NextResponse.json({
       ok: false,
-      detail: error.message,
+      detail,
       error: error.code === "42P01" ? "missing_sii_purchase_registry_migration" : "sii_registry_query_failed"
     }, { status: 500 });
   }
@@ -130,7 +138,7 @@ export async function POST(request: Request) {
       }) : null;
     const { data, error: resultError } = await runStage("calculate_results", async () => supabase
       .from("sii_purchase_registry")
-      .select("*,dte_documents(monto_total)")
+      .select(SII_REGISTRY_WITH_XML_SELECT)
       .eq("tenant_id", ctx.membership.tenant_id)
       .order("fecha_emision", { ascending: false })
       .limit(5000), { fileName: uploadName });
@@ -274,9 +282,21 @@ async function validateSiiSchema(supabase: ReturnType<typeof createAdminClient>)
 function technicalError(cause: unknown, context: Record<string, unknown>) {
   const record = typeof cause === "object" && cause !== null ? cause as Record<string, unknown> : {};
   const message = cause instanceof Error ? cause.message : String(record.message ?? cause ?? "unknown_import_error");
+  const code = String(record.code ?? "") || null;
+  const ambiguousSiiDte =
+    code === "PGRST201" &&
+    String(context.table ?? "").includes("sii_purchase_registry") &&
+    (message.includes("dte_documents") || String(record.details ?? record.detail ?? "").includes("dte_documents"));
   return {
-    actionRecommended: context.actionRecommended ?? recommendedAction(String(record.code ?? ""), message),
-    code: String(record.code ?? "") || null,
+    actionRecommended: context.actionRecommended ?? recommendedAction(String(code ?? ""), message),
+    ambiguousRelations: ambiguousSiiDte
+      ? [
+          "dte_documents!dte_documents_sii_purchase_registry_id_fkey",
+          "dte_documents!sii_purchase_registry_provisional_dte_document_id_fkey",
+          "dte_documents!sii_purchase_registry_dte_document_id_fkey"
+        ]
+      : null,
+    code,
     column: String(record.column ?? "") || inferColumn(message),
     constraint: String(record.constraint ?? "") || inferConstraint(message),
     detail: String(record.details ?? record.detail ?? "") || null,
@@ -285,9 +305,11 @@ function technicalError(cause: unknown, context: Record<string, unknown>) {
     hint: String(record.hint ?? "") || null,
     message,
     payload: context.sampleRow ?? context.payload ?? null,
+    query: context.query ?? null,
     rowNumber: typeof context.sampleRow === "object" && context.sampleRow && "rowNumber" in context.sampleRow ? (context.sampleRow as { rowNumber?: number }).rowNumber ?? null : null,
     stack: cause instanceof Error ? cause.stack ?? null : null,
     stage: String(record.stage ?? context.stage ?? "unknown"),
+    suggestedFk: ambiguousSiiDte ? "sii_purchase_registry_dte_document_id_fkey" : null,
     table: String(context.table ?? inferTable(message)) || null
   };
 }
@@ -316,6 +338,7 @@ function inferConstraint(message: string) {
 }
 
 function recommendedAction(code: string, message: string) {
+  if (code === "PGRST201" || message.includes("more than one relationship")) return "Especificar la FK en el embed Supabase. Para Control SII vs XML usar dte_documents!sii_purchase_registry_dte_document_id_fkey(...).";
   if (code === "42P01" || message.includes("relation") && message.includes("does not exist")) return "Aplicar migraciones SII pendientes en Supabase SQL Editor.";
   if (code === "42703" || message.includes("column") && message.includes("does not exist")) return "Aplicar migracion correctiva de columnas SII.";
   if (code === "23505" || message.includes("duplicate key")) return "Revisar duplicados internos del archivo; el importador intenta continuar por fila.";
