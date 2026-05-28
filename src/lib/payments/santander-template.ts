@@ -16,6 +16,7 @@ type SupabasePaymentRow = {
   amount: number;
   folio: string;
   glosa?: string;
+  invoiceSupplier?: { businessName: string; rut: string };
   supplier: { bankAccount: string; bankCode: string; businessName: string; code: string; email: string; rut: string };
 };
 export type SantanderBankPaymentRow = SupabasePaymentRow;
@@ -182,7 +183,7 @@ export async function generateSantanderTemplateFromPayables(payableIds: string[]
   if (!fs.existsSync(templatePath)) throw new Error("Template Pagos JESUS.xlsx no existe en el proyecto.");
   const supabase = createAdminClient();
   const [{ data }, { data: activeBatchItems }] = await Promise.all([
-    supabase.from("accounts_payable").select("id,tenant_id,company_id,document_number,balance_amount,status,suppliers(id,rut,legal_name,email,payment_email,status,supplier_bank_accounts(bank_name,bank_code,bank_mapping_needs_review,account_type,account_number,status))").in("id", payableIds),
+    supabase.from("accounts_payable").select("id,tenant_id,company_id,document_number,balance_amount,status,supplier_id,suppliers(id,rut,legal_name,email,payment_email,status,supplier_bank_accounts(bank_name,bank_code,bank_mapping_needs_review,account_type,account_number,account_holder_name,account_holder_rut,status))").in("id", payableIds),
     supabase.from("payment_batch_items").select("accounts_payable_id,payment_batches(status)").in("accounts_payable_id", payableIds)
   ]);
   const activeBatchPayables = new Set((activeBatchItems ?? []).filter((item) => {
@@ -192,7 +193,7 @@ export async function generateSantanderTemplateFromPayables(payableIds: string[]
   const invalid: InvalidPayablePayment[] = [];
   const rows: SupabasePaymentRow[] = [];
   for (const item of data ?? []) {
-    type SupplierRow = { id: string; rut: string; legal_name: string; email: string | null; payment_email: string | null; status: string; supplier_bank_accounts?: Array<{ bank_name: string; bank_code: string | null; bank_mapping_needs_review: boolean; account_type: string; account_number: string; status: string }> };
+    type SupplierRow = { id: string; rut: string; legal_name: string; email: string | null; payment_email: string | null; status: string; supplier_bank_accounts?: Array<{ bank_name: string; bank_code: string | null; bank_mapping_needs_review: boolean; account_type: string; account_number: string; account_holder_name: string | null; account_holder_rut: string | null; status: string }> };
     const supplier = (Array.isArray(item.suppliers) ? item.suppliers[0] : item.suppliers) as SupplierRow;
     const bank = supplier.supplier_bank_accounts?.find((account) => account.status !== "disabled");
     const alerts = [];
@@ -209,7 +210,13 @@ export async function generateSantanderTemplateFromPayables(payableIds: string[]
     if (supplier.status === "blocked") alerts.push("proveedor bloqueado");
     if (activeBatchPayables.has(item.id)) alerts.push("ya esta en nomina activa");
     if (alerts.length || !bank) { invalid.push({ alerts, bankCode: bank?.bank_code ?? "", bankName: bank?.bank_name ?? "", folio: item.document_number, id: item.id, supplierId: supplier.id, supplierName: supplier.legal_name || "Proveedor sin razon social", supplierRut: supplier.rut || "" }); continue; }
-    rows.push({ amount: Number(item.balance_amount), folio: String(item.document_number).replace(/^\d+-/, ""), payableId: item.id, supplier: { bankAccount: bank.account_number, bankCode: bank.bank_code ?? "", businessName: supplier.legal_name, code: "", email: supplier.payment_email ?? supplier.email ?? "", rut: supplier.rut } });
+    rows.push({
+      amount: Number(item.balance_amount),
+      folio: String(item.document_number).replace(/^\d+-/, ""),
+      invoiceSupplier: { businessName: supplier.legal_name, rut: supplier.rut },
+      payableId: item.id,
+      supplier: { bankAccount: bank.account_number, bankCode: bank.bank_code ?? "", businessName: bank.account_holder_name || supplier.legal_name, code: "", email: supplier.payment_email ?? supplier.email ?? "", rut: bank.account_holder_rut || supplier.rut }
+    });
   }
   if (!rows.length) return { invalid, ok: false as const, rows: [] };
   const zip = new AdmZip(templatePath);
@@ -226,6 +233,32 @@ export async function generateSantanderTemplateFromPayables(payableIds: string[]
     await supabase.from("accounts_payable").update({ status: "scheduled" }).in("id", payableIdsToUpdate);
   }
   const first = (data ?? [])[0];
-  await supabase.from("audit_events").insert({ after_data: { accounts_payable_ids: rows.map((row) => row.payableId), count: rows.length, pay_date: payDate ?? null }, company_id: first?.company_id, entity_type: "payment_nomina", event_type: "payment.santander_exported", tenant_id: first?.tenant_id });
+  await supabase.from("audit_events").insert({
+    after_data: {
+      accounts_payable_ids: rows.map((row) => row.payableId),
+      count: rows.length,
+      pay_date: payDate ?? null,
+      payments: rows.map((row) => ({
+        amount: row.amount,
+        bank_account: row.supplier.bankAccount,
+        beneficiario_pago: row.supplier.businessName,
+        cuenta_destino: row.supplier.bankAccount,
+        document_number: row.folio,
+        folio: row.folio,
+        monto: row.amount,
+        payment_beneficiary_name: row.supplier.businessName,
+        payment_beneficiary_rut: row.supplier.rut,
+        proveedor_facturador: row.invoiceSupplier?.businessName ?? row.supplier.businessName,
+        rut_beneficiario_pago: row.supplier.rut,
+        rut_facturador: row.invoiceSupplier?.rut ?? row.supplier.rut,
+        supplier_name: row.invoiceSupplier?.businessName ?? row.supplier.businessName,
+        supplier_rut: row.invoiceSupplier?.rut ?? row.supplier.rut
+      }))
+    },
+    company_id: first?.company_id,
+    entity_type: "payment_nomina",
+    event_type: "payment.santander_exported",
+    tenant_id: first?.tenant_id
+  });
   return { buffer: zip.toBuffer(), invalid, ok: true as const, rows };
 }

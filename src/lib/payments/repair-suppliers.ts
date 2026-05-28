@@ -38,7 +38,7 @@ async function hydrateFromMaster({
   tenantId
 }: {
   master: MasterSupplier | undefined;
-  supplier: { id: string; email: string | null; legal_name: string; phone: string | null; profile_source: string | null; trade_name: string | null };
+  supplier: { id: string; commercial_email?: string | null; email: string | null; legal_name: string; payment_email?: string | null; phone: string | null; profile_source: string | null; rut?: string | null; trade_name: string | null };
   tenantId: string;
 }) {
   if (!master) return { bankUpdated: 0, supplierUpdated: 0 };
@@ -46,24 +46,28 @@ async function hydrateFromMaster({
   let supplierUpdated = 0;
   let bankUpdated = 0;
   const supplierPatch = {
+    commercial_email: supplier.commercial_email || (validMasterValue(master.email) ? master.email : null),
     email: supplier.email || (validMasterValue(master.email) ? master.email : null),
+    payment_email: supplier.payment_email || (validMasterValue(master.email) ? master.email : null),
     phone: supplier.phone || (validMasterValue(master.phone) ? master.phone : null),
     profile_source: supplier.profile_source === "manual" ? "manual" : "master proveedores jesus",
     trade_name: supplier.trade_name || (validMasterValue(master.tradeName) ? master.tradeName : null)
   };
-  if (supplierPatch.email !== supplier.email || supplierPatch.phone !== supplier.phone || supplierPatch.trade_name !== supplier.trade_name || supplierPatch.profile_source !== supplier.profile_source) {
+  if (supplierPatch.commercial_email !== supplier.commercial_email || supplierPatch.email !== supplier.email || supplierPatch.payment_email !== supplier.payment_email || supplierPatch.phone !== supplier.phone || supplierPatch.trade_name !== supplier.trade_name || supplierPatch.profile_source !== supplier.profile_source) {
     await supabase.from("suppliers").update(supplierPatch).eq("id", supplier.id);
     supplierUpdated += 1;
   }
 
   if (!validMasterValue(master.bankName) || !validMasterValue(master.bankAccount)) return { bankUpdated, supplierUpdated };
-  const { data: banks } = await supabase.from("supplier_bank_accounts").select("id,bank_name,bank_code,account_type,account_number").eq("supplier_id", supplier.id);
+  const { data: banks } = await supabase.from("supplier_bank_accounts").select("id,bank_name,bank_code,account_type,account_number,account_holder_name,account_holder_rut").eq("supplier_id", supplier.id);
   const bank = (banks ?? []).find((row) => row.account_number === master.bankAccount) ?? (banks ?? [])[0];
   const bankCode = validMasterValue(master.bankCode) ? master.bankCode : null;
   if (bank) {
     const bankPatch = {
       account_number: bank.account_number || master.bankAccount,
       account_type: bank.account_type || master.accountType || "no_informada_master",
+      account_holder_name: bank.account_holder_name || master.businessName || supplier.legal_name,
+      account_holder_rut: bank.account_holder_rut || master.rut || supplier.rut,
       bank_code: bank.bank_code || bankCode,
       bank_name: bank.bank_name || master.bankName
     };
@@ -74,7 +78,7 @@ async function hydrateFromMaster({
   } else {
     await supabase.from("supplier_bank_accounts").insert({
       account_holder_name: master.businessName || supplier.legal_name,
-      account_holder_rut: master.rut,
+      account_holder_rut: master.rut || supplier.rut,
       account_number: master.bankAccount,
       account_type: master.accountType || "no_informada_master",
       bank_code: bankCode,
@@ -96,7 +100,7 @@ export async function repairPaymentSuppliers(actor: RepairActor) {
     .eq("tenant_id", actor.tenantId)
     .limit(5000);
   if (error) throw error;
-  const { data: supplierRows } = await supabase.from("suppliers").select("id,rut,legal_name,email,phone,profile_source,trade_name").eq("tenant_id", actor.tenantId).limit(5000);
+  const { data: supplierRows } = await supabase.from("suppliers").select("id,rut,legal_name,email,commercial_email,payment_email,phone,profile_source,trade_name").eq("tenant_id", actor.tenantId).limit(5000);
   const suppliers = new Map((supplierRows ?? []).map((supplier) => [normalizeRut(supplier.rut), supplier]));
   const master = masterByRut();
   const summary = { bankProfilesCompleted: 0, created: 0, payablesReviewed: 0, relinked: 0, suppliersCompleted: 0, unresolved: [] as Array<{ payableId: string; reason: string }> };
@@ -124,7 +128,7 @@ export async function repairPaymentSuppliers(actor: RepairActor) {
         status: "draft",
         tenant_id: payable.tenant_id,
         trade_name: dte.razon_social_emisor || null
-      }).select("id,rut,legal_name,email,phone,profile_source,trade_name").single();
+      }).select("id,rut,legal_name,email,commercial_email,payment_email,phone,profile_source,trade_name").single();
       if (!inserted.data) {
         summary.unresolved.push({ payableId: payable.id, reason: "No se pudo crear proveedor XML" });
         continue;
@@ -134,7 +138,7 @@ export async function repairPaymentSuppliers(actor: RepairActor) {
       summary.created += 1;
     }
     if (supplier.legal_name === "Cuenta por pagar" && dte.razon_social_emisor) {
-      const completed = await supabase.from("suppliers").update({ legal_name: dte.razon_social_emisor, trade_name: supplier.trade_name || dte.razon_social_emisor }).eq("id", supplier.id).select("id,rut,legal_name,email,phone,profile_source,trade_name").single();
+      const completed = await supabase.from("suppliers").update({ legal_name: dte.razon_social_emisor, trade_name: supplier.trade_name || dte.razon_social_emisor }).eq("id", supplier.id).select("id,rut,legal_name,email,commercial_email,payment_email,phone,profile_source,trade_name").single();
       supplier = completed.data ?? supplier;
       suppliers.set(normalizedRut, supplier);
     }

@@ -20,6 +20,7 @@ type ResultRow = {
   estadoXml: "xml_recibido" | "falta_xml" | "diferencia_monto" | "pendiente_revision";
   claimStatus: "pendiente" | "copiado" | "enviado_manualmente" | "resuelto" | "ignorado";
   dteDocumentId: string | null;
+  accountsPayableId: string | null;
   xmlReceivedAt: string | null;
   sourceFile: string | null;
 };
@@ -194,7 +195,7 @@ export function SiiControlClient() {
     const importedSummary = result.importedSummary;
     setMessage(result.importMode === "summary"
       ? `Resumen importado correctamente: ${importedSummary?.leidos ?? 0} tipos leidos, ${importedSummary?.nuevos ?? 0} nuevos, ${importedSummary?.actualizados ?? 0} actualizados. Para identificar folios faltantes sube el detalle del Registro de Compras.`
-      : `Importacion acumulativa lista: ${imported?.leidos ?? 0} leidos, ${imported?.rowsPersistidas ?? 0} persistidos, ${imported?.duplicadosIgnorados ?? 0} duplicados internos ignorados, ${imported?.faltanXml ?? 0} faltan XML, ${imported?.rowErrors ?? 0} errores de fila.`);
+      : `Importacion acumulativa lista: ${imported?.leidos ?? 0} leidos, ${imported?.rowsPersistidas ?? 0} persistidos, ${imported?.duplicadosIgnorados ?? 0} duplicados internos ignorados, ${imported?.faltanXml ?? 0} faltan XML, ${imported?.cuentasPorPagarAutomaticas ?? 0} cuentas por pagar automaticas, ${imported?.rowErrors ?? 0} errores de fila.`);
     if (result.importErrors?.length) setTechnicalDetail({ importErrors: result.importErrors });
   }
 
@@ -389,10 +390,9 @@ export function SiiControlClient() {
                   <td>
                     <div className="flex flex-col gap-1">
                       {row.dteDocumentId ? <a className="font-semibold text-brand-700 hover:underline" href={`/facturas?folio=${encodeURIComponent(row.folio)}`}>Ver factura</a> : null}
-                      {!row.dteDocumentId && row.estadoXml === "falta_xml" ? <button className="text-left font-semibold text-brand-700" disabled={busy} onClick={() => sendToTreasury([row.id])} type="button">Crear factura provisional</button> : null}
-                      {!row.dteDocumentId && row.estadoXml === "falta_xml" ? <button className="text-left font-semibold text-brand-700" disabled={busy} onClick={() => sendToTreasury([row.id])} type="button">Crear cuenta por pagar</button> : null}
+                      {row.accountsPayableId ? <a className="font-semibold text-brand-700 hover:underline" href="/tesoreria#nomina-pagos">Ver en Tesoreria</a> : null}
+                      {!row.accountsPayableId && row.estadoXml === "falta_xml" ? <button className="text-left font-semibold text-brand-700" disabled={busy} onClick={() => sendToTreasury([row.id])} type="button">Crear respaldo automatico</button> : null}
                       {!row.dteDocumentId ? <button className="text-left font-semibold text-brand-700" onClick={() => copyClaim(row.razonSocial, row.rutEmisor, [row])} type="button">Copiar reclamo</button> : null}
-                      {row.dteDocumentId ? <a className="font-semibold text-brand-700 hover:underline" href="/tesoreria#nomina-pagos">Ver en Tesoreria</a> : null}
                     </div>
                   </td>
                 </tr>

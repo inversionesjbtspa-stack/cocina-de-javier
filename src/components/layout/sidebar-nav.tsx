@@ -40,11 +40,11 @@ export function SidebarNav() {
   return (
     <aside
       className={[
-        "fixed inset-y-0 left-0 z-20 hidden border-r border-[#eadfd9] bg-[#fffaf6]/95 px-4 py-5 shadow-[18px_0_48px_rgba(43,16,24,0.07)] backdrop-blur-xl transition-[width] duration-200 lg:block",
+        "fixed inset-y-0 left-0 z-20 hidden border-r border-[#eadfd9] bg-[#fffaf6]/95 px-4 py-5 shadow-[18px_0_48px_rgba(43,16,24,0.07)] backdrop-blur-xl transition-[width] duration-200 lg:flex lg:flex-col",
         collapsed ? "w-24" : "w-72"
       ].join(" ")}
     >
-      <div className="rounded-2xl border border-white/80 bg-white/[0.88] p-3 shadow-sm">
+      <div className="shrink-0 rounded-2xl border border-white/80 bg-white/[0.88] p-3 shadow-sm">
         <Link className="flex items-center justify-center rounded-xl bg-white p-2" href="/">
           {collapsed ? (
             <span className="text-lg font-semibold text-brand-700">LCJ</span>
@@ -72,7 +72,7 @@ export function SidebarNav() {
         </div>
       </div>
 
-      <nav className="mt-6 space-y-5">
+      <nav className="mt-5 min-h-0 flex-1 space-y-5 overflow-y-auto overflow-x-hidden pr-1 pb-4">
         {sections.map((section) => {
           const items = navigation.filter((item) => item.section === section);
           return (
@@ -117,7 +117,7 @@ export function SidebarNav() {
         })}
       </nav>
 
-      <div className={collapsed ? "hidden" : "absolute bottom-5 left-4 right-4 rounded-2xl border border-[#eadfd9] bg-white/[0.84] p-3 text-xs text-[#6f6263] shadow-sm"}>
+      <div className={collapsed ? "hidden" : "mt-4 shrink-0 rounded-2xl border border-[#eadfd9] bg-white/[0.84] p-3 text-xs text-[#6f6263] shadow-sm"}>
         <div className="flex items-center gap-2 font-semibold text-brand-900">
           <Menu className="h-4 w-4 text-brand-700" />
           Modo ejecutivo

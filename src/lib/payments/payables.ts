@@ -14,6 +14,8 @@ export type PayableCandidate = {
   supplierId: string;
   supplierRut: string;
   supplierName: string;
+  paymentBeneficiaryName: string;
+  paymentBeneficiaryRut: string;
   bankAccount: string;
   bankCode: string;
   bankName: string;
@@ -47,8 +49,8 @@ export async function getPayableCandidatesResult(): Promise<PayablesResult> {
     return { candidates: [], diagnostics: { error: "Supabase admin no configurado", fetched: 0, invalid: 0, totalBalance: 0, valid: 0 } };
   }
   const supabase = createAdminClient();
-  const richSelect = "id,document_number,issue_date,due_date,total_amount,balance_amount,status,source_type,xml_status,is_payable_without_xml,suppliers(id,rut,legal_name,email,payment_email,status,supplier_bank_accounts(bank_name,bank_name_normalized,bank_code,bank_mapping_needs_review,account_type,account_number,status))";
-  const legacySelect = "id,document_number,issue_date,due_date,total_amount,balance_amount,status,suppliers(id,rut,legal_name,email,payment_email,status,supplier_bank_accounts(bank_name,bank_name_normalized,bank_code,bank_mapping_needs_review,account_type,account_number,status))";
+  const richSelect = "id,document_number,issue_date,due_date,total_amount,balance_amount,status,source_type,xml_status,is_payable_without_xml,suppliers(id,rut,legal_name,email,payment_email,status,supplier_bank_accounts(bank_name,bank_name_normalized,bank_code,bank_mapping_needs_review,account_type,account_number,account_holder_name,account_holder_rut,status))";
+  const legacySelect = "id,document_number,issue_date,due_date,total_amount,balance_amount,status,suppliers(id,rut,legal_name,email,payment_email,status,supplier_bank_accounts(bank_name,bank_name_normalized,bank_code,bank_mapping_needs_review,account_type,account_number,account_holder_name,account_holder_rut,status))";
   const query = supabase
     .from("accounts_payable")
     .select(richSelect)
@@ -66,7 +68,7 @@ export async function getPayableCandidatesResult(): Promise<PayablesResult> {
   const diagnosticsError = legacyResult?.error?.message ?? error?.message ?? null;
 
   const candidates = rows.filter((row) => !["paid", "rejected", "cancelled"].includes(String(row.status))).map((row) => {
-    type SupplierRow = { id: string; rut: string; legal_name: string; email: string | null; payment_email: string | null; status: string; supplier_bank_accounts?: Array<{ bank_name: string; bank_name_normalized: string | null; bank_code: string | null; bank_mapping_needs_review: boolean; account_type: string; account_number: string; status: string }> };
+    type SupplierRow = { id: string; rut: string; legal_name: string; email: string | null; payment_email: string | null; status: string; supplier_bank_accounts?: Array<{ bank_name: string; bank_name_normalized: string | null; bank_code: string | null; bank_mapping_needs_review: boolean; account_type: string; account_number: string; account_holder_name: string | null; account_holder_rut: string | null; status: string }> };
     const record = row as Record<string, unknown>;
     const supplier = (Array.isArray(row.suppliers) ? row.suppliers[0] : row.suppliers) as SupplierRow | null;
     const bank = supplier?.supplier_bank_accounts?.find((account) => account.status !== "disabled") ?? supplier?.supplier_bank_accounts?.[0];
@@ -91,6 +93,8 @@ export async function getPayableCandidatesResult(): Promise<PayablesResult> {
       issueDate: row.issue_date,
       ok: alerts.length === 0 && Number(row.balance_amount ?? 0) > 0,
       payableWithoutXml: Boolean(record.is_payable_without_xml ?? false),
+      paymentBeneficiaryName: bank?.account_holder_name || supplier?.legal_name || "Cuenta por pagar sin proveedor",
+      paymentBeneficiaryRut: bank?.account_holder_rut || supplier?.rut || "",
       sourceType: typeof record.source_type === "string" ? record.source_type : "xml",
       status: row.status,
       supplierId: supplier?.id ?? "",

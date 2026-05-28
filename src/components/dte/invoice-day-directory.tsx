@@ -162,40 +162,40 @@ export function InvoiceDayDirectory({ invoices }: { invoices: DteOperationalInvo
                 <div><h3 className="font-semibold text-brand-900">{date}</h3><p className="text-xs text-[#6f6263]">{rows.length} documentos / {suppliers} proveedores</p></div>
                 <p className="font-semibold text-brand-900">{formatClp(total)}</p>
               </header>
-              <div className="overflow-x-auto"><table className="w-full min-w-[1080px] text-sm"><thead className="bg-white text-left text-xs uppercase text-brand-700"><tr><th className="px-3 py-2">Folio</th><th>Proveedor</th><th>Emision</th><th>Recepcion</th><th className="text-right">Neto</th><th className="text-right">IVA</th><th className="text-right">Total</th><th>XML</th><th>Pago</th><th>Acciones</th></tr></thead><tbody>
+              <div className="overflow-x-auto"><table className="w-full min-w-[1280px] text-sm"><thead className="bg-white text-left text-xs uppercase text-brand-700"><tr><th className="px-3 py-2">Folio</th><th className="min-w-[220px]">Proveedor</th><th>RUT</th><th>Emision</th><th>Recepcion</th><th className="text-right">Neto</th><th className="text-right">IVA</th><th className="text-right">Total</th><th>Estado XML</th><th>Estado pago</th><th>Acciones</th></tr></thead><tbody>
                 {rows.map((invoice) => {
                   const isPendingXml = invoice.xmlStatus === "pendiente_xml";
                   const isSii = invoice.sourceType === "sii";
                   const isSiiPending = invoice.sourceType === "sii" && isPendingXml;
                   const payment = paymentBadge(invoice);
                   return (
-                    <tr className="border-t border-[#f0e5df]" key={invoice.id}>
+                    <tr className="border-t border-[#f0e5df] align-top hover:bg-[#fffaf6]" key={invoice.id}>
                       <td className="px-3 py-3 font-semibold text-brand-900">{invoice.tipoDte}-{invoice.folio}</td>
-                      <td>
+                      <td className="px-3 py-3">
                         <p>{invoice.supplier}</p>
-                        <p className="text-xs text-[#7b6f70]">{invoice.rut}</p>
                         <div className="mt-1 flex flex-wrap gap-1">
                           {invoice.sourceType === "sii" ? <span className={badgeClass("orange")}>Detectado SII</span> : null}
                           {invoice.sourceType === "manual" ? <span className={badgeClass("neutral")}>Origen Manual</span> : null}
-                          {isSiiPending ? <span className={badgeClass("orange")}>Documento provisional</span> : null}
-                          {invoice.sourceType === "sii" ? <span className={badgeClass(invoice.claimStatus === "resuelto" ? "green" : "orange")}>{claimLabel(invoice.claimStatus)}</span> : null}
                         </div>
                       </td>
-                      <td>{localDate(invoice.issuedAt)}</td>
-                      <td>{localDate(invoice.receivedAt)}</td>
-                      <td className="text-right">{formatClp(invoice.net)}</td>
-                      <td className="text-right">{formatClp(invoice.iva)}</td>
-                      <td className="text-right font-semibold">{formatClp(invoice.total)}</td>
-                      <td>
+                      <td className="px-3 py-3 whitespace-nowrap">{invoice.rut}</td>
+                      <td className="px-3 py-3">{localDate(invoice.issuedAt)}</td>
+                      <td className="px-3 py-3">{localDate(invoice.receivedAt)}</td>
+                      <td className="px-3 py-3 text-right">{formatClp(invoice.net)}</td>
+                      <td className="px-3 py-3 text-right">{formatClp(invoice.iva)}</td>
+                      <td className="px-3 py-3 text-right font-semibold">{formatClp(invoice.total)}</td>
+                      <td className="px-3 py-3">
                         <span className={badgeClass(isPendingXml ? "orange" : "green")}>{isPendingXml ? "Pendiente XML" : "XML recibido"}</span>
+                        {isSiiPending ? <span className={`${badgeClass("orange")} mt-1`}>Provisional</span> : null}
                       </td>
-                      <td>
+                      <td className="px-3 py-3">
                         <span className={badgeClass(payment.tone)}>{payment.label}</span>
+                        {invoice.sourceType === "sii" ? <span className={`${badgeClass(invoice.claimStatus === "resuelto" ? "green" : "orange")} mt-1`}>{claimLabel(invoice.claimStatus)}</span> : null}
                       </td>
-                      <td className="space-x-2 whitespace-nowrap">
+                      <td className="px-3 py-3">
+                        <div className="flex flex-wrap gap-2 whitespace-nowrap">
                         {isSii ? (
                           <>
-                            {isPendingXml ? <span className="text-xs font-semibold text-amber-800">XML pendiente proveedor</span> : null}
                             {isPendingXml ? <button className="font-semibold text-amber-800 hover:underline" onClick={() => copyClaim(invoice)} type="button"><Clipboard className="mr-1 inline h-3.5 w-3.5" />Copiar reclamo</button> : null}
                             {isPendingXml ? <button className="font-semibold text-brand-700 hover:underline" onClick={() => markClaim(invoice, "enviado")} type="button">Marcar enviado</button> : null}
                             {isPendingXml ? <button className="font-semibold text-emerald-700 hover:underline" onClick={() => markClaim(invoice, "resuelto")} type="button">Resolver</button> : null}
@@ -214,6 +214,7 @@ export function InvoiceDayDirectory({ invoices }: { invoices: DteOperationalInvo
                             <a className="font-semibold text-brand-700 hover:underline" href={`/facturas?folio=${invoice.folio}`}>Detalle</a>
                           </>
                         )}
+                        </div>
                       </td>
                     </tr>
                   );

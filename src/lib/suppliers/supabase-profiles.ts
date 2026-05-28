@@ -27,6 +27,8 @@ export type SupplierPaymentProfile = {
   bankCode: string;
   accountType: string;
   accountNumber: string;
+  accountHolderName: string;
+  accountHolderRut: string;
   pending: number;
   overdue: number;
   invoices: Array<{ folio: string; date: string; total: number; status: string }>;
@@ -53,18 +55,20 @@ export async function getSupplierPaymentProfiles(): Promise<SupplierPaymentProfi
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("suppliers")
-    .select("id,rut,legal_name,trade_name,giro,address,commune,city,email,commercial_email,payment_email,phone,category,payment_terms_days,payment_terms_label,observations,status,profile_source,supplier_contacts(name,is_primary),supplier_bank_accounts(id,bank_name,bank_code,account_type,account_number,status),accounts_payable(id,document_number,due_date,issue_date,total_amount,balance_amount,status)")
+    .select("id,rut,legal_name,trade_name,giro,address,commune,city,email,commercial_email,payment_email,phone,category,payment_terms_days,payment_terms_label,observations,status,profile_source,supplier_contacts(name,is_primary),supplier_bank_accounts(id,bank_name,bank_code,account_type,account_number,account_holder_name,account_holder_rut,status),accounts_payable(id,document_number,due_date,issue_date,total_amount,balance_amount,status)")
     .order("legal_name")
     .limit(1000);
   const today = new Date().toISOString().slice(0, 10);
   return (data ?? []).map((row) => {
     const contacts = row.supplier_contacts as Array<{ name: string; is_primary: boolean }> | undefined;
-    const bankAccounts = row.supplier_bank_accounts as Array<{ id: string; bank_name: string; bank_code: string | null; account_type: string; account_number: string; status: string }> | undefined;
+    const bankAccounts = row.supplier_bank_accounts as Array<{ id: string; bank_name: string; bank_code: string | null; account_type: string; account_number: string; account_holder_name: string | null; account_holder_rut: string | null; status: string }> | undefined;
     const bank = bankAccounts?.find((item) => item.status !== "disabled") ?? bankAccounts?.[0];
     const payable = (row.accounts_payable as Array<{ document_number: string; due_date: string; issue_date: string; total_amount: number; balance_amount: number; status: string }> | undefined) ?? [];
     const profile = {
       accountNumber: bank?.account_number ?? "",
       accountType: bank?.account_type ?? "",
+      accountHolderName: bank?.account_holder_name ?? row.legal_name,
+      accountHolderRut: bank?.account_holder_rut ?? row.rut,
       address: row.address ?? "",
       bankAccountId: bank?.id ?? null,
       bankCode: bank?.bank_code ?? "",

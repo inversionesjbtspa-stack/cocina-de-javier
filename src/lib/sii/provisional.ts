@@ -153,6 +153,13 @@ export async function createSiiProvisionalDocuments({
           .maybeSingle();
         if (existingPayable?.id) {
           payableId = existingPayable.id;
+          await supabase.from("accounts_payable").update({
+            dte_document_id: dte.id,
+            is_payable_without_xml: true,
+            sii_purchase_registry_id: row.id,
+            source_type: "sii",
+            xml_status: "missing"
+          }).eq("id", existingPayable.id);
           summary.yaExistian += 1;
         } else {
           const terms = Number(supplier.payment_terms_days ?? 30);

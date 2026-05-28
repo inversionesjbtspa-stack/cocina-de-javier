@@ -19,12 +19,13 @@ test("treasury export handles validation in the UI and preserves supplier detail
   const manualRoute = await readFile("src/app/api/accounts-payable/manual/route.ts", "utf8");
   assert.match(panel, /fetch\(`\/api\/payment-template/);
   assert.match(panel, /Descargar reporte de errores/);
-  assert.match(panel, /Traer facturas SII pendientes/);
   assert.match(panel, /Agregar factura manual/);
   assert.match(panel, /Todos los vencimientos/);
-  assert.match(panel, /Origen XML\/SII/);
+  assert.match(panel, /Origen XML\/SII\/manual/);
+  assert.match(panel, /Beneficiario pago/);
   assert.doesNotMatch(panel, /href=\{`\/api\/payment-template/);
   assert.match(template, /supplierName/);
+  assert.match(template, /account_holder_name/);
   assert.match(template, /styledTextCell/);
   assert.match(template, /columnStyle/);
   assert.match(template, /ya esta en nomina activa/);

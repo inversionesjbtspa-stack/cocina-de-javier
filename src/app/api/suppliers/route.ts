@@ -6,6 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 const supplierCreateSchema = z.object({
   accountNumber: z.string().trim().max(80),
   accountType: z.string().trim().max(80),
+  accountHolderName: z.string().trim().max(240).optional().default(""),
+  accountHolderRut: z.string().trim().max(40).optional().default(""),
   address: z.string().trim().max(240),
   bankCode: z.string().trim().max(40),
   bankName: z.string().trim().max(160),
@@ -63,7 +65,7 @@ export async function POST(request: Request) {
   }).select("id,tenant_id,company_id,rut,legal_name").single();
   if (error || !supplier) return NextResponse.json({ ok: false, error: error?.message ?? "supplier_create_failed" }, { status: 422 });
   if (body.contactName) await supabase.from("supplier_contacts").insert({ email: body.commercialEmail || body.email || null, is_primary: true, name: body.contactName, phone: body.phone || null, supplier_id: supplier.id, tenant_id: supplier.tenant_id });
-  if (body.bankName && body.accountType && body.accountNumber) await supabase.from("supplier_bank_accounts").insert({ account_holder_name: body.legalName, account_holder_rut: body.rut, account_number: body.accountNumber, account_type: body.accountType, bank_code: body.bankCode || null, bank_name: body.bankName, status: "pending_validation", supplier_id: supplier.id, tenant_id: supplier.tenant_id });
+  if (body.bankName && body.accountType && body.accountNumber) await supabase.from("supplier_bank_accounts").insert({ account_holder_name: body.accountHolderName || body.legalName, account_holder_rut: body.accountHolderRut || body.rut, account_number: body.accountNumber, account_type: body.accountType, bank_code: body.bankCode || null, bank_name: body.bankName, status: "pending_validation", supplier_id: supplier.id, tenant_id: supplier.tenant_id });
   await supabase.from("audit_events").insert({ actor_role: membership.data.role, actor_user_id: user.id, after_data: body, company_id: supplier.company_id, entity_id: supplier.id, entity_type: "supplier", event_type: "supplier.created", tenant_id: supplier.tenant_id });
   return NextResponse.json({ ok: true, supplier });
 }

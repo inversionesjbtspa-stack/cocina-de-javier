@@ -45,6 +45,7 @@ test("Control SII module exposes upload, comparison and missing XML claim text",
   assert.match(route, /dte_documents!sii_purchase_registry_dte_document_id_fkey\(monto_total\)/);
   assert.match(route, /PGRST201/);
   assert.match(route, /importedSummary/);
+  assert.match(route, /auto_create_sii_payables/);
   assert.match(store, /sii\.registry_imported/);
   assert.match(store, /sii\.summary_imported/);
   assert.match(store, /sii\.xml_missing_resolved/);
@@ -79,8 +80,9 @@ test("Compras uses unified XML and SII pending purchases without product side ef
   assert.match(comprasTable, /PDF no disponible/);
   assert.match(comprasTable, /Copiar reclamo/);
   assert.match(comprasTable, /dte@lacocinadejavier\.cl/);
-  assert.match(comprasTable, /Enviar a Tesoreria/);
-  assert.match(comprasTable, /api\/sii\/provisionalize/);
+  assert.match(comprasTable, /Ver en Tesoreria/);
+  assert.match(comprasTable, /Tesoreria automatica pendiente/);
+  assert.doesNotMatch(comprasTable, /api\/sii\/provisionalize/);
   assert.match(facturasPage, /XML recibidos \+ SII pendientes \+ manuales/);
   assert.match(facturasPage, /Detectadas SII/);
   assert.match(facturasPage, /XML pendientes/);

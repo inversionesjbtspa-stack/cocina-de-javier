@@ -6,6 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 const supplierUpdateSchema = z.object({
   accountNumber: z.string().trim().max(80),
   accountType: z.string().trim().max(80),
+  accountHolderName: z.string().trim().max(240).optional().default(""),
+  accountHolderRut: z.string().trim().max(40).optional().default(""),
   address: z.string().trim().max(240),
   bankCode: z.string().trim().max(40),
   bankName: z.string().trim().max(160),
@@ -52,7 +54,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   }
   const bankAccounts = before.supplier_bank_accounts as Array<{ id: string }> | undefined;
   if (body.bankName && body.accountType && body.accountNumber) {
-    const bankPayload = { account_holder_name: body.legalName, account_holder_rut: supplier.rut, account_number: body.accountNumber, account_type: body.accountType, bank_code: body.bankCode || null, bank_name: body.bankName, status: "pending_validation", supplier_id: id, tenant_id: supplier.tenant_id };
+    const bankPayload = { account_holder_name: body.accountHolderName || body.legalName, account_holder_rut: body.accountHolderRut || supplier.rut, account_number: body.accountNumber, account_type: body.accountType, bank_code: body.bankCode || null, bank_name: body.bankName, status: "pending_validation", supplier_id: id, tenant_id: supplier.tenant_id };
     if (bankAccounts?.[0]) await supabase.from("supplier_bank_accounts").update(bankPayload).eq("id", bankAccounts[0].id);
     else await supabase.from("supplier_bank_accounts").insert(bankPayload);
   }

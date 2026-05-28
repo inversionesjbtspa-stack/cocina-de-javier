@@ -34,6 +34,7 @@ export function PaymentNominaPanel({ candidates, diagnostics }: { candidates: Pa
   const [issueFrom, setIssueFrom] = useState("");
   const [issueTo, setIssueTo] = useState("");
   const [status, setStatus] = useState("todos");
+  const [sort, setSort] = useState("due_asc");
   const [payDate, setPayDate] = useState("");
   const [minAmount, setMinAmount] = useState("");
   const [maxAmount, setMaxAmount] = useState("");
@@ -47,7 +48,7 @@ export function PaymentNominaPanel({ candidates, diagnostics }: { candidates: Pa
       const quickEnd = new Date(today);
     quickEnd.setDate(today.getDate() + Number(quick === "custom" || quick === "todos" ? 3650 : quick));
     const needle = query.toLowerCase().trim();
-    return candidates.filter((row) => {
+    const rows = candidates.filter((row) => {
       const due = new Date(`${row.dueDate}T00:00:00`);
       const haystack = [row.documentNumber, row.supplierName, row.supplierRut, row.balance, row.status, row.sourceType, row.xmlStatus].join(" ").toLowerCase();
       return (!needle || haystack.includes(needle)) &&
@@ -60,9 +61,21 @@ export function PaymentNominaPanel({ candidates, diagnostics }: { candidates: Pa
         (!issueTo || row.issueDate <= issueTo) &&
         (!minAmount || row.balance >= Number(minAmount)) &&
         (!maxAmount || row.balance <= Number(maxAmount)) &&
-        (status === "todos" || status === row.status || (status === "vencidas" && due < today));
+        (status === "todos" ||
+          status === row.status ||
+          (status === "vencidas" && due < today) ||
+          (status === "sin_banco" && (!row.bankAccount || !row.bankCode)) ||
+          (status === "aptas" && row.ok));
     });
-  }, [candidates, from, issueFrom, issueTo, maxAmount, minAmount, origin, query, quick, status, supplierId, to]);
+    return rows.sort((a, b) => {
+      if (sort === "amount_desc") return b.balance - a.balance;
+      if (sort === "amount_asc") return a.balance - b.balance;
+      if (sort === "issue_desc") return b.issueDate.localeCompare(a.issueDate);
+      if (sort === "supplier_asc") return a.supplierName.localeCompare(b.supplierName);
+      if (sort === "status_asc") return a.status.localeCompare(b.status);
+      return a.dueDate.localeCompare(b.dueDate);
+    });
+  }, [candidates, from, issueFrom, issueTo, maxAmount, minAmount, origin, query, quick, sort, status, supplierId, to]);
   const selectedRows = candidates.filter((row) => selected.includes(row.id));
   const invalidSelected = selectedRows.filter((row) => !row.ok);
   const total = selectedRows.reduce((sum, row) => sum + row.balance, 0);
@@ -115,21 +128,6 @@ export function PaymentNominaPanel({ candidates, diagnostics }: { candidates: Pa
     setBusy(false);
     if (response.ok) window.location.reload();
   }
-  async function bringSiiPending() {
-    setBusy(true);
-    setRepairMessage("");
-    const response = await fetch("/api/sii/provisionalize", {
-      body: JSON.stringify({}),
-      headers: { "content-type": "application/json" },
-      method: "POST"
-    });
-    const body = await response.json().catch(() => null);
-    setRepairMessage(response.ok
-      ? `SII enviado a Tesoreria: ${body?.cuentasPorPagarCreadas ?? 0} cuentas creadas, ${body?.yaExistian ?? 0} ya existentes.`
-      : body?.error ?? "No se pudieron traer facturas SII pendientes.");
-    setBusy(false);
-    if (response.ok) window.location.reload();
-  }
   async function createManualPayable(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -154,7 +152,6 @@ export function PaymentNominaPanel({ candidates, diagnostics }: { candidates: Pa
         <span className="rounded-md bg-white px-3 py-2 text-sm ring-1 ring-[#eadfd9]">{diagnostics?.fetched ?? candidates.length} cuentas / {diagnostics?.valid ?? candidates.filter((row) => row.ok).length} validas / <b>{formatClp(diagnostics?.totalBalance ?? candidates.reduce((sum, row) => sum + row.balance, 0))}</b></span>
         <button className="rounded-md border px-3 py-2 text-sm font-semibold" onClick={selectVisible} type="button">Seleccionar todo visible</button>
         <button className="rounded-md border px-3 py-2 text-sm font-semibold" onClick={() => setSelected([])} type="button">Quitar seleccion</button>
-        <button className="rounded-md border border-amber-700 px-3 py-2 text-sm font-semibold text-amber-800" disabled={busy} onClick={bringSiiPending} type="button">Traer facturas SII pendientes</button>
         <button className="rounded-md border px-3 py-2 text-sm font-semibold" onClick={() => setManualOpen((value) => !value)} type="button">Agregar factura manual</button>
         <button className="rounded-md border px-3 py-2 text-sm font-semibold" disabled={busy} onClick={repairSuppliers} type="button"><RefreshCw className="mr-1 inline h-4 w-4" />Reparar proveedores</button>
         <button className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" disabled={busy} onClick={repairBankCodes} type="button"><RefreshCw className="mr-1 inline h-4 w-4" />Reparar codigos banco</button>
@@ -177,8 +174,9 @@ export function PaymentNominaPanel({ candidates, diagnostics }: { candidates: Pa
       <input className="rounded-md border px-3 py-2 text-sm lg:col-span-2" onChange={(event) => setQuery(event.target.value)} placeholder="Folio, proveedor, RUT o monto" value={query} />
       <select className="rounded-md border px-3 py-2 text-sm lg:col-span-2" onChange={(event) => setSupplierId(event.target.value)} value={supplierId}><option value="">Todos los proveedores</option>{suppliers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
       <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setQuick(event.target.value)} value={quick}><option value="todos">Todos los vencimientos</option><option value="0">Hoy</option><option value="7">7 dias</option><option value="15">15 dias</option><option value="30">30 dias</option><option value="custom">Rango</option></select>
-      <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setOrigin(event.target.value)} value={origin}><option value="todos">Origen XML/SII</option><option value="xml">XML</option><option value="sii">SII pendiente XML</option></select>
-      <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setStatus(event.target.value)} value={status}><option value="todos">Todo estado</option><option value="pending_approval">Pendiente</option><option value="approved">Aprobada</option><option value="scheduled">En nomina</option><option value="vencidas">Vencidas</option></select>
+      <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setOrigin(event.target.value)} value={origin}><option value="todos">Origen XML/SII/manual</option><option value="xml">XML</option><option value="sii">SII pendiente XML</option><option value="manual">Manual</option></select>
+      <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setStatus(event.target.value)} value={status}><option value="todos">Todo estado</option><option value="pending_approval">Pendientes</option><option value="approved">Aprobadas</option><option value="scheduled">En nomina</option><option value="paid">Pagadas</option><option value="vencidas">Vencidas</option><option value="sin_banco">Sin banco</option><option value="aptas">Aptas para pago</option></select>
+      <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setSort(event.target.value)} value={sort}><option value="due_asc">Orden: vence primero</option><option value="amount_desc">Mayor monto</option><option value="amount_asc">Menor monto</option><option value="issue_desc">Fecha emision</option><option value="supplier_asc">Proveedor A-Z</option><option value="status_asc">Estado pago</option></select>
       <label className="text-xs">Vence desde<input className="mt-1 w-full rounded-md border p-2 text-sm" onChange={(event) => { setQuick("custom"); setFrom(event.target.value); }} type="date" value={from} /></label>
       <label className="text-xs">Vence hasta<input className="mt-1 w-full rounded-md border p-2 text-sm" onChange={(event) => { setQuick("custom"); setTo(event.target.value); }} type="date" value={to} /></label>
       <label className="text-xs">Emision desde<input className="mt-1 w-full rounded-md border p-2 text-sm" onChange={(event) => setIssueFrom(event.target.value)} type="date" value={issueFrom} /></label>
@@ -188,7 +186,7 @@ export function PaymentNominaPanel({ candidates, diagnostics }: { candidates: Pa
       <label className="text-xs">Fecha pago nomina<input className="mt-1 w-full rounded-md border p-2 text-sm" onChange={(event) => setPayDate(event.target.value)} type="date" value={payDate} /></label>
       {supplierId ? <div className="flex flex-wrap items-end gap-2 lg:col-span-2"><button className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" onClick={selectSupplier} type="button">Seleccionar proveedor completo</button><button className="rounded-md border px-3 py-2 text-sm font-semibold" onClick={removeSupplier} type="button">Quitar proveedor</button>{activeSupplier ? <a className="rounded-md border px-3 py-2 text-sm font-semibold" href={`/proveedores?supplier=${activeSupplier.supplierId}`}><Link2 className="mr-1 inline h-4 w-4" />Ver ficha</a> : null}</div> : null}
     </div>
-    <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[1160px] text-sm"><thead className="sticky top-0 bg-brand-50 text-left text-xs uppercase text-brand-700"><tr><th className="p-3">Sel.</th><th>Proveedor</th><th>Factura</th><th>Emision</th><th>Vence</th><th className="text-right">Saldo</th><th>Banco</th><th>Estado</th><th>Validacion</th><th>Accion</th></tr></thead><tbody>{filtered.map((row) => { const mapping = mapBankName(row.bankName); const canRepairBank = Boolean(row.bankName && !row.bankCode && mapping.bankCode && !mapping.needsReview); return <tr className="border-t" key={row.id}><td className="p-3"><input checked={selected.includes(row.id)} disabled={!row.ok} onChange={() => toggle(row)} type="checkbox" /></td><td><p className="font-semibold">{row.supplierName}</p><p className="text-xs">{row.supplierRut || "Sin RUT"}</p>{row.sourceType === "sii" ? <p className="text-xs font-semibold text-amber-800">Origen SII / Pendiente XML</p> : null}</td><td>{row.documentNumber}{row.payableWithoutXml ? <p className="text-xs text-amber-800">Pagable sin XML</p> : null}</td><td>{row.issueDate}</td><td>{row.dueDate}</td><td className="text-right font-semibold">{formatClp(row.balance)}</td><td><p>{row.bankName || "Sin banco"}</p>{row.bankCode ? <p className="text-xs text-emerald-700">Codigo {row.bankCode}</p> : mapping.bankCode ? <p className="text-xs text-amber-800">Reconocido: {mapping.bankNameNormalized} / falta aplicar codigo {mapping.bankCode}</p> : null}</td><td>{row.status}</td><td>{row.ok ? <span className="text-emerald-700">Apto para pago{row.xmlStatus === "missing" ? " / verificar SII antes de pagar" : ""}</span> : <span className="text-amber-800">Incompleta: {row.alerts.join(", ")}</span>}</td><td className="space-y-1"><a className="block font-semibold text-brand-700 hover:underline" href={`/proveedores?supplier=${row.supplierId}`}>{row.ok ? "Ver ficha" : "Corregir proveedor"}</a>{canRepairBank ? <button className="block font-semibold text-brand-700 underline" disabled={busy} onClick={repairBankCodes} type="button">Autocorregir banco</button> : null}</td></tr>; })}</tbody></table>{!filtered.length ? <p className="p-6 text-sm text-[#6f6263]">Sin cuentas por pagar para el filtro.</p> : null}</div>
+    <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[1320px] text-sm"><thead className="sticky top-0 bg-brand-50 text-left text-xs uppercase text-brand-700"><tr><th className="p-3">Sel.</th><th>Proveedor facturador</th><th>Beneficiario pago</th><th>Factura</th><th>Emision</th><th>Vence</th><th className="text-right">Monto</th><th>Banco</th><th>Estado pago</th><th>Validacion</th><th>Accion</th></tr></thead><tbody>{filtered.map((row) => { const mapping = mapBankName(row.bankName); const canRepairBank = Boolean(row.bankName && !row.bankCode && mapping.bankCode && !mapping.needsReview); return <tr className="border-t align-top hover:bg-[#fffaf6]" key={row.id}><td className="p-3"><input checked={selected.includes(row.id)} disabled={!row.ok} onChange={() => toggle(row)} type="checkbox" /></td><td className="p-3"><p className="font-semibold text-brand-900">{row.supplierName}</p><p className="text-xs text-[#6f6263]">{row.supplierRut || "Sin RUT"}</p><p className="mt-1 text-xs">{row.sourceType === "manual" ? "Manual" : row.sourceType === "sii" || row.payableWithoutXml ? "SII pendiente XML" : "XML recibido"}</p></td><td className="p-3"><p className="font-semibold">{row.paymentBeneficiaryName}</p><p className="text-xs text-[#6f6263]">{row.paymentBeneficiaryRut || row.supplierRut || "RUT pendiente"}</p>{row.paymentBeneficiaryRut && row.paymentBeneficiaryRut !== row.supplierRut ? <p className="text-xs text-amber-800">Factura emitida por {row.supplierName}</p> : null}</td><td className="p-3">{row.documentNumber}{row.payableWithoutXml ? <p className="text-xs text-amber-800">Pendiente XML</p> : null}</td><td className="p-3">{row.issueDate}</td><td className="p-3">{row.dueDate}</td><td className="p-3 text-right font-semibold">{formatClp(row.balance)}</td><td className="p-3"><p>{row.bankName || "Sin banco"}</p>{row.bankCode ? <p className="text-xs text-emerald-700">Codigo {row.bankCode}</p> : mapping.bankCode ? <p className="text-xs text-amber-800">Reconocido: {mapping.bankNameNormalized} / falta aplicar codigo {mapping.bankCode}</p> : null}</td><td className="p-3">{row.status}</td><td className="p-3">{row.ok ? <span className="text-emerald-700">Apta{row.xmlStatus === "missing" ? " / verificar SII" : ""}</span> : <span className="text-amber-800">Incompleta: {row.alerts.join(", ")}</span>}</td><td className="space-y-1 p-3"><a className="block font-semibold text-brand-700 hover:underline" href={`/proveedores?supplier=${row.supplierId}`}>{row.ok ? "Ver ficha" : "Corregir proveedor"}</a>{canRepairBank ? <button className="block font-semibold text-brand-700 underline" disabled={busy} onClick={repairBankCodes} type="button">Autocorregir banco</button> : null}</td></tr>; })}</tbody></table>{!filtered.length ? <p className="p-6 text-sm text-[#6f6263]">Sin cuentas por pagar para el filtro.</p> : null}</div>
     {issue ? <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 p-4"><div className="max-h-[85vh] w-full max-w-3xl overflow-auto rounded-lg bg-white p-5 shadow-2xl"><div className="flex items-start justify-between gap-3"><div><h3 className="text-lg font-semibold text-brand-900">{issue.title}</h3><p className="mt-1 text-sm text-[#6f6263]">Complete los datos faltantes antes de exportar al template Santander.</p></div><button className="rounded-md border p-2" onClick={() => setIssue(null)} type="button"><X className="h-4 w-4" /></button></div><div className="mt-4 space-y-2">{issue.invalid.map((row) => <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" key={row.id}><p className="font-semibold">{row.proveedor} / {row.rut || "RUT faltante"} / {row.folio}</p><p className="mt-1">Banco: {row.bankName || "No informado"} / Codigo: {row.bankCode || "faltante"}.</p><p className="mt-1">Dato requerido: {row.alerts.join(", ")}.</p><div className="mt-2 flex flex-wrap gap-3">{row.supplierId ? <a className="font-semibold underline" href={`/proveedores?supplier=${row.supplierId}`}>Corregir ficha proveedor</a> : null}<button className="font-semibold underline" disabled={busy} onClick={repairBankCodes} type="button">Reparar codigos banco</button></div></div>)}</div><button className="mt-4 rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" onClick={() => download(new Blob([errorCsv(issue.invalid)], { type: "text/csv;charset=utf-8" }), "errores-nomina-santander.csv")} type="button">Descargar reporte de errores</button></div></div> : null}
   </section>;
 }

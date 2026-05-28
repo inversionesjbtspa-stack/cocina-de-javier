@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { parseSiiRegistryFile } from "@/lib/sii/registry-parser";
+import { createSiiProvisionalDocuments } from "@/lib/sii/provisional";
 import type { SiiRegistryRow } from "@/lib/sii/registry-parser";
 import { getSiiSummaryComparisons, importSiiRegistry, importSiiSummary, toViewRow } from "@/lib/sii/registry-store";
 
@@ -136,6 +137,14 @@ export async function POST(request: Request) {
         payload: parsed.summaryRows[0] ?? null,
         rowNumber: parsed.summaryRows[0]?.rowNumber ?? null
       }) : null;
+    const autoProvisioned = imported?.upserted?.length
+      ? await runStage("auto_create_sii_payables", async () => createSiiProvisionalDocuments({
+        ids: imported.upserted.filter((row) => row.estado_xml === "falta_xml").map((row) => row.id),
+        supabase,
+        tenantId: ctx.membership.tenant_id,
+        userId: ctx.user.id
+      }), { fileName: uploadName })
+      : null;
     const { data, error: resultError } = await runStage("calculate_results", async () => supabase
       .from("sii_purchase_registry")
       .select(SII_REGISTRY_WITH_XML_SELECT)
@@ -151,6 +160,7 @@ export async function POST(request: Request) {
       importMode: parsed.summaryRows.length && !parsed.rows.length ? "summary" : "detail",
       imported: imported ? {
         ...imported.summary,
+        cuentasPorPagarAutomaticas: autoProvisioned?.cuentasPorPagarCreadas ?? 0,
         erroresFilasInvalidas: validated.invalidRows.length
       } : null,
       importErrors: [...validated.invalidRows, ...(imported?.rowErrors ?? [])],

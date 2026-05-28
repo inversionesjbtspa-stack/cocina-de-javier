@@ -430,25 +430,37 @@ export async function persistExtractedDteInvoices(invoices: PersistInput) {
     }
 
     if (invoice.tipoDte !== "61") {
-      await supabase.from("accounts_payable").upsert(
-        {
+      const documentNumber = `${invoice.tipoDte}-${invoice.folio}`;
+      const payablePayload = {
+        company_id: company.id,
+        document_number: documentNumber,
+        dte_document_id: dte.id,
+        due_date: invoice.fechaVencimiento ?? addDays(invoice.fechaEmision, 30),
+        issue_date: invoice.fechaEmision,
+        source_type: "xml",
+        subtotal: invoice.montoNeto + invoice.montoExento,
+        supplier_id: supplier.id,
+        tax_amount: invoice.iva,
+        tenant_id: tenant.id,
+        total_amount: invoice.montoTotal,
+        xml_status: "received"
+      };
+      const { data: existingPayable } = await supabase
+        .from("accounts_payable")
+        .select("id,balance_amount,status")
+        .eq("tenant_id", tenant.id)
+        .eq("supplier_id", supplier.id)
+        .eq("document_number", documentNumber)
+        .maybeSingle();
+      if (existingPayable?.id) {
+        await supabase.from("accounts_payable").update(payablePayload).eq("id", existingPayable.id);
+      } else {
+        await supabase.from("accounts_payable").insert({
+          ...payablePayload,
           balance_amount: invoice.montoTotal,
-          company_id: company.id,
-          document_number: `${invoice.tipoDte}-${invoice.folio}`,
-          dte_document_id: dte.id,
-          due_date: invoice.fechaVencimiento ?? addDays(invoice.fechaEmision, 30),
-          issue_date: invoice.fechaEmision,
-          source_type: "xml",
-          status: "pending_approval",
-          subtotal: invoice.montoNeto + invoice.montoExento,
-          supplier_id: supplier.id,
-          tax_amount: invoice.iva,
-          tenant_id: tenant.id,
-          total_amount: invoice.montoTotal,
-          xml_status: "received"
-        },
-        { onConflict: "tenant_id,supplier_id,document_number" }
-      );
+          status: "pending_approval"
+        });
+      }
     }
 
     await syncSiiRegistryForDte({

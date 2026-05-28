@@ -40,6 +40,7 @@ export type SiiRegistryViewRow = {
   claimStatus: "pendiente" | "copiado" | "enviado_manualmente" | "resuelto" | "ignorado";
   xmlReceivedAt: string | null;
   dteDocumentId: string | null;
+  accountsPayableId: string | null;
   gmailMessageId: string | null;
   sourceFile: string | null;
   lastImportedAt: string;
@@ -411,6 +412,7 @@ export function toViewRow(row: Record<string, unknown>): SiiRegistryViewRow {
   const dte = Array.isArray(row.dte_documents) ? row.dte_documents[0] : row.dte_documents as Record<string, unknown> | null;
   return {
     claimStatus: String(row.claim_status ?? "pendiente") as SiiRegistryViewRow["claimStatus"],
+    accountsPayableId: String(row.accounts_payable_id ?? "") || null,
     dteDocumentId: String(row.dte_document_id ?? "") || null,
     estadoXml: String(row.estado_xml ?? "pendiente_revision") as SiiRegistryViewRow["estadoXml"],
     fechaEmision: String(row.fecha_emision ?? ""),
