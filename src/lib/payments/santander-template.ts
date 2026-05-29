@@ -17,6 +17,7 @@ type SupabasePaymentRow = {
   folio: string;
   glosa?: string;
   invoiceSupplier?: { businessName: string; rut: string };
+  paymentBeneficiarySource?: "assigned" | "supplier";
   supplier: { bankAccount: string; bankCode: string; businessName: string; code: string; email: string; rut: string };
 };
 export type SantanderBankPaymentRow = SupabasePaymentRow;
@@ -190,32 +191,64 @@ export async function generateSantanderTemplateFromPayables(payableIds: string[]
     const batch = Array.isArray(item.payment_batches) ? item.payment_batches[0] : item.payment_batches;
     return batch && batch.status !== "cancelled" && batch.status !== "reconciled";
   }).map((item) => item.accounts_payable_id));
+  const assignedBeneficiaries = await getAssignedPaymentBeneficiaries(
+    Array.from(new Set((data ?? []).map((item) => item.supplier_id).filter(Boolean))) as string[],
+    supabase
+  );
   const invalid: InvalidPayablePayment[] = [];
   const rows: SupabasePaymentRow[] = [];
   for (const item of data ?? []) {
     type SupplierRow = { id: string; rut: string; legal_name: string; email: string | null; payment_email: string | null; status: string; supplier_bank_accounts?: Array<{ bank_name: string; bank_code: string | null; bank_mapping_needs_review: boolean; account_type: string; account_number: string; account_holder_name: string | null; account_holder_rut: string | null; status: string }> };
     const supplier = (Array.isArray(item.suppliers) ? item.suppliers[0] : item.suppliers) as SupplierRow;
     const bank = supplier.supplier_bank_accounts?.find((account) => account.status !== "disabled");
+    const assignment = assignedBeneficiaries.get(supplier.id);
+    const payee = assignment
+      ? {
+        accountNumber: String(assignment.account_number ?? ""),
+        accountType: String(assignment.account_type ?? ""),
+        bankCode: String(assignment.bank_code ?? ""),
+        bankName: String(assignment.bank_name ?? ""),
+        businessName: String(assignment.name ?? ""),
+        email: String(assignment.payment_email ?? ""),
+        mappingNeedsReview: false,
+        rut: String(assignment.rut ?? ""),
+        source: "assigned" as const,
+        status: String(assignment.status ?? "")
+      }
+      : {
+        accountNumber: bank?.account_number ?? "",
+        accountType: bank?.account_type ?? "",
+        bankCode: bank?.bank_code ?? "",
+        bankName: bank?.bank_name ?? "",
+        businessName: bank?.account_holder_name || supplier.legal_name,
+        email: supplier.payment_email ?? supplier.email ?? "",
+        mappingNeedsReview: Boolean(bank?.bank_mapping_needs_review),
+        rut: bank?.account_holder_rut || supplier.rut,
+        source: "supplier" as const,
+        status: "active"
+      };
     const alerts = [];
     if (!supplier?.rut) alerts.push("RUT");
     if (!supplier?.legal_name) alerts.push("razon social");
-    if (!bank?.bank_name) alerts.push("banco");
-    if (!bank?.bank_code) alerts.push("codigo banco");
-    if (bank?.bank_mapping_needs_review) alerts.push("banco en revision");
-    if (!bank?.account_type) alerts.push("tipo cuenta");
-    if (!bank?.account_number) alerts.push("cuenta");
-    if (!(supplier.payment_email || supplier.email)) alerts.push("email");
+    if (!payee.bankName) alerts.push("banco");
+    if (!payee.bankCode) alerts.push("codigo banco");
+    if (payee.mappingNeedsReview) alerts.push("banco en revision");
+    if (!payee.accountType) alerts.push("tipo cuenta");
+    if (!payee.accountNumber) alerts.push("cuenta");
+    if (!payee.email) alerts.push("email");
+    if (payee.source === "assigned" && payee.status !== "active") alerts.push("beneficiario inactivo");
     if (Number(item.balance_amount ?? 0) <= 0) alerts.push("saldo");
     if (item.status === "paid") alerts.push("pagada");
     if (supplier.status === "blocked") alerts.push("proveedor bloqueado");
     if (activeBatchPayables.has(item.id)) alerts.push("ya esta en nomina activa");
-    if (alerts.length || !bank) { invalid.push({ alerts, bankCode: bank?.bank_code ?? "", bankName: bank?.bank_name ?? "", folio: item.document_number, id: item.id, supplierId: supplier.id, supplierName: supplier.legal_name || "Proveedor sin razon social", supplierRut: supplier.rut || "" }); continue; }
+    if (alerts.length || (!bank && !assignment)) { invalid.push({ alerts, bankCode: payee.bankCode, bankName: payee.bankName, folio: item.document_number, id: item.id, supplierId: supplier.id, supplierName: supplier.legal_name || "Proveedor sin razon social", supplierRut: supplier.rut || "" }); continue; }
     rows.push({
       amount: Number(item.balance_amount),
       folio: String(item.document_number).replace(/^\d+-/, ""),
       invoiceSupplier: { businessName: supplier.legal_name, rut: supplier.rut },
+      paymentBeneficiarySource: payee.source,
       payableId: item.id,
-      supplier: { bankAccount: bank.account_number, bankCode: bank.bank_code ?? "", businessName: bank.account_holder_name || supplier.legal_name, code: "", email: supplier.payment_email ?? supplier.email ?? "", rut: bank.account_holder_rut || supplier.rut }
+      supplier: { bankAccount: payee.accountNumber, bankCode: payee.bankCode, businessName: payee.businessName, code: "", email: payee.email, rut: payee.rut }
     });
   }
   if (!rows.length) return { invalid, ok: false as const, rows: [] };
@@ -248,6 +281,7 @@ export async function generateSantanderTemplateFromPayables(payableIds: string[]
         monto: row.amount,
         payment_beneficiary_name: row.supplier.businessName,
         payment_beneficiary_rut: row.supplier.rut,
+        payment_beneficiary_source: row.paymentBeneficiarySource ?? "supplier",
         proveedor_facturador: row.invoiceSupplier?.businessName ?? row.supplier.businessName,
         rut_beneficiario_pago: row.supplier.rut,
         rut_facturador: row.invoiceSupplier?.rut ?? row.supplier.rut,
@@ -261,4 +295,24 @@ export async function generateSantanderTemplateFromPayables(payableIds: string[]
     tenant_id: first?.tenant_id
   });
   return { buffer: zip.toBuffer(), invalid, ok: true as const, rows };
+}
+
+async function getAssignedPaymentBeneficiaries(
+  supplierIds: string[],
+  supabase: ReturnType<typeof createAdminClient>
+) {
+  const result = new Map<string, Record<string, unknown>>();
+  if (!supplierIds.length) return result;
+  const { data, error } = await supabase
+    .from("supplier_payment_beneficiary_links")
+    .select("supplier_id,payment_beneficiaries(id,name,rut,bank_name,bank_code,account_type,account_number,payment_email,status)")
+    .in("supplier_id", supplierIds)
+    .eq("is_active", true)
+    .limit(1000);
+  if (error) return result;
+  for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+    const beneficiary = Array.isArray(row.payment_beneficiaries) ? row.payment_beneficiaries[0] : row.payment_beneficiaries;
+    if (beneficiary && typeof row.supplier_id === "string") result.set(row.supplier_id, beneficiary as Record<string, unknown>);
+  }
+  return result;
 }

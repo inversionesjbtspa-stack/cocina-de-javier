@@ -34,6 +34,21 @@ export type SupplierPaymentProfile = {
   invoices: Array<{ folio: string; date: string; total: number; status: string }>;
   missingPaymentFields: string[];
   paymentReady: boolean;
+  assignedPaymentBeneficiary: PaymentBeneficiaryAssignment | null;
+};
+
+export type PaymentBeneficiaryAssignment = {
+  id: string;
+  name: string;
+  rut: string;
+  bankName: string;
+  bankCode: string;
+  accountType: string;
+  accountNumber: string;
+  paymentEmail: string;
+  observation: string;
+  reason: string;
+  status: string;
 };
 
 export function paymentMissingFields(profile: Pick<SupplierPaymentProfile, "rut" | "legalName" | "bankName" | "bankCode" | "accountType" | "accountNumber" | "paymentEmail" | "email" | "status">) {
@@ -58,6 +73,8 @@ export async function getSupplierPaymentProfiles(): Promise<SupplierPaymentProfi
     .select("id,rut,legal_name,trade_name,giro,address,commune,city,email,commercial_email,payment_email,phone,category,payment_terms_days,payment_terms_label,observations,status,profile_source,supplier_contacts(name,is_primary),supplier_bank_accounts(id,bank_name,bank_code,account_type,account_number,account_holder_name,account_holder_rut,status),accounts_payable(id,document_number,due_date,issue_date,total_amount,balance_amount,status)")
     .order("legal_name")
     .limit(1000);
+  const supplierIds = (data ?? []).map((row) => row.id);
+  const beneficiaryBySupplier = await getAssignedBeneficiaries(supplierIds, supabase);
   const today = new Date().toISOString().slice(0, 10);
   return (data ?? []).map((row) => {
     const contacts = row.supplier_contacts as Array<{ name: string; is_primary: boolean }> | undefined;
@@ -94,8 +111,63 @@ export async function getSupplierPaymentProfiles(): Promise<SupplierPaymentProfi
       source: row.profile_source ?? "xml",
       status: row.status,
       tradeName: row.trade_name ?? ""
-    } satisfies Omit<SupplierPaymentProfile, "missingPaymentFields" | "paymentReady">;
-    const missingPaymentFields = paymentMissingFields(profile);
-    return { ...profile, missingPaymentFields, paymentReady: missingPaymentFields.length === 0 };
+    } satisfies Omit<SupplierPaymentProfile, "assignedPaymentBeneficiary" | "missingPaymentFields" | "paymentReady">;
+    const assignedPaymentBeneficiary = beneficiaryBySupplier.get(row.id) ?? null;
+    const missingPaymentFields = assignedPaymentBeneficiary
+      ? assignedBeneficiaryMissingFields(profile, assignedPaymentBeneficiary)
+      : paymentMissingFields(profile);
+    return { ...profile, assignedPaymentBeneficiary, missingPaymentFields, paymentReady: missingPaymentFields.length === 0 };
   });
+}
+
+function assignedBeneficiaryMissingFields(
+  profile: Pick<SupplierPaymentProfile, "rut" | "legalName" | "status">,
+  beneficiary: PaymentBeneficiaryAssignment
+) {
+  const missing = [];
+  if (!profile.rut) missing.push("RUT facturador");
+  if (!profile.legalName) missing.push("razon social facturador");
+  if (profile.status === "blocked") missing.push("proveedor bloqueado");
+  if (beneficiary.status !== "active") missing.push("beneficiario inactivo");
+  if (!beneficiary.name) missing.push("beneficiario de pago");
+  if (!beneficiary.rut) missing.push("RUT beneficiario");
+  if (!beneficiary.bankName) missing.push("banco beneficiario");
+  if (!beneficiary.bankCode) missing.push("codigo banco beneficiario");
+  if (!beneficiary.accountType) missing.push("tipo de cuenta beneficiario");
+  if (!beneficiary.accountNumber) missing.push("numero de cuenta beneficiario");
+  if (!beneficiary.paymentEmail) missing.push("email de pagos beneficiario");
+  return missing;
+}
+
+async function getAssignedBeneficiaries(
+  supplierIds: string[],
+  supabase: ReturnType<typeof createAdminClient>
+) {
+  const result = new Map<string, PaymentBeneficiaryAssignment>();
+  if (!supplierIds.length) return result;
+  const { data, error } = await supabase
+    .from("supplier_payment_beneficiary_links")
+    .select("supplier_id,reason,payment_beneficiaries(id,name,rut,bank_name,bank_code,account_type,account_number,payment_email,observation,status)")
+    .in("supplier_id", supplierIds)
+    .eq("is_active", true)
+    .limit(1000);
+  if (error) return result;
+  for (const row of data ?? []) {
+    const beneficiary = Array.isArray(row.payment_beneficiaries) ? row.payment_beneficiaries[0] : row.payment_beneficiaries;
+    if (!beneficiary) continue;
+    result.set(row.supplier_id, {
+      accountNumber: beneficiary.account_number ?? "",
+      accountType: beneficiary.account_type ?? "",
+      bankCode: beneficiary.bank_code ?? "",
+      bankName: beneficiary.bank_name ?? "",
+      id: beneficiary.id,
+      name: beneficiary.name,
+      observation: beneficiary.observation ?? "",
+      paymentEmail: beneficiary.payment_email ?? "",
+      reason: row.reason ?? "",
+      rut: beneficiary.rut,
+      status: beneficiary.status ?? "active"
+    });
+  }
+  return result;
 }

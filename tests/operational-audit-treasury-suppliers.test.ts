@@ -26,18 +26,42 @@ test("treasury export handles validation in the UI and preserves supplier detail
   assert.doesNotMatch(panel, /href=\{`\/api\/payment-template/);
   assert.match(template, /supplierName/);
   assert.match(template, /account_holder_name/);
+  assert.match(template, /getAssignedPaymentBeneficiaries/);
+  assert.match(template, /payment_beneficiary_source/);
   assert.match(template, /styledTextCell/);
   assert.match(template, /columnStyle/);
   assert.match(template, /ya esta en nomina activa/);
   assert.match(route, /Errores nomina Santander\.csv/);
   assert.match(route, /x-erp-request/);
   assert.match(payables, /getPayableCandidatesResult/);
+  assert.match(payables, /applyAssignedPaymentBeneficiaries/);
   assert.match(payables, /proveedor sin enlace/);
   assert.match(payables, /diagnostics/);
   assert.match(payables, /legacySelect/);
   assert.match(migration, /add column if not exists source_type/);
   assert.match(migration, /included_in_batch_at/);
   assert.match(manualRoute, /source_type: "manual"/);
+});
+
+test("payment beneficiary catalog is safe, auditable and keeps Santander template shape", async () => {
+  const migration = await readFile("supabase/migrations/202605150024_payment_beneficiaries.sql", "utf8");
+  const catalogRoute = await readFile("src/app/api/payment-beneficiaries/route.ts", "utf8");
+  const assignmentRoute = await readFile("src/app/api/suppliers/[id]/payment-beneficiary/route.ts", "utf8");
+  const suppliersUi = await readFile("src/components/suppliers/supplier-profile-directory.tsx", "utf8");
+  assert.match(migration, /create table if not exists public\.payment_beneficiaries/);
+  assert.match(migration, /create table if not exists public\.supplier_payment_beneficiary_links/);
+  assert.match(migration, /create unique index if not exists supplier_payment_beneficiary_one_active_idx/);
+  assert.doesNotMatch(migration, /\bdrop\b/i);
+  assert.match(catalogRoute, /payment_beneficiary\.upserted/);
+  assert.match(assignmentRoute, /supplier\.payment_beneficiary_assigned/);
+  assert.match(assignmentRoute, /supplier\.payment_beneficiary_removed/);
+  assert.match(assignmentRoute, /beneficiary_incomplete_for_payment/);
+  assert.match(assignmentRoute, /beneficiario_anterior/);
+  assert.match(assignmentRoute, /beneficiario_nuevo/);
+  assert.match(suppliersUi, /Asignar otra cuenta bancaria/);
+  assert.match(suppliersUi, /Factura emitida por/);
+  assert.match(suppliersUi, /Guardar beneficiario/);
+  assert.match(suppliersUi, /Quitar asignacion y volver a cuenta propia/);
 });
 
 test("official Santander template keeps columns through provider code", () => {

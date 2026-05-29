@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Plus } from "lucide-react";
+import { useMemo, useState, type FormEvent } from "react";
+import { Link2, Plus, Search, X } from "lucide-react";
 import { formatClp } from "@/lib/dte/purchases-data";
-import { paymentMissingFields, type SupplierPaymentProfile } from "@/lib/suppliers/supabase-profiles";
+import { paymentMissingFields, type PaymentBeneficiaryAssignment, type SupplierPaymentProfile } from "@/lib/suppliers/supabase-profiles";
 
 function text(value: string) { return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(); }
 function withPaymentState(profile: SupplierPaymentProfile) {
@@ -11,8 +11,10 @@ function withPaymentState(profile: SupplierPaymentProfile) {
   return { ...profile, missingPaymentFields, paymentReady: missingPaymentFields.length === 0 };
 }
 function blankProfile(): SupplierPaymentProfile {
-  return { accountHolderName: "", accountHolderRut: "", accountNumber: "", accountType: "", address: "", bankAccountId: null, bankCode: "", bankName: "", category: "", city: "", commercialEmail: "", commune: "", contactName: "", email: "", giro: "", id: "new", invoices: [], legalName: "", missingPaymentFields: ["RUT", "razon social", "banco", "codigo banco", "tipo de cuenta", "numero de cuenta", "email de pagos"], observations: "", overdue: 0, paymentEmail: "", paymentReady: false, paymentTermsDays: 30, paymentTermsLabel: "", pending: 0, phone: "", rut: "", source: "manual", status: "draft", tradeName: "" };
+  return { accountHolderName: "", accountHolderRut: "", accountNumber: "", accountType: "", address: "", assignedPaymentBeneficiary: null, bankAccountId: null, bankCode: "", bankName: "", category: "", city: "", commercialEmail: "", commune: "", contactName: "", email: "", giro: "", id: "new", invoices: [], legalName: "", missingPaymentFields: ["RUT", "razon social", "banco", "codigo banco", "tipo de cuenta", "numero de cuenta", "email de pagos"], observations: "", overdue: 0, paymentEmail: "", paymentReady: false, paymentTermsDays: 30, paymentTermsLabel: "", pending: 0, phone: "", rut: "", source: "manual", status: "draft", tradeName: "" };
 }
+
+type BeneficiaryOption = Omit<PaymentBeneficiaryAssignment, "reason">;
 
 export function SupplierProfileDirectory({ initialSelectedId, initialSuppliers }: { initialSelectedId?: string; initialSuppliers: SupplierPaymentProfile[] }) {
   const [suppliers, setSuppliers] = useState(initialSuppliers);
@@ -23,6 +25,12 @@ export function SupplierProfileDirectory({ initialSelectedId, initialSuppliers }
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [beneficiaryModalOpen, setBeneficiaryModalOpen] = useState(false);
+  const [beneficiaryQuery, setBeneficiaryQuery] = useState("");
+  const [beneficiaries, setBeneficiaries] = useState<BeneficiaryOption[]>([]);
+  const [selectedBeneficiary, setSelectedBeneficiary] = useState<BeneficiaryOption | null>(null);
+  const [beneficiaryReason, setBeneficiaryReason] = useState("");
+  const [creatingBeneficiary, setCreatingBeneficiary] = useState(false);
   const selected = suppliers.find((supplier) => supplier.id === selectedId) ?? suppliers[0];
   const [draft, setDraft] = useState<SupplierPaymentProfile | null>(selected ?? null);
   const filtered = useMemo(() => suppliers.filter((supplier) => {
@@ -51,6 +59,80 @@ export function SupplierProfileDirectory({ initialSelectedId, initialSuppliers }
     setMessage(response.ok ? `Datos reparados desde maestro: ${body?.suppliersCompleted ?? 0} fichas, ${body?.bankProfilesCompleted ?? 0} cuentas bancarias.` : "No se pudo reparar desde maestro.");
     if (response.ok) window.location.reload();
   }
+  async function searchBeneficiaries(query = beneficiaryQuery) {
+    setBusy(true); setMessage("");
+    const response = await fetch(`/api/payment-beneficiaries?q=${encodeURIComponent(query)}`);
+    const body = await response.json().catch(() => null);
+    setBeneficiaries(response.ok ? body?.beneficiaries ?? [] : []);
+    setMessage(response.ok ? "" : "No se pudo buscar beneficiarios de pago.");
+    setBusy(false);
+  }
+  function openBeneficiaryModal() {
+    setBeneficiaryModalOpen(true);
+    setSelectedBeneficiary(null);
+    setBeneficiaryReason(shown?.assignedPaymentBeneficiary?.reason ?? "");
+    void searchBeneficiaries("");
+  }
+  function beneficiaryComplete(beneficiary: BeneficiaryOption) {
+    return Boolean(beneficiary.status === "active" && beneficiary.name && beneficiary.rut && beneficiary.bankName && beneficiary.bankCode && beneficiary.accountType && beneficiary.accountNumber && beneficiary.paymentEmail);
+  }
+  async function assignBeneficiary() {
+    if (!shown || !selectedBeneficiary || !beneficiaryComplete(selectedBeneficiary)) return;
+    setBusy(true); setMessage("");
+    const response = await fetch(`/api/suppliers/${shown.id}/payment-beneficiary`, {
+      body: JSON.stringify({ beneficiaryId: selectedBeneficiary.id, reason: beneficiaryReason }),
+      headers: { "content-type": "application/json" },
+      method: "PUT"
+    });
+    const body = await response.json().catch(() => null);
+    setBusy(false);
+    if (!response.ok) {
+      setMessage(body?.error ?? "No se pudo asignar beneficiario.");
+      return;
+    }
+    window.location.reload();
+  }
+  async function createBeneficiary(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setBusy(true); setMessage("");
+    const response = await fetch("/api/payment-beneficiaries", {
+      body: JSON.stringify({
+        accountNumber: String(form.get("accountNumber") ?? ""),
+        accountType: String(form.get("accountType") ?? ""),
+        bankCode: String(form.get("bankCode") ?? ""),
+        bankName: String(form.get("bankName") ?? ""),
+        name: String(form.get("name") ?? ""),
+        observation: String(form.get("observation") ?? ""),
+        paymentEmail: String(form.get("paymentEmail") ?? ""),
+        rut: String(form.get("rut") ?? ""),
+        status: "active"
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+    const body = await response.json().catch(() => null);
+    setBusy(false);
+    if (!response.ok) {
+      setMessage(body?.error ?? "No se pudo crear beneficiario.");
+      return;
+    }
+    setBeneficiaries((items) => [body.beneficiary, ...items.filter((item) => item.id !== body.beneficiary.id)]);
+    setSelectedBeneficiary(body.beneficiary);
+    setCreatingBeneficiary(false);
+  }
+  async function removeBeneficiary() {
+    if (!shown) return;
+    setBusy(true); setMessage("");
+    const response = await fetch(`/api/suppliers/${shown.id}/payment-beneficiary`, { method: "DELETE" });
+    const body = await response.json().catch(() => null);
+    setBusy(false);
+    if (!response.ok) {
+      setMessage(body?.error ?? "No se pudo quitar beneficiario.");
+      return;
+    }
+    window.location.reload();
+  }
   function field<K extends keyof SupplierPaymentProfile>(key: K, value: SupplierPaymentProfile[K]) { setDraft((current) => current ? withPaymentState({ ...current, [key]: value }) : current); }
   const missing = draft?.missingPaymentFields ?? selected?.missingPaymentFields ?? [];
   const shown = draft ?? selected;
@@ -61,11 +143,13 @@ export function SupplierProfileDirectory({ initialSelectedId, initialSuppliers }
       <div className="max-h-[820px] divide-y divide-[#f0e5df] overflow-auto">{filtered.map((supplier) => <button className={`grid w-full gap-2 p-4 text-left md:grid-cols-[1fr_0.45fr] ${supplier.id === selected?.id && !creating ? "bg-brand-50" : ""}`} key={supplier.id} onClick={() => choose(supplier)} type="button"><div><p className="font-semibold text-brand-900">{supplier.legalName}</p><p className="text-sm text-[#6f6263]">{supplier.rut} / {supplier.bankName || "sin banco"}</p></div><div className="text-right"><p className="font-semibold">{formatClp(supplier.pending)}</p><p className={`text-xs font-semibold ${supplier.paymentReady ? "text-emerald-700" : "text-amber-800"}`}>{supplier.paymentReady ? "Apto para pago" : `Falta ${supplier.missingPaymentFields.join(", ")}`}</p></div></button>)}</div>
     </div>
     {shown ? <aside className="rounded-lg border border-[#eadfd9] bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs uppercase text-brand-700">{creating ? "Nueva ficha proveedor" : "Ficha editable"}</p><h2 className="mt-1 text-xl font-semibold text-brand-900">{shown.legalName || "Proveedor nuevo"}</h2><p className="text-sm text-[#6f6263]">Origen {shown.source} / {shown.rut || "RUT pendiente"}</p></div><div className="flex flex-wrap gap-2">{editing ? <><button className="rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white" disabled={busy} onClick={save} type="button">Guardar</button><button className="rounded-md border px-3 py-2 text-sm" onClick={() => { setDraft(selected ?? null); setCreating(false); setEditing(false); }} type="button">Cancelar</button></> : <><button className="rounded-md border px-3 py-2 text-sm font-semibold" disabled={busy} onClick={repairFromMaster} type="button">Reparar datos proveedor desde maestro</button><button className="rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white" onClick={() => setEditing(true)} type="button">Editar</button></>}</div></div>
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs uppercase text-brand-700">{creating ? "Nueva ficha proveedor" : "Ficha editable"}</p><h2 className="mt-1 text-xl font-semibold text-brand-900">{shown.legalName || "Proveedor nuevo"}</h2><p className="text-sm text-[#6f6263]">Origen {shown.source} / {shown.rut || "RUT pendiente"}</p></div><div className="flex flex-wrap gap-2">{editing ? <><button className="rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white" disabled={busy} onClick={save} type="button">Guardar</button><button className="rounded-md border px-3 py-2 text-sm" onClick={() => { setDraft(selected ?? null); setCreating(false); setEditing(false); }} type="button">Cancelar</button></> : <><button className="rounded-md border px-3 py-2 text-sm font-semibold" disabled={busy} onClick={repairFromMaster} type="button">Reparar datos proveedor desde maestro</button><button className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" disabled={creating || busy} onClick={openBeneficiaryModal} type="button"><Link2 className="mr-1 inline h-4 w-4" />Asignar otra cuenta bancaria</button><button className="rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white" onClick={() => setEditing(true)} type="button">Editar</button></>}</div></div>
       {message ? <p className="mt-3 rounded-md bg-brand-50 p-2 text-sm text-brand-900">{message}</p> : null}
       <p className={`mt-4 rounded-md p-3 text-sm ${missing.length ? "bg-amber-50 text-amber-950" : "bg-emerald-50 text-emerald-800"}`}>{missing.length ? `Faltan datos para pago: ${missing.join(", ")}.` : "Proveedor apto para exportacion Santander."}</p>
+      {shown.assignedPaymentBeneficiary ? <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><p className="font-semibold">Factura emitida por {shown.legalName} - pago enviado a {shown.assignedPaymentBeneficiary.name}</p><p className="mt-1">{shown.assignedPaymentBeneficiary.rut} / {shown.assignedPaymentBeneficiary.bankName} / {shown.assignedPaymentBeneficiary.accountNumber}</p><p className="mt-1">Motivo: {shown.assignedPaymentBeneficiary.reason || "Sin motivo registrado"}</p><button className="mt-2 rounded-md border border-amber-700 px-3 py-2 text-xs font-semibold text-amber-800" disabled={busy} onClick={removeBeneficiary} type="button">Quitar asignacion y volver a cuenta propia</button></div> : null}
       <div className="mt-4 grid gap-3 sm:grid-cols-2">{([["rut", "RUT"], ["legalName", "Razon social facturador"], ["tradeName", "Nombre comercial"], ["giro", "Giro"], ["address", "Direccion"], ["commune", "Comuna"], ["city", "Ciudad"], ["contactName", "Contacto"], ["phone", "Telefono"], ["paymentEmail", "Email pagos"], ["commercialEmail", "Email comercial"], ["bankName", "Banco"], ["bankCode", "Codigo banco"], ["accountType", "Tipo cuenta"], ["accountNumber", "Numero cuenta"], ["accountHolderName", "Beneficiario de pago / Pagar a"], ["accountHolderRut", "RUT beneficiario"], ["paymentTermsLabel", "Condicion pago"], ["category", "Categoria"], ["observations", "Observaciones"]] as Array<[keyof SupplierPaymentProfile, string]>).map(([key, label]) => <label className={key === "observations" ? "sm:col-span-2" : ""} key={key}><span className="text-xs text-[#6f6263]">{label}</span>{key === "observations" ? <textarea className="mt-1 w-full rounded-md border p-2 text-sm" disabled={!editing} onChange={(event) => field(key, event.target.value)} value={String(shown[key] ?? "")} /> : <input className="mt-1 w-full rounded-md border p-2 text-sm disabled:bg-[#fbf7f4]" disabled={!editing || (key === "rut" && !creating)} onChange={(event) => field(key, event.target.value)} value={String(shown[key] ?? "")} />}</label>)}<label><span className="text-xs text-[#6f6263]">Dias credito</span><input className="mt-1 w-full rounded-md border p-2 text-sm" disabled={!editing} onChange={(event) => field("paymentTermsDays", Number(event.target.value))} type="number" value={shown.paymentTermsDays} /></label><label><span className="text-xs text-[#6f6263]">Estado</span><select className="mt-1 w-full rounded-md border p-2 text-sm" disabled={!editing} onChange={(event) => field("status", event.target.value)} value={shown.status}><option value="active">Activo</option><option value="draft">Incompleto</option><option value="blocked">Bloqueado</option><option value="archived">Archivado</option></select></label></div>
       {!creating ? <div className="mt-5"><h3 className="font-semibold text-brand-900">Facturas asociadas</h3><div className="mt-2 max-h-44 overflow-auto">{shown.invoices.slice(0, 20).map((invoice) => <div className="flex justify-between border-t py-2 text-sm" key={invoice.folio}><span>{invoice.folio} / {invoice.date} / {invoice.status}</span><b>{formatClp(invoice.total)}</b></div>)}</div><a className="mt-3 inline-block text-sm font-semibold text-brand-700 hover:underline" href={`/auditoria?query=${encodeURIComponent(shown.id)}`}>Ver historial auditado</a></div> : null}
+      {beneficiaryModalOpen ? <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 p-4"><div className="max-h-[88vh] w-full max-w-4xl overflow-auto rounded-lg bg-white p-5 shadow-2xl"><div className="flex items-start justify-between gap-3"><div><h3 className="text-lg font-semibold text-brand-900">Asignar otra cuenta bancaria</h3><p className="mt-1 text-sm text-[#6f6263]">Seleccione un beneficiario validado. La factura mantiene su proveedor facturador original.</p></div><button className="rounded-md border p-2" onClick={() => setBeneficiaryModalOpen(false)} type="button"><X className="h-4 w-4" /></button></div><div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto_auto]"><label><span className="flex items-center gap-2 text-sm font-medium text-[#6f6263]"><Search className="h-4 w-4" />Buscar beneficiario</span><input className="mt-1 w-full rounded-md border p-2 text-sm" onChange={(event) => setBeneficiaryQuery(event.target.value)} placeholder="Nombre o RUT" value={beneficiaryQuery} /></label><button className="self-end rounded-md border px-3 py-2 text-sm font-semibold" disabled={busy} onClick={() => searchBeneficiaries()} type="button">Buscar</button><button className="self-end rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" onClick={() => setCreatingBeneficiary((value) => !value)} type="button"><Plus className="mr-1 inline h-4 w-4" />Nuevo</button></div>{creatingBeneficiary ? <form className="mt-4 rounded-md border border-brand-100 bg-[#fbf7f4] p-3" onSubmit={createBeneficiary}><div className="grid gap-3 md:grid-cols-2"><input className="rounded-md border p-2 text-sm" name="name" placeholder="Nombre beneficiario" required /><input className="rounded-md border p-2 text-sm" name="rut" placeholder="RUT beneficiario" required /><input className="rounded-md border p-2 text-sm" name="bankName" placeholder="Banco" required /><input className="rounded-md border p-2 text-sm" name="bankCode" placeholder="Codigo banco" required /><input className="rounded-md border p-2 text-sm" name="accountType" placeholder="Tipo cuenta" required /><input className="rounded-md border p-2 text-sm" name="accountNumber" placeholder="Numero cuenta" required /><input className="rounded-md border p-2 text-sm" name="paymentEmail" placeholder="Email pago" required type="email" /><input className="rounded-md border p-2 text-sm" name="observation" placeholder="Observacion" /></div><div className="mt-3 flex justify-end"><button className="rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white" disabled={busy} type="submit">Guardar beneficiario</button></div></form> : null}<div className="mt-4 max-h-64 divide-y overflow-auto rounded-md border">{beneficiaries.map((beneficiary) => { const complete = beneficiaryComplete(beneficiary); return <button className={`grid w-full gap-2 p-3 text-left md:grid-cols-[1fr_0.75fr] ${selectedBeneficiary?.id === beneficiary.id ? "bg-brand-50" : ""}`} disabled={!complete} key={beneficiary.id} onClick={() => setSelectedBeneficiary(beneficiary)} type="button"><div><p className="font-semibold text-brand-900">{beneficiary.name}</p><p className="text-xs text-[#6f6263]">{beneficiary.rut} / {beneficiary.paymentEmail || "sin email"}</p></div><div><p className="text-sm">{beneficiary.bankName} / {beneficiary.bankCode}</p><p className={complete ? "text-xs text-emerald-700" : "text-xs text-amber-800"}>{complete ? `${beneficiary.accountType} ${beneficiary.accountNumber}` : "Beneficiario incompleto"}</p></div></button>; })}{!beneficiaries.length ? <p className="p-4 text-sm text-[#6f6263]">Sin beneficiarios para la busqueda.</p> : null}</div>{selectedBeneficiary ? <div className="mt-4 rounded-md border border-brand-100 bg-brand-50 p-3 text-sm text-brand-900"><p className="font-semibold">Factura emitida por {shown.legalName} - pago enviado a {selectedBeneficiary.name}</p><p className="mt-1">{selectedBeneficiary.rut} / {selectedBeneficiary.bankName} / {selectedBeneficiary.accountNumber}</p></div> : null}<label className="mt-4 block"><span className="text-sm font-medium text-[#6f6263]">Motivo / asociacion</span><textarea className="mt-1 w-full rounded-md border p-2 text-sm" onChange={(event) => setBeneficiaryReason(event.target.value)} placeholder="Ej: FAST GAS autoriza pago a Patricio Ortega" value={beneficiaryReason} /></label><div className="mt-4 flex flex-wrap justify-end gap-2"><button className="rounded-md border px-3 py-2 text-sm" onClick={() => setBeneficiaryModalOpen(false)} type="button">Cancelar</button><button className="rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60" disabled={!selectedBeneficiary || !beneficiaryComplete(selectedBeneficiary) || busy} onClick={assignBeneficiary} type="button">Confirmar asignacion</button></div></div></div> : null}
     </aside> : null}
   </section>;
 }
