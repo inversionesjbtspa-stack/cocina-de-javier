@@ -4,9 +4,22 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 const assignmentSchema = z.object({
-  beneficiaryId: z.string().uuid(),
+  beneficiary: z.object({
+    accountNumber: z.string().trim().min(3).max(80),
+    accountType: z.string().trim().min(2).max(80),
+    bankCode: z.string().trim().min(1).max(40),
+    bankName: z.string().trim().min(2).max(160),
+    name: z.string().trim().min(2).max(240),
+    observation: z.string().trim().max(1000).optional().default(""),
+    paymentEmail: z.string().trim().email().or(z.literal("")),
+    rut: z.string().trim().regex(/^[0-9]+-[0-9kK]$/),
+    source: z.string().trim().optional().default("beneficiary"),
+    sourceId: z.string().trim().optional().default(""),
+    status: z.enum(["active", "inactive"]).default("active")
+  }).optional(),
+  beneficiaryId: z.string().uuid().optional(),
   reason: z.string().trim().max(1000).optional().default("")
-});
+}).refine((value) => value.beneficiaryId || value.beneficiary, { message: "beneficiary_required" });
 
 const roles = ["owner", "admin", "finance_manager", "procurement_manager"];
 
@@ -64,12 +77,31 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     .eq("tenant_id", ctx.membership.tenant_id)
     .single();
   if (!supplier) return NextResponse.json({ ok: false, error: "supplier_not_found" }, { status: 404 });
-  const { data: beneficiary, error: beneficiaryError } = await supabase
-    .from("payment_beneficiaries")
-    .select("id,name,rut,bank_name,bank_code,account_type,account_number,payment_email,status")
-    .eq("id", body.data.beneficiaryId)
-    .eq("tenant_id", ctx.membership.tenant_id)
-    .single();
+  const beneficiaryQuery = body.data.beneficiaryId
+    ? supabase
+      .from("payment_beneficiaries")
+      .select("id,name,rut,bank_name,bank_code,account_type,account_number,payment_email,status")
+      .eq("id", body.data.beneficiaryId)
+      .eq("tenant_id", ctx.membership.tenant_id)
+      .single()
+    : supabase
+      .from("payment_beneficiaries")
+      .upsert({
+        account_number: body.data.beneficiary!.accountNumber,
+        account_type: body.data.beneficiary!.accountType,
+        bank_code: body.data.beneficiary!.bankCode,
+        bank_name: body.data.beneficiary!.bankName,
+        created_by: ctx.user.id,
+        name: body.data.beneficiary!.name,
+        observation: body.data.beneficiary!.observation || null,
+        payment_email: body.data.beneficiary!.paymentEmail || null,
+        rut: body.data.beneficiary!.rut,
+        status: body.data.beneficiary!.status,
+        tenant_id: ctx.membership.tenant_id
+      }, { onConflict: "tenant_id,rut,bank_code,account_number" })
+      .select("id,name,rut,bank_name,bank_code,account_type,account_number,payment_email,status")
+      .single();
+  const { data: beneficiary, error: beneficiaryError } = await beneficiaryQuery;
   if (beneficiaryError || !beneficiary) return NextResponse.json({ ok: false, error: "beneficiary_not_found" }, { status: 404 });
   if (!beneficiaryComplete(beneficiary)) return NextResponse.json({ ok: false, error: "beneficiary_incomplete_for_payment" }, { status: 422 });
   const { data: activeLinks } = await supabase
@@ -115,6 +147,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       motivo: body.data.reason || null,
       payment_beneficiary_new: auditBeneficiary(beneficiary),
       payment_beneficiary_previous: auditBeneficiary(previousBeneficiary as Record<string, unknown> | null),
+      payment_beneficiary_source: body.data.beneficiary?.source ?? "payment_beneficiaries",
+      payment_beneficiary_source_id: body.data.beneficiary?.sourceId ?? body.data.beneficiaryId ?? null,
       proveedor_facturador: supplier.legal_name,
       rut_facturador: supplier.rut
     },

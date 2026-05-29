@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { candidateFromBeneficiary, candidateFromSupplier, masterCandidates, mergeCandidates } from "@/lib/suppliers/payment-beneficiary-candidates";
 
 const beneficiarySchema = z.object({
   accountNumber: z.string().trim().min(3).max(80),
@@ -27,6 +28,26 @@ async function context() {
 }
 
 function toApi(row: Record<string, unknown>) {
+  return candidateFromBeneficiary(row);
+}
+
+function toDbPayload(body: z.infer<typeof beneficiarySchema>, tenantId: string, userId: string) {
+  return {
+    account_number: body.accountNumber,
+    account_type: body.accountType,
+    bank_code: body.bankCode,
+    bank_name: body.bankName,
+    created_by: userId,
+    name: body.name,
+    observation: body.observation || null,
+    payment_email: body.paymentEmail || null,
+    rut: body.rut,
+    status: body.status,
+    tenant_id: tenantId
+  };
+}
+
+function legacyApi(row: Record<string, unknown>) {
   return {
     accountNumber: String(row.account_number ?? ""),
     accountType: String(row.account_type ?? ""),
@@ -44,18 +65,32 @@ function toApi(row: Record<string, unknown>) {
 export async function GET(request: Request) {
   const ctx = await context();
   if (ctx.error) return ctx.error;
-  const query = new URL(request.url).searchParams.get("q")?.trim() ?? "";
+  const query = (new URL(request.url).searchParams.get("q")?.trim() ?? "").replace(/[%,()]/g, " ");
   const supabase = createAdminClient();
-  let builder = supabase
+  let beneficiaryBuilder = supabase
     .from("payment_beneficiaries")
     .select("id,name,rut,bank_name,bank_code,account_type,account_number,payment_email,observation,status")
     .eq("tenant_id", ctx.membership.tenant_id)
     .order("name")
     .limit(80);
-  if (query) builder = builder.or(`name.ilike.%${query}%,rut.ilike.%${query}%`);
-  const { data, error } = await builder;
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  return NextResponse.json({ beneficiaries: (data ?? []).map((row) => toApi(row)), ok: true });
+  if (query) beneficiaryBuilder = beneficiaryBuilder.or(`name.ilike.%${query}%,rut.ilike.%${query}%,payment_email.ilike.%${query}%`);
+  const supplierQuery = supabase
+    .from("suppliers")
+    .select("id,rut,legal_name,trade_name,email,commercial_email,payment_email,phone,observations,supplier_bank_accounts(bank_name,bank_code,account_type,account_number,account_holder_name,account_holder_rut,status)")
+    .eq("tenant_id", ctx.membership.tenant_id)
+    .limit(80);
+  const supplierBuilder = query
+    ? supplierQuery.or(`legal_name.ilike.%${query}%,trade_name.ilike.%${query}%,rut.ilike.%${query}%,email.ilike.%${query}%,payment_email.ilike.%${query}%,commercial_email.ilike.%${query}%`)
+    : supplierQuery;
+  const [beneficiaries, suppliers] = await Promise.all([beneficiaryBuilder, supplierBuilder]);
+  if (beneficiaries.error) return NextResponse.json({ ok: false, error: beneficiaries.error.message }, { status: 500 });
+  if (suppliers.error) return NextResponse.json({ ok: false, error: suppliers.error.message }, { status: 500 });
+  const merged = mergeCandidates([
+    ...masterCandidates(query),
+    ...((suppliers.data ?? []) as Parameters<typeof candidateFromSupplier>[0][]).map(candidateFromSupplier),
+    ...(beneficiaries.data ?? []).map((row) => toApi(row as Record<string, unknown>))
+  ]);
+  return NextResponse.json({ beneficiaries: merged, ok: true });
 }
 
 export async function POST(request: Request) {
@@ -67,26 +102,14 @@ export async function POST(request: Request) {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("payment_beneficiaries")
-    .upsert({
-      account_number: body.accountNumber,
-      account_type: body.accountType,
-      bank_code: body.bankCode,
-      bank_name: body.bankName,
-      created_by: ctx.user.id,
-      name: body.name,
-      observation: body.observation || null,
-      payment_email: body.paymentEmail || null,
-      rut: body.rut,
-      status: body.status,
-      tenant_id: ctx.membership.tenant_id
-    }, { onConflict: "tenant_id,rut,bank_code,account_number" })
+    .upsert(toDbPayload(body, ctx.membership.tenant_id, ctx.user.id), { onConflict: "tenant_id,rut,bank_code,account_number" })
     .select("id,name,rut,bank_name,bank_code,account_type,account_number,payment_email,observation,status")
     .single();
   if (error || !data) return NextResponse.json({ ok: false, error: error?.message ?? "beneficiary_save_failed" }, { status: 422 });
   await supabase.from("audit_events").insert({
     actor_role: ctx.membership.role,
     actor_user_id: ctx.user.id,
-    after_data: toApi(data),
+    after_data: legacyApi(data),
     company_id: ctx.membership.company_id,
     entity_id: data.id,
     entity_type: "payment_beneficiary",

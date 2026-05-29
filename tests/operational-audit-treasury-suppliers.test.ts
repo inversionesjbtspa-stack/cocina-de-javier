@@ -47,21 +47,36 @@ test("payment beneficiary catalog is safe, auditable and keeps Santander templat
   const migration = await readFile("supabase/migrations/202605150024_payment_beneficiaries.sql", "utf8");
   const catalogRoute = await readFile("src/app/api/payment-beneficiaries/route.ts", "utf8");
   const assignmentRoute = await readFile("src/app/api/suppliers/[id]/payment-beneficiary/route.ts", "utf8");
+  const completeRoute = await readFile("src/app/api/suppliers/[id]/complete-from-master/route.ts", "utf8");
   const suppliersUi = await readFile("src/components/suppliers/supplier-profile-directory.tsx", "utf8");
+  const treasuryUi = await readFile("src/components/payments/payment-nomina-panel.tsx", "utf8");
   assert.match(migration, /create table if not exists public\.payment_beneficiaries/);
   assert.match(migration, /create table if not exists public\.supplier_payment_beneficiary_links/);
   assert.match(migration, /create unique index if not exists supplier_payment_beneficiary_one_active_idx/);
   assert.doesNotMatch(migration, /\bdrop\b/i);
   assert.match(catalogRoute, /payment_beneficiary\.upserted/);
+  assert.match(catalogRoute, /masterCandidates/);
+  assert.match(catalogRoute, /candidateFromSupplier/);
   assert.match(assignmentRoute, /supplier\.payment_beneficiary_assigned/);
   assert.match(assignmentRoute, /supplier\.payment_beneficiary_removed/);
   assert.match(assignmentRoute, /beneficiary_incomplete_for_payment/);
+  assert.match(assignmentRoute, /beneficiaryId: z\.string\(\)\.uuid\(\)\.optional/);
+  assert.match(completeRoute, /supplier\.completed_from_master/);
+  assert.match(completeRoute, /Solo se rellenan campos vacios|supplierChanges/);
   assert.match(assignmentRoute, /beneficiario_anterior/);
   assert.match(assignmentRoute, /beneficiario_nuevo/);
   assert.match(suppliersUi, /Asignar otra cuenta bancaria/);
+  assert.match(suppliersUi, /Completar desde maestro/);
+  assert.match(suppliersUi, /Se encontraron datos adicionales en Maestro JESUS/);
+  assert.match(suppliersUi, /Aplicar sugerencias/);
+  assert.match(suppliersUi, /Maestro JESUS/);
+  assert.match(suppliersUi, /Factura emitida por/);
+  assert.match(suppliersUi, /Se pagara a/);
   assert.match(suppliersUi, /Factura emitida por/);
   assert.match(suppliersUi, /Guardar beneficiario/);
   assert.match(suppliersUi, /Quitar asignacion y volver a cuenta propia/);
+  assert.match(treasuryUi, /Facturador \| Beneficiario/);
+  assert.match(treasuryUi, /paymentBeneficiaryName/);
 });
 
 test("official Santander template keeps columns through provider code", () => {
