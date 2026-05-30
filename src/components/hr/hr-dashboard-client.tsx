@@ -124,6 +124,42 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
     form.reset();
   }
 
+  async function saveNovelty(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const body = Object.fromEntries(new FormData(form).entries());
+    const response = await fetch("/api/hr/monthly-novelties", {
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      setMessage(payload?.error ?? "No se pudo guardar novedad mensual.");
+      return;
+    }
+    setMessage("Novedad mensual guardada sin duplicar trabajador + periodo + tipo.");
+    form.reset();
+  }
+
+  async function saveAccountantRow(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const body = Object.fromEntries(new FormData(form).entries());
+    const response = await fetch("/api/hr/accountant-data", {
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      setMessage(payload?.error ?? "No se pudo guardar Datos Sueldos.");
+      return;
+    }
+    setMessage("Datos Sueldos guardado para el periodo.");
+    form.reset();
+  }
+
   async function generatePayroll() {
     if (!paymentSelection.length) {
       setMessage("Selecciona pagos aprobados antes de exportar.");
@@ -234,6 +270,73 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
         </form>
       </article>
 
+      <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
+        <article className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm">
+          <h2 className="font-semibold text-brand-900">Novedades mensuales</h2>
+          <p className="mt-1 text-sm text-[#667068]">Registra inasistencias, bonos, anticipos, prestamos y finiquitos por trabajador y periodo.</p>
+          <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={saveNovelty}>
+            <select className="rounded-md border px-3 py-2 text-sm md:col-span-2" name="employeeId">{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.fullName}</option>)}</select>
+            <input className="rounded-md border px-3 py-2 text-sm" defaultValue={data.period} name="period" type="month" />
+            <select className="rounded-md border px-3 py-2 text-sm" name="type">
+              <option value="inasistencia">Inasistencia</option>
+              <option value="licencia">Licencia</option>
+              <option value="horas_extras">Horas extras</option>
+              <option value="recargo_domingo">Recargo domingo</option>
+              <option value="bono_compensatorio">Bono compensatorio</option>
+              <option value="bono_produccion">Bono produccion</option>
+              <option value="bono_responsabilidad">Bono responsabilidad</option>
+              <option value="aguinaldo">Aguinaldo</option>
+              <option value="anticipo">Anticipo</option>
+              <option value="prestamo_empresa">Prestamo empresa</option>
+              <option value="prestamo_ccaf">Prestamo caja / CCAF</option>
+              <option value="honorarios">Honorarios</option>
+              <option value="finiquito">Finiquito</option>
+              <option value="descuento">Descuento</option>
+              <option value="observacion">Observacion</option>
+            </select>
+            <input className="rounded-md border px-3 py-2 text-sm" name="quantity" placeholder="Dias / cantidad" type="number" step="0.01" />
+            <input className="rounded-md border px-3 py-2 text-sm" name="hours" placeholder="Horas" type="number" step="0.01" />
+            <input className="rounded-md border px-3 py-2 text-sm" name="amount" placeholder="Monto" type="number" />
+            <select className="rounded-md border px-3 py-2 text-sm" name="status"><option value="confirmada">Confirmada</option><option value="borrador">Borrador</option><option value="anulada">Anulada</option></select>
+            <input className="rounded-md border px-3 py-2 text-sm md:col-span-2" name="notes" placeholder="Observaciones" />
+            <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white md:col-span-2" type="submit">Guardar novedad</button>
+          </form>
+          <div className="mt-4 max-h-56 space-y-2 overflow-auto">
+            {data.monthlyNovelties.map((item) => <div className="rounded-md border p-3 text-sm" key={item.id}><p className="font-semibold">{item.employeeName} / {item.type}</p><p className="text-[#667068]">{item.period} / {item.status} / {formatClp(item.amount)}</p></div>)}
+          </div>
+        </article>
+
+        <article className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm">
+          <h2 className="font-semibold text-brand-900">Datos Sueldos</h2>
+          <p className="mt-1 text-sm text-[#667068]">Formato contador: NOMBRE, RUT, C. COSTO, inasistencias, motivo, horas extras, bonos, anticipos y prestamos.</p>
+          <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={saveAccountantRow}>
+            <input className="rounded-md border px-3 py-2 text-sm" defaultValue={data.period} name="period" type="month" />
+            <input className="rounded-md border px-3 py-2 text-sm md:col-span-2" name="fullName" placeholder="Nombre trabajador" required />
+            <input className="rounded-md border px-3 py-2 text-sm" name="rut" placeholder="RUT" required />
+            <input className="rounded-md border px-3 py-2 text-sm" name="costCenter" placeholder="C. costo" />
+            <input className="rounded-md border px-3 py-2 text-sm" name="absences" placeholder="Inasistencias" type="number" step="0.01" />
+            <input className="rounded-md border px-3 py-2 text-sm" name="licenses" placeholder="Licencias" type="number" step="0.01" />
+            <input className="rounded-md border px-3 py-2 text-sm" name="overtimeHours" placeholder="Horas extras" type="number" step="0.01" />
+            <input className="rounded-md border px-3 py-2 text-sm" name="productionBonus" placeholder="Bono produccion" type="number" />
+            <input className="rounded-md border px-3 py-2 text-sm" name="compensatoryBonus" placeholder="Bono compensatorio" type="number" />
+            <input className="rounded-md border px-3 py-2 text-sm" name="responsibilityBonus" placeholder="Bono responsabilidad" type="number" />
+            <input className="rounded-md border px-3 py-2 text-sm" name="aguinaldo" placeholder="Aguinaldo" type="number" />
+            <input className="rounded-md border px-3 py-2 text-sm" name="advances" placeholder="Anticipos" type="number" />
+            <input className="rounded-md border px-3 py-2 text-sm" name="companyLoan" placeholder="Prestamo empresa" type="number" />
+            <input className="rounded-md border px-3 py-2 text-sm" name="ccafLoan" placeholder="Prestamo caja" type="number" />
+            <input className="rounded-md border px-3 py-2 text-sm md:col-span-4" name="observations" placeholder="Observaciones" />
+            <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white md:col-span-2" type="submit">Guardar fila</button>
+            <a className="rounded-md border border-brand-700 px-4 py-2 text-center text-sm font-semibold text-brand-700 md:col-span-2" href={`/api/hr/accountant-data?period=${data.period}`}>Exportar Excel contador</a>
+          </form>
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-[760px] text-left text-xs">
+              <thead className="text-[#667068]"><tr><th className="py-2 pr-3">Trabajador</th><th className="py-2 pr-3">RUT</th><th className="py-2 pr-3">C. costo</th><th className="py-2 pr-3">HE</th><th className="py-2 pr-3">Bonos</th><th className="py-2 pr-3">Anticipos</th></tr></thead>
+              <tbody>{data.accountantRows.slice(0, 12).map((row) => <tr className="border-t" key={row.id}><td className="py-2 pr-3 font-medium">{row.fullName}</td><td className="py-2 pr-3">{row.rut}</td><td className="py-2 pr-3">{row.costCenter}</td><td className="py-2 pr-3">{row.overtimeHours}</td><td className="py-2 pr-3">{formatClp(row.productionBonus + row.compensatoryBonus + row.responsibilityBonus + row.aguinaldo)}</td><td className="py-2 pr-3">{formatClp(row.advances)}</td></tr>)}</tbody>
+            </table>
+          </div>
+        </article>
+      </div>
+
       <div className="grid gap-5 xl:grid-cols-3">
         <article className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm">
           <h2 className="font-semibold text-brand-900">Liquidaciones</h2>
@@ -251,10 +354,17 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
           <h2 className="font-semibold text-brand-900">Vacaciones y papeletas</h2>
           <form className="mt-4 space-y-3" onSubmit={(event) => submitJson(event, "/api/hr/vacations", "Vacaciones registradas.")}>
             <select className="w-full rounded-md border px-3 py-2 text-sm" name="employeeId">{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.fullName}</option>)}</select>
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="documentDate" type="date" defaultValue={today()} />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="contractPeriodStart" type="date" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="contractPeriodEnd" type="date" />
             <input className="w-full rounded-md border px-3 py-2 text-sm" name="startDate" type="date" required />
             <input className="w-full rounded-md border px-3 py-2 text-sm" name="endDate" type="date" required />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="progressiveDays" placeholder="Vacaciones progresivas" type="number" step="0.01" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="nonBusinessDays" placeholder="Domingos e inhabiles" type="number" step="0.01" />
             <select className="w-full rounded-md border px-3 py-2 text-sm" name="status"><option value="solicitada">Solicitada</option><option value="aprobada">Aprobada</option><option value="tomada">Tomada</option><option value="rechazada">Rechazada</option></select>
+            <label className="flex items-center gap-2 text-sm"><input name="fractionalVacation" type="checkbox" /> Feriado fraccionado</label>
             <input className="w-full rounded-md border px-3 py-2 text-sm" name="observation" placeholder="Observacion" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="note" placeholder="Nota comprobante" />
             <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" type="submit">Registrar vacaciones</button>
           </form>
           <div className="mt-5 space-y-2">{data.vacations.slice(0, 6).map((vacation) => <div className="rounded-md border p-3 text-sm" key={vacation.id}><p className="font-semibold">{vacation.employeeName}</p><p>{vacation.startDate} al {vacation.endDate} / {vacation.businessDays} dias</p><a className="mt-1 inline-flex items-center gap-1 font-semibold text-brand-700" href={`/api/hr/vacations/${vacation.id}/papeleta`} target="_blank"><Download className="h-3.5 w-3.5" /> Papeleta PDF</a></div>)}</div>
@@ -297,7 +407,17 @@ function EmployeeDetail({ employee, onSubmit }: { employee: HrEmployee; onSubmit
         </p>
       </div>
       <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={employee.fullName} name="fullName" placeholder="Nombre" />
+      <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={employee.position ?? ""} name="position" placeholder="Cargo" />
+      <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={employee.area ?? ""} name="area" placeholder="Area" />
+      <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={employee.costCenter ?? ""} name="costCenter" placeholder="Centro costo" />
+      <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={employee.baseSalary} name="salary" placeholder="Sueldo base" type="number" />
+      <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={employee.hireDate ?? ""} name="hireDate" type="date" />
       <select className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={employee.status} name="status"><option value="activo">Activo</option><option value="inactivo">Inactivo</option><option value="finiquitado">Finiquitado</option><option value="suspendido">Suspendido</option></select>
+      <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={employee.phone ?? ""} name="phone" placeholder="Telefono" />
+      <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={employee.personalEmail ?? ""} name="personalEmail" placeholder="Email personal" type="email" />
+      <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={employee.workEmail ?? ""} name="workEmail" placeholder="Email laboral" type="email" />
+      <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={employee.address ?? ""} name="address" placeholder="Direccion" />
+      <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={employee.commune ?? ""} name="commune" placeholder="Comuna / ciudad" />
       <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.bankName ?? ""} name="bankName" placeholder="Banco" />
       <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.bankCode ?? ""} name="bankCode" placeholder="Codigo banco" />
       <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.accountType ?? ""} name="tipoCuenta" placeholder="Tipo cuenta" />

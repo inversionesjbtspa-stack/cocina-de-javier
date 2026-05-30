@@ -40,6 +40,8 @@ export type AccountantRow = {
   fullName: string;
   rut: string;
   costCenter: string;
+  position: string;
+  baseSalary: number;
   absences: number;
   licenses: number;
   reason: string;
@@ -55,6 +57,7 @@ export type AccountantRow = {
   advances: number;
   companyLoan: number;
   ccafLoan: number;
+  discounts: number;
   observations: string;
   raw: Record<string, string | number>;
 };
@@ -208,6 +211,52 @@ function num(value: string | number | undefined) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+const columnLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+
+function normalizeHeader(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
+function excelColumn(index: number) {
+  let column = "";
+  let cursor = index + 1;
+  while (cursor > 0) {
+    const remainder = (cursor - 1) % 26;
+    column = String.fromCharCode(65 + remainder) + column;
+    cursor = Math.floor((cursor - 1) / 26);
+  }
+  return column;
+}
+
+function headerIndexes(headers: string[]) {
+  const used: Record<string, number> = {};
+  const find = (patterns: RegExp[], occurrence = 1) => {
+    let seen = 0;
+    for (let index = 0; index < headers.length; index += 1) {
+      if (patterns.some((pattern) => pattern.test(headers[index]))) {
+        seen += 1;
+        if (seen === occurrence) return index;
+      }
+    }
+    return -1;
+  };
+  const next = (key: string, patterns: RegExp[]) => {
+    used[key] = (used[key] ?? 0) + 1;
+    return find(patterns, used[key]);
+  };
+  return { find, next };
+}
+
+function rowByHeader(cells: Record<string, string>, index: number) {
+  if (index < 0) return "";
+  return cells[excelColumn(index)] ?? "";
+}
+
 export function parseAccountantWorkbook(buffer: Buffer): AccountantRow[] {
   const zip = new AdmZip(buffer);
   const strings = sharedStrings(zip);
@@ -217,37 +266,67 @@ export function parseAccountantWorkbook(buffer: Buffer): AccountantRow[] {
   for (const sheet of sheetNames.slice(0, 2)) {
     const xml = zip.getEntry(`xl/worksheets/sheet${sheet.id}.xml`)?.getData().toString("utf8");
     if (!xml) continue;
+    let headers: string[] = [];
     for (const rowMatch of xml.matchAll(/<row[^>]*r="(\d+)"[\s\S]*?<\/row>/g)) {
       const rowNumber = Number(rowMatch[1]);
-      if (rowNumber < 6) continue;
       const cells: Record<string, string> = {};
       for (const cell of rowMatch[0].matchAll(/<c r="([A-Z]+)\d+"[\s\S]*?<\/c>/g)) {
         cells[cell[1]] = cellValue(cell[0], strings);
       }
+      if (rowNumber <= 5) {
+        if (rowNumber === 5) {
+          headers = columnLetters.map((column) => normalizeHeader(cells[column] ?? ""));
+        }
+        continue;
+      }
       if (!cells.A || !cells.B) continue;
+      const map = headerIndexes(headers);
+      const absencesIndex = map.find([/^INASISTENCIAS$/]);
+      const licensesIndex = map.find([/^LICENCIAS$/]);
+      const reasonIndex = map.find([/^MOTIVO$/]);
+      const overtimeIndex = map.find([/^HORAS EXTRAS$/]);
+      const firstAguinaldoIndex = map.next("aguinaldo", [/^AGUINALDO$/]);
+      const secondAguinaldoIndex = map.next("aguinaldo", [/^AGUINALDO$/]);
+      const productionBonusIndex = map.find([/^BONO PRODUCCION$/]);
+      const firstCompIndex = map.next("compensatory", [/^BONO COMP/]);
+      const secondCompIndex = map.next("compensatory", [/^BONO COMP/]);
+      const sundayIndex = map.find([/^RECARGO DOMINGO$/]);
+      const responsibilityIndex = map.find([/^BONO RESPONSABILIDAD$/]);
+      const movilizationIndex = map.find([/^MOVILIZACION$/]);
+      const phoneIndex = map.find([/^ASIG\.? TELEFONO$/]);
+      const cashIndex = map.find([/^CAJA$/]);
+      const advancesIndex = map.find([/^ANTICIPOS$/]);
+      const advanceAguinaldoIndex = map.find([/^ANTICIPO AGUINALDO$/]);
+      const companyLoanIndex = map.find([/^PTMO EMPRESA$/, /^PRESTAMO EMPRESA$/]);
+      const ccafIndex = map.find([/^PRESTAMO CAJA$/]);
+      const lateAguinaldoIndex = map.find([/^AGUINALDO$/], 3);
+      const lateAdvanceAguinaldoIndex = map.find([/^ANTICIPO AGUINALDO$/], 2);
       rows.push({
-        absences: num(cells.D),
-        advances: num(cells.R) + num(cells.S) + num(cells.W),
-        aguinaldo: num(cells.H) + num(cells.I) + num(cells.V),
-        cashAllowance: num(cells.Q),
-        ccafLoan: num(cells.U),
-        compensatoryBonus: num(cells.K) + num(cells.L),
-        companyLoan: num(cells.T),
-        costCenter: cells.C ?? "",
+        absences: num(rowByHeader(cells, absencesIndex)),
+        advances: num(rowByHeader(cells, advancesIndex)) + num(rowByHeader(cells, advanceAguinaldoIndex)) + num(rowByHeader(cells, lateAdvanceAguinaldoIndex)),
+        aguinaldo: num(rowByHeader(cells, firstAguinaldoIndex)) + num(rowByHeader(cells, secondAguinaldoIndex)) + num(rowByHeader(cells, lateAguinaldoIndex)),
+        baseSalary: 0,
+        cashAllowance: num(rowByHeader(cells, cashIndex)),
+        ccafLoan: num(rowByHeader(cells, ccafIndex)),
+        compensatoryBonus: num(rowByHeader(cells, firstCompIndex)) + num(rowByHeader(cells, secondCompIndex)),
+        companyLoan: num(rowByHeader(cells, companyLoanIndex)),
+        costCenter: rowByHeader(cells, 2),
+        discounts: num(rowByHeader(cells, companyLoanIndex)) + num(rowByHeader(cells, ccafIndex)),
         fullName: cells.A,
-        licenses: num(cells.E),
-        movilization: num(cells.O),
+        licenses: num(rowByHeader(cells, licensesIndex)),
+        movilization: num(rowByHeader(cells, movilizationIndex)),
         observations: "",
-        overtimeHours: num(cells.G),
-        phoneAllowance: num(cells.P),
-        productionBonus: num(cells.J),
+        overtimeHours: num(rowByHeader(cells, overtimeIndex)),
+        phoneAllowance: num(rowByHeader(cells, phoneIndex)),
+        position: "",
+        productionBonus: num(rowByHeader(cells, productionBonusIndex)),
         raw: cells,
-        reason: cells.F ?? "",
-        responsibilityBonus: num(cells.N),
+        reason: rowByHeader(cells, reasonIndex),
+        responsibilityBonus: num(rowByHeader(cells, responsibilityIndex)),
         rowNumber,
         rut: cells.B,
         sheetName: sheet.name,
-        sundaySurcharge: num(cells.M)
+        sundaySurcharge: num(rowByHeader(cells, sundayIndex))
       });
     }
   }

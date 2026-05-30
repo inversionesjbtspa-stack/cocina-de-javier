@@ -112,11 +112,11 @@ export async function POST(request: Request) {
       glosa: row.glosa,
       payment_item_id: row.payableId,
       payment_type: (data ?? []).find((item) => item.id === row.payableId)?.payment_type ?? "otro",
-      status: "incluido_en_nomina",
+      status: "en_nomina",
       tenant_id: ctx.membership.tenant_id
     })));
   }
-  await supabase.from("hr_payment_items").update({ status: "incluido_en_nomina" }).in("id", rows.map((row) => row.payableId));
+  await supabase.from("hr_payment_items").update({ status: "en_nomina" }).in("id", rows.map((row) => row.payableId));
   await supabase.from("audit_events").insert({
     actor_role: ctx.membership.role,
     actor_user_id: ctx.user.id,

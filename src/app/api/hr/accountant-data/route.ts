@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import pg from "pg";
 import { requireHrContext } from "@/lib/hr/auth";
 import { generateAccountantWorkbook, type AccountantRow } from "@/lib/hr/payroll-parser";
+import { normalizeRut } from "@/lib/hr/utils";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -50,6 +52,32 @@ function rawValue(value: unknown): Record<string, string | number> {
   }
   return raw;
 }
+
+const rowSchema = z.object({
+  absences: z.coerce.number().min(0).optional().default(0),
+  advances: z.coerce.number().min(0).optional().default(0),
+  aguinaldo: z.coerce.number().min(0).optional().default(0),
+  cashAllowance: z.coerce.number().min(0).optional().default(0),
+  ccafLoan: z.coerce.number().min(0).optional().default(0),
+  compensatoryBonus: z.coerce.number().min(0).optional().default(0),
+  companyLoan: z.coerce.number().min(0).optional().default(0),
+  costCenter: z.string().trim().max(160).optional().default(""),
+  discounts: z.coerce.number().min(0).optional().default(0),
+  fullName: z.string().trim().min(2).max(240),
+  licenses: z.coerce.number().min(0).optional().default(0),
+  movilization: z.coerce.number().min(0).optional().default(0),
+  observations: z.string().trim().max(1000).optional().default(""),
+  overtimeHours: z.coerce.number().min(0).optional().default(0),
+  period: z.string().regex(/^\d{4}-\d{2}$/),
+  phoneAllowance: z.coerce.number().min(0).optional().default(0),
+  productionBonus: z.coerce.number().min(0).optional().default(0),
+  reason: z.string().trim().max(500).optional().default(""),
+  responsibilityBonus: z.coerce.number().min(0).optional().default(0),
+  rowNumber: z.coerce.number().int().min(1).optional().default(0),
+  rut: z.string().trim().min(7).max(14),
+  sheetName: z.string().trim().max(160).optional().default("LIBRO REMUNERACIONES"),
+  sundaySurcharge: z.coerce.number().min(0).optional().default(0)
+});
 
 export async function GET(request: Request) {
   const ctx = await requireHrContext();
@@ -110,17 +138,20 @@ export async function GET(request: Request) {
     absences: numberValue(row.absences),
     advances: numberValue(row.advances_amount ?? row.advances),
     aguinaldo: numberValue(row.aguinaldo_amount ?? row.aguinaldo),
+    baseSalary: numberValue(row.base_salary),
     cashAllowance: numberValue(row.cash_allowance_amount),
     ccafLoan: numberValue(row.ccaf_loan_amount),
     compensatoryBonus: numberValue(row.compensatory_bonus_amount ?? row.compensatory_bonus),
     companyLoan: numberValue(row.company_loan_amount),
     costCenter: textValue(row.cost_center),
+    discounts: numberValue(row.discounts),
     fullName: textValue(row.full_name ?? row.employee_name),
     licenses: numberValue(row.licenses),
     movilization: numberValue(row.movilization_amount),
     observations: textValue(row.observations ?? row.notes),
     overtimeHours: numberValue(row.overtime_hours),
     phoneAllowance: numberValue(row.phone_allowance_amount),
+    position: textValue(row.position),
     productionBonus: numberValue(row.production_bonus_amount),
     raw: rawValue(row.raw_row),
     reason: textValue(row.reason),
@@ -147,4 +178,74 @@ export async function GET(request: Request) {
       "X-HR-Accountant-Rows": String(rows.length)
     }
   });
+}
+
+export async function POST(request: Request) {
+  const ctx = await requireHrContext();
+  if (ctx.error) return ctx.error;
+  const parsed = rowSchema.safeParse(await request.json());
+  if (!parsed.success) {
+    return NextResponse.json({ ok: false, error: "hr_accountant_row_validation_failed", fields: parsed.error.flatten().fieldErrors }, { status: 422 });
+  }
+  const body = parsed.data;
+  const supabase = createAdminClient();
+  const rut = normalizeRut(body.rut);
+  const employee = await supabase
+    .from("hr_employees")
+    .select("id")
+    .eq("tenant_id", ctx.membership.tenant_id)
+    .eq("rut", rut)
+    .maybeSingle();
+
+  const payload = {
+    absences: body.absences,
+    advances_amount: body.advances,
+    aguinaldo_amount: body.aguinaldo,
+    cash_allowance_amount: body.cashAllowance,
+    ccaf_loan_amount: body.ccafLoan,
+    compensatory_bonus_amount: body.compensatoryBonus,
+    company_loan_amount: body.companyLoan,
+    cost_center: body.costCenter || null,
+    employee_id: employee.data?.id ?? null,
+    full_name: body.fullName,
+    licenses: body.licenses,
+    movilization_amount: body.movilization,
+    observations: body.observations || null,
+    overtime_hours: body.overtimeHours,
+    period: body.period,
+    phone_allowance_amount: body.phoneAllowance,
+    production_bonus_amount: body.productionBonus,
+    raw_row: body,
+    reason: body.reason || null,
+    responsibility_bonus_amount: body.responsibilityBonus,
+    row_number: body.rowNumber || null,
+    rut,
+    sheet_name: body.sheetName,
+    source_file: "manual_rrhh",
+    sunday_surcharge_amount: body.sundaySurcharge,
+    tenant_id: ctx.membership.tenant_id,
+    updated_by: ctx.user.id
+  };
+
+  const result = await supabase
+    .from("hr_accountant_data_rows")
+    .upsert({ ...payload, created_by: ctx.user.id }, { onConflict: "tenant_id,period,rut,sheet_name" })
+    .select("id")
+    .single();
+  if (result.error || !result.data) {
+    return NextResponse.json({ ok: false, error: result.error?.message ?? "hr_accountant_row_save_failed" }, { status: 422 });
+  }
+
+  await supabase.from("audit_events").insert({
+    actor_role: ctx.membership.role,
+    actor_user_id: ctx.user.id,
+    after_data: payload,
+    company_id: ctx.membership.company_id,
+    entity_id: result.data.id,
+    entity_type: "hr_accountant_data_row",
+    event_type: "hr.accountant_data_row_saved",
+    tenant_id: ctx.membership.tenant_id
+  });
+
+  return NextResponse.json({ ok: true, row: result.data });
 }

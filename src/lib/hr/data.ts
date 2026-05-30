@@ -93,9 +93,42 @@ export type HrPaymentBatch = {
   generatedAt: string;
 };
 
+export type HrAccountantDataRow = {
+  id: string;
+  period: string;
+  employeeId: string | null;
+  fullName: string;
+  rut: string;
+  costCenter: string | null;
+  absences: number;
+  licenses: number;
+  overtimeHours: number;
+  productionBonus: number;
+  compensatoryBonus: number;
+  responsibilityBonus: number;
+  aguinaldo: number;
+  advances: number;
+  observations: string | null;
+};
+
+export type HrMonthlyNovelty = {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  period: string;
+  type: string;
+  quantity: number;
+  hours: number;
+  amount: number;
+  status: string;
+  notes: string | null;
+};
+
 export type HrDashboardData = {
   period: string;
+  accountantRows: HrAccountantDataRow[];
   employees: HrEmployee[];
+  monthlyNovelties: HrMonthlyNovelty[];
   payslips: HrPayslip[];
   vacations: HrVacationRequest[];
   paymentItems: HrPaymentItem[];
@@ -219,6 +252,7 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
   const period = currentPeriod();
   if (!hasSupabaseAdminConfig()) {
     return {
+      accountantRows: [],
       employees: [],
       kpis: {
         activeEmployees: 0,
@@ -233,6 +267,7 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
         vacationPending: 0,
         vacationTaken: 0
       },
+      monthlyNovelties: [],
       paymentBatches: [],
       paymentItems: [],
       payslips: [],
@@ -242,7 +277,7 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
   }
 
   const supabase = createAdminClient();
-  const [{ data: employeeRows }, { data: payslipRows }, { data: vacationRows }, { data: paymentRows }, { data: batchRows }] = await Promise.all([
+  const [{ data: employeeRows }, { data: payslipRows }, { data: vacationRows }, { data: paymentRows }, { data: batchRows }, { data: accountantRows }, { data: noveltyRows }] = await Promise.all([
     supabase
       .from("hr_employees")
       .select("*,hr_employee_bank_accounts(id,bank_name,bank_code,account_type,account_number,payment_email,account_holder_name,account_holder_rut,validation_status)")
@@ -266,6 +301,18 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
       .from("hr_payment_batches")
       .select("id,period,payment_type,glosa_global,total_amount,total_employees,status,generated_at")
       .order("generated_at", { ascending: false })
+      .limit(20),
+    supabase
+      .from("hr_accountant_data_rows")
+      .select("id,period,employee_id,full_name,employee_name,rut,cost_center,absences,licenses,overtime_hours,production_bonus_amount,compensatory_bonus_amount,responsibility_bonus_amount,aguinaldo_amount,advances_amount,observations")
+      .eq("period", period)
+      .order("row_number", { ascending: true })
+      .limit(120),
+    supabase
+      .from("hr_monthly_novelties")
+      .select("id,employee_id,period,novelty_type,quantity,hours,amount,status,notes,hr_employees(full_name)")
+      .eq("period", period)
+      .order("created_at", { ascending: false })
       .limit(20)
   ]);
 
@@ -316,12 +363,42 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
     totalAmount: Number(row.total_amount ?? 0),
     totalEmployees: Number(row.total_employees ?? 0)
   }));
+  const accountantDataRows = (accountantRows ?? []).map((row) => ({
+    absences: Number(row.absences ?? 0),
+    advances: Number(row.advances_amount ?? 0),
+    aguinaldo: Number(row.aguinaldo_amount ?? 0),
+    compensatoryBonus: Number(row.compensatory_bonus_amount ?? 0),
+    costCenter: row.cost_center,
+    employeeId: row.employee_id,
+    fullName: row.full_name ?? row.employee_name ?? "Trabajador",
+    id: row.id,
+    licenses: Number(row.licenses ?? 0),
+    observations: row.observations,
+    overtimeHours: Number(row.overtime_hours ?? 0),
+    period: row.period,
+    productionBonus: Number(row.production_bonus_amount ?? 0),
+    responsibilityBonus: Number(row.responsibility_bonus_amount ?? 0),
+    rut: row.rut ?? ""
+  }));
+  const monthlyNovelties = (noveltyRows ?? []).map((row) => ({
+    amount: Number(row.amount ?? 0),
+    employeeId: row.employee_id,
+    employeeName: relatedFullName(row.hr_employees, "Trabajador"),
+    hours: Number(row.hours ?? 0),
+    id: row.id,
+    notes: row.notes,
+    period: row.period,
+    quantity: Number(row.quantity ?? 0),
+    status: row.status,
+    type: row.novelty_type
+  }));
   const payslipEmployeeIds = new Set(payslips.map((payslip) => payslip.employeeId).filter(Boolean));
   const monthPaymentAmount = paymentItems
-    .filter((item) => ["aprobado", "incluido_en_nomina", "pagado"].includes(item.status))
+    .filter((item) => ["pendiente_pago", "aprobado", "incluido_en_nomina", "en_nomina", "pagado"].includes(item.status))
     .reduce((sum, item) => sum + item.amount, 0);
 
   return {
+    accountantRows: accountantDataRows,
     employees,
     kpis: {
       activeEmployees: activeEmployees.length,
@@ -338,6 +415,7 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
     },
     paymentBatches,
     paymentItems,
+    monthlyNovelties,
     payslips,
     period,
     vacations

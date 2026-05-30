@@ -5,9 +5,16 @@ import { businessDaysInclusive } from "@/lib/hr/utils";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const vacationSchema = z.object({
+  contractPeriodEnd: z.string().date().optional().or(z.literal("")).default(""),
+  contractPeriodStart: z.string().date().optional().or(z.literal("")).default(""),
+  documentDate: z.string().date().optional().or(z.literal("")).default(""),
   employeeId: z.string().uuid(),
   endDate: z.string().date(),
+  fractionalVacation: z.coerce.boolean().optional().default(false),
+  nonBusinessDays: z.coerce.number().min(0).optional().default(0),
+  note: z.string().trim().max(1000).optional().default(""),
   observation: z.string().trim().max(800).optional().default(""),
+  progressiveDays: z.coerce.number().min(0).optional().default(0),
   startDate: z.string().date(),
   status: z.enum(["solicitada", "aprobada", "rechazada", "tomada"]).default("solicitada")
 });
@@ -27,11 +34,18 @@ export async function POST(request: Request) {
   const resulting = Math.round((previous - days) * 100) / 100;
   const { data, error } = await supabase.from("hr_vacation_requests").insert({
     business_days: days,
+    contract_period_end: body.contractPeriodEnd || null,
+    contract_period_start: body.contractPeriodStart || null,
     created_by: ctx.user.id,
+    document_date: body.documentDate || new Date().toISOString().slice(0, 10),
     employee_id: body.employeeId,
     end_date: body.endDate,
+    fractional_vacation: body.fractionalVacation,
+    non_business_days: body.nonBusinessDays,
+    note: body.note || null,
     observation: body.observation || null,
     previous_balance: previous,
+    progressive_days: body.progressiveDays,
     resulting_balance: resulting,
     start_date: body.startDate,
     status: body.status,

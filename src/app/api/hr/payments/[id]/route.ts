@@ -4,7 +4,7 @@ import { requireHrContext } from "@/lib/hr/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const schema = z.object({
-  status: z.enum(["borrador", "pendiente_aprobacion", "aprobado", "incluido_en_nomina", "pagado", "anulado"]),
+  status: z.enum(["borrador", "pendiente_aprobacion", "pendiente_pago", "aprobado", "en_nomina", "incluido_en_nomina", "pagado", "retenido", "anulado"]),
   paymentDate: z.string().date().optional().or(z.literal("")).default("")
 });
 
