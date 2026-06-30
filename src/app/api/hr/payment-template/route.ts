@@ -7,7 +7,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 const schema = z.object({
   glosaGlobal: z.string().trim().max(160).optional().default(""),
   paymentItemIds: z.array(z.string().uuid()).min(1),
-  payDate: z.string().date().optional().or(z.literal("")).default("")
+  payDate: z.string().date().optional().or(z.literal("")).default(""),
+  selectionFilters: z.record(z.unknown()).optional().default({}),
+  trancheLabel: z.string().trim().max(120).optional().default("")
 });
 
 type InvalidHrPayment = {
@@ -45,7 +47,7 @@ export async function POST(request: Request) {
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("hr_payment_items")
-    .select("id,employee_id,payment_type,period,amount,glosa,status,hr_employees(id,rut,full_name,status,payment_enabled,personal_email,work_email,hr_employee_bank_accounts(bank_name,bank_code,account_type,account_number,payment_email,account_holder_name,account_holder_rut,validation_status))")
+    .select("id,employee_id,payment_type,period,amount,glosa,status,bank_name,bank_code,account_type,account_number,payment_email,metadata,hr_employees(id,rut,full_name,status,payment_enabled,personal_email,work_email,hr_employee_bank_accounts(bank_name,bank_code,account_type,account_number,payment_email,account_holder_name,account_holder_rut,validation_status))")
     .eq("tenant_id", ctx.membership.tenant_id)
     .in("id", body.paymentItemIds);
 
@@ -54,20 +56,33 @@ export async function POST(request: Request) {
   for (const item of data ?? []) {
     const employee = Array.isArray(item.hr_employees) ? item.hr_employees[0] : item.hr_employees;
     const bank = employee?.hr_employee_bank_accounts?.[0];
+    const metadata = (item.metadata ?? {}) as Record<string, unknown>;
+    const fallbackName = String(metadata.full_name ?? metadata.name ?? "");
+    const fallbackRut = String(metadata.rut ?? "");
+    const fallbackBank = {
+      account_number: item.account_number ?? String(metadata.account_number ?? ""),
+      account_type: item.account_type ?? String(metadata.account_type ?? ""),
+      bank_code: item.bank_code ?? String(metadata.bank_code ?? ""),
+      bank_name: item.bank_name ?? String(metadata.bank_name ?? ""),
+      payment_email: item.payment_email ?? String(metadata.payment_email ?? "")
+    };
+    const payeeName = employee?.full_name ?? fallbackName;
+    const payeeRut = employee?.rut ?? fallbackRut;
+    const payeeBank = bank ?? fallbackBank;
     const alerts: string[] = [];
-    if (!employee?.rut) alerts.push("RUT");
-    if (!employee?.full_name) alerts.push("nombre");
-    if (employee?.status !== "activo") alerts.push("trabajador no activo");
-    if (!employee?.payment_enabled) alerts.push("pagos inhabilitados");
-    if (!bank?.bank_name) alerts.push("banco");
-    if (!bank?.bank_code) alerts.push("codigo banco");
-    if (!bank?.account_type) alerts.push("tipo cuenta");
-    if (!bank?.account_number) alerts.push("numero cuenta");
-    if (!(bank?.payment_email || employee?.work_email || employee?.personal_email)) alerts.push("email pago");
+    if (!payeeRut) alerts.push("RUT");
+    if (!payeeName) alerts.push("nombre");
+    if (employee && employee.status !== "activo") alerts.push("trabajador no activo");
+    if (employee && !employee.payment_enabled) alerts.push("pagos inhabilitados");
+    if (!payeeBank?.bank_name) alerts.push("banco");
+    if (!payeeBank?.bank_code) alerts.push("codigo banco");
+    if (!payeeBank?.account_type) alerts.push("tipo cuenta");
+    if (!payeeBank?.account_number) alerts.push("numero cuenta");
+    if (!(payeeBank?.payment_email || employee?.work_email || employee?.personal_email)) alerts.push("email pago");
     if (Number(item.amount ?? 0) <= 0) alerts.push("monto");
-    if (item.status !== "aprobado") alerts.push("no aprobado");
-    if (alerts.length || !employee || !bank) {
-      invalid.push({ alerts, employeeId: employee?.id ?? "", employeeName: employee?.full_name ?? "Trabajador sin ficha", itemId: item.id, rut: employee?.rut ?? "" });
+    if (!["aprobado", "pendiente_pago"].includes(item.status)) alerts.push("no aprobado");
+    if (alerts.length || !payeeBank) {
+      invalid.push({ alerts, employeeId: employee?.id ?? "", employeeName: payeeName || "Trabajador sin ficha", itemId: item.id, rut: payeeRut });
       continue;
     }
     const glosa = item.glosa || body.glosaGlobal || glosaFor(item.payment_type, item.period);
@@ -77,12 +92,12 @@ export async function POST(request: Request) {
       glosa,
       payableId: item.id,
       supplier: {
-        bankAccount: bank.account_number,
-        bankCode: bank.bank_code,
-        businessName: employee.full_name,
+        bankAccount: payeeBank.account_number ?? "",
+        bankCode: payeeBank.bank_code ?? "",
+        businessName: payeeName,
         code: "",
-        email: bank.payment_email || employee.work_email || employee.personal_email || "",
-        rut: employee.rut
+        email: payeeBank.payment_email || employee?.work_email || employee?.personal_email || "",
+        rut: payeeRut
       }
     });
   }
@@ -97,12 +112,15 @@ export async function POST(request: Request) {
   const batch = await supabase.from("hr_payment_batches").insert({
     generated_by: ctx.user.id,
     glosa_global: body.glosaGlobal || null,
+    metadata: { payment_item_ids: rows.map((row) => row.payableId), tranche_label: body.trancheLabel || null },
     payment_type: first?.payment_type ?? null,
     period: first?.period ?? new Date().toISOString().slice(0, 7),
+    selection_filters: body.selectionFilters,
     status: "generada",
     tenant_id: ctx.membership.tenant_id,
     total_amount: totalAmount,
-    total_employees: rows.length
+    total_employees: rows.length,
+    tranche_label: body.trancheLabel || null
   }).select("id").single();
   if (batch.data) {
     await supabase.from("hr_payment_batch_items").insert(rows.map((row) => ({

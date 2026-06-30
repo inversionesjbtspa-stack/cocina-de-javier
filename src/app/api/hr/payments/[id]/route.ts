@@ -4,6 +4,7 @@ import { requireHrContext } from "@/lib/hr/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const schema = z.object({
+  retentionReason: z.string().trim().max(500).optional().default(""),
   status: z.enum(["borrador", "pendiente_aprobacion", "pendiente_pago", "aprobado", "en_nomina", "incluido_en_nomina", "pagado", "retenido", "anulado"]),
   paymentDate: z.string().date().optional().or(z.literal("")).default("")
 });
@@ -19,7 +20,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const update = {
     approved_at: body.status === "aprobado" ? new Date().toISOString() : undefined,
     approved_by: body.status === "aprobado" ? ctx.user.id : undefined,
+    paid_at: body.status === "pagado" ? new Date().toISOString() : undefined,
+    paid_by: body.status === "pagado" ? ctx.user.id : undefined,
     payment_date: body.status === "pagado" ? body.paymentDate || new Date().toISOString().slice(0, 10) : undefined,
+    retention_reason: body.status === "retenido" ? body.retentionReason || null : undefined,
     status: body.status
   };
   const { data, error } = await supabase
@@ -37,7 +41,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     company_id: ctx.membership.company_id,
     entity_id: id,
     entity_type: "hr_payment_item",
-    event_type: "hr.payment_item_status_updated",
+    event_type: body.status === "pagado" ? "hr.payment_item_marked_paid" : "hr.payment_item_status_updated",
     tenant_id: ctx.membership.tenant_id
   });
   return NextResponse.json({ ok: true, payment: data });

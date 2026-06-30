@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, type FormEvent } from "react";
-import { BadgeDollarSign, CalendarDays, Download, FileText, Landmark, Upload, UserPlus, Users } from "lucide-react";
+import { BadgeDollarSign, CalendarDays, CheckCircle2, Download, FileText, Landmark, Send, Upload, UserPlus, Users } from "lucide-react";
 import { formatClp } from "@/lib/dte/purchases-data";
 import type { HrDashboardData, HrEmployee } from "@/lib/hr/data";
 
@@ -26,9 +26,12 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
   const [employees, setEmployees] = useState(data.employees);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(data.employees[0]?.id ?? "");
   const [paymentSelection, setPaymentSelection] = useState<string[]>([]);
+  const [paymentAreaFilter, setPaymentAreaFilter] = useState("");
+  const [paymentPositionFilter, setPaymentPositionFilter] = useState("");
+  const [paymentSort, setPaymentSort] = useState("name");
   const [message, setMessage] = useState<string | null>(null);
   const selectedEmployee = employees.find((employee) => employee.id === selectedEmployeeId) ?? employees[0] ?? null;
-  const approvedPaymentItems = data.paymentItems.filter((item) => item.status === "aprobado");
+  const payablePaymentItems = data.paymentItems.filter((item) => ["aprobado", "pendiente_pago"].includes(item.status));
 
   const kpis = [
     { icon: Users, label: "Trabajadores activos", value: String(data.kpis.activeEmployees), sub: `${data.kpis.paymentEnabled} habilitados para pago` },
@@ -167,7 +170,13 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
     }
     const glosaGlobal = (document.getElementById("hr-glosa-global") as HTMLInputElement | null)?.value ?? "";
     const response = await fetch("/api/hr/payment-template", {
-      body: JSON.stringify({ glosaGlobal, paymentItemIds: paymentSelection, payDate: today() }),
+      body: JSON.stringify({
+        glosaGlobal,
+        paymentItemIds: paymentSelection,
+        payDate: today(),
+        selectionFilters: { area: paymentAreaFilter, position: paymentPositionFilter, sort: paymentSort },
+        trancheLabel: (document.getElementById("hr-tranche-label") as HTMLInputElement | null)?.value ?? ""
+      }),
       headers: { "content-type": "application/json", "x-erp-request": "hr" },
       method: "POST"
     });
@@ -180,7 +189,58 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
     setMessage("Nomina RRHH exportada con Template Pagos JESUS.");
   }
 
+  async function markSelectedPaid() {
+    if (!paymentSelection.length) {
+      setMessage("Selecciona pagos para marcarlos como pagados.");
+      return;
+    }
+    const results = await Promise.all(paymentSelection.map((id) => fetch(`/api/hr/payments/${id}`, {
+      body: JSON.stringify({ paymentDate: today(), status: "pagado" }),
+      headers: { "content-type": "application/json" },
+      method: "PATCH"
+    })));
+    const failed = results.filter((response) => !response.ok).length;
+    setMessage(failed ? `${failed} pago(s) no se pudieron marcar como pagados.` : "Pagos seleccionados marcados como pagados.");
+  }
+
+  async function sendPayslips(payslipIds: string[], resend = false) {
+    if (!payslipIds.length) {
+      setMessage("No hay liquidaciones seleccionadas para enviar.");
+      return;
+    }
+    const response = await fetch("/api/hr/payslips/send", {
+      body: JSON.stringify({ payslipIds, resend }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      setMessage(payload?.error ?? "No se pudo preparar el envio de liquidaciones.");
+      return;
+    }
+    const blocked = payload?.results?.filter((item: { status: string }) => item.status !== "enviado").length ?? 0;
+    setMessage(blocked ? `Envio controlado revisado: ${blocked} liquidacion(es) quedaron pendientes/bloqueadas.` : "Liquidaciones enviadas.");
+  }
+
   const paymentEnabledEmployees = useMemo(() => employees.filter((employee) => employee.status === "activo" && employee.paymentEnabled), [employees]);
+  const areas = useMemo(() => Array.from(new Set(employees.map((employee) => employee.area).filter(Boolean) as string[])).sort(), [employees]);
+  const positions = useMemo(() => Array.from(new Set(employees.map((employee) => employee.position).filter(Boolean) as string[])).sort(), [employees]);
+  const filteredPaymentItems = useMemo(() => {
+    const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
+    return payablePaymentItems
+      .filter((item) => {
+        const employee = employeeById.get(item.employeeId);
+        return (!paymentAreaFilter || employee?.area === paymentAreaFilter) && (!paymentPositionFilter || employee?.position === paymentPositionFilter);
+      })
+      .sort((a, b) => {
+        const employeeA = employeeById.get(a.employeeId);
+        const employeeB = employeeById.get(b.employeeId);
+        if (paymentSort === "amount_desc") return b.amount - a.amount;
+        if (paymentSort === "amount_asc") return a.amount - b.amount;
+        if (paymentSort === "status") return a.status.localeCompare(b.status);
+        return (employeeA?.fullName ?? a.employeeName).localeCompare(employeeB?.fullName ?? b.employeeName);
+      });
+  }, [employees, payablePaymentItems, paymentAreaFilter, paymentPositionFilter, paymentSort]);
 
   return (
     <section className="space-y-6">
@@ -347,7 +407,19 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
             <input accept="application/pdf" className="w-full rounded-md border px-3 py-2 text-sm" name="file" required type="file" />
             <button className="inline-flex items-center gap-2 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" type="submit"><Upload className="h-4 w-4" /> Cargar PDF</button>
           </form>
-          <div className="mt-5 space-y-2">{data.payslips.slice(0, 6).map((payslip) => <a className="block rounded-md border p-3 text-sm hover:bg-brand-50" href={`/api/hr/payslips/${payslip.id}/download`} key={payslip.id}>{payslip.employeeName} / {payslip.period} / {payslip.status}</a>)}</div>
+          <div className="mt-5 space-y-2">
+            {data.payslips.slice(0, 6).map((payslip) => (
+              <div className="rounded-md border p-3 text-sm" key={payslip.id}>
+                <a className="block font-semibold hover:text-brand-700" href={`/api/hr/payslips/${payslip.id}/download`}>{payslip.employeeName} / {payslip.period}</a>
+                <p className="text-[#667068]">{payslip.status} / envio: {payslip.sendStatus} ({payslip.sendAttempts})</p>
+                <div className="mt-2 flex gap-2">
+                  <button className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-semibold text-brand-700" onClick={() => sendPayslips([payslip.id])} type="button"><Send className="h-3.5 w-3.5" /> Enviar</button>
+                  <button className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-semibold text-brand-700" onClick={() => sendPayslips([payslip.id], true)} type="button"><Send className="h-3.5 w-3.5" /> Reenviar</button>
+                </div>
+              </div>
+            ))}
+            <button className="w-full rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" onClick={() => sendPayslips(data.payslips.map((payslip) => payslip.id))} type="button">Enviar liquidaciones pendientes pagadas</button>
+          </div>
         </article>
 
         <article className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm">
@@ -368,9 +440,19 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
             <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" type="submit">Registrar vacaciones</button>
           </form>
           <div className="mt-5 space-y-2">{data.vacations.slice(0, 6).map((vacation) => <div className="rounded-md border p-3 text-sm" key={vacation.id}><p className="font-semibold">{vacation.employeeName}</p><p>{vacation.startDate} al {vacation.endDate} / {vacation.businessDays} dias</p><a className="mt-1 inline-flex items-center gap-1 font-semibold text-brand-700" href={`/api/hr/vacations/${vacation.id}/papeleta`} target="_blank"><Download className="h-3.5 w-3.5" /> Papeleta PDF</a></div>)}</div>
+          <form className="mt-4 border-t pt-4 space-y-3" onSubmit={(event) => submitJson(event, "/api/hr/vacations/accruals", "Movimiento de vacaciones registrado.")}>
+            <p className="text-sm font-semibold text-brand-900">Acumulacion / ajuste mensual</p>
+            <select className="w-full rounded-md border px-3 py-2 text-sm" name="employeeId">{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.fullName}</option>)}</select>
+            <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={data.period} name="period" type="month" />
+            <select className="w-full rounded-md border px-3 py-2 text-sm" name="movementType"><option value="acumulacion_mensual">Acumulacion mensual</option><option value="saldo_inicial">Saldo inicial</option><option value="ajuste_manual">Ajuste manual</option><option value="vacaciones_tomadas">Vacaciones tomadas</option><option value="finiquito">Finiquito</option></select>
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="days" placeholder="Dias (+/-)" type="number" step="0.01" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="note" placeholder="Motivo auditoria" />
+            <button className="rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" type="submit">Guardar movimiento</button>
+          </form>
+          <div className="mt-4 max-h-40 space-y-2 overflow-auto">{data.vacationLedger.map((item) => <div className="rounded-md border p-2 text-xs" key={item.id}>{item.employeeName} / {item.movementType} / {item.days} dias / saldo {item.balanceAfter}</div>)}</div>
         </article>
 
-        <article className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm">
+        <article className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm xl:col-span-1">
           <h2 className="font-semibold text-brand-900">Pagos RRHH</h2>
           <p className="mt-1 text-sm text-[#667068]">{paymentEnabledEmployees.length} trabajadores habilitados para pago.</p>
           <form className="mt-4 space-y-3" onSubmit={(event) => submitJson(event, "/api/hr/payments", "Pago RRHH creado.")}>
@@ -384,12 +466,71 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
             <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" type="submit">Crear pago aprobado</button>
           </form>
           <div className="mt-5 border-t pt-4">
+            <input className="mb-2 w-full rounded-md border px-3 py-2 text-sm" id="hr-tranche-label" placeholder="Nombre tramo: Grupo 1, cocina, semana 1..." />
             <input className="w-full rounded-md border px-3 py-2 text-sm" id="hr-glosa-global" placeholder="Glosa global nomina" />
-            <div className="mt-3 max-h-48 overflow-auto space-y-2">
-              {approvedPaymentItems.map((item) => <label className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm" key={item.id}><span><input className="mr-2" checked={paymentSelection.includes(item.id)} onChange={() => setPaymentSelection((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])} type="checkbox" />{item.employeeName} / {item.paymentType}</span><strong>{formatClp(item.amount)}</strong></label>)}
+            <div className="mt-3 grid gap-2 md:grid-cols-3">
+              <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentAreaFilter(event.target.value)} value={paymentAreaFilter}><option value="">Todas las areas</option>{areas.map((area) => <option key={area} value={area}>{area}</option>)}</select>
+              <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentPositionFilter(event.target.value)} value={paymentPositionFilter}><option value="">Todos los cargos</option>{positions.map((position) => <option key={position} value={position}>{position}</option>)}</select>
+              <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentSort(event.target.value)} value={paymentSort}><option value="name">A-Z trabajador</option><option value="amount_desc">Mayor monto</option><option value="amount_asc">Menor monto</option><option value="status">Estado</option></select>
             </div>
-            <button className="mt-3 w-full rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" onClick={generatePayroll} type="button">Exportar Template Pagos JESUS</button>
+            <div className="mt-3 max-h-48 overflow-auto space-y-2">
+              {filteredPaymentItems.map((item) => <label className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm" key={item.id}><span><input className="mr-2" checked={paymentSelection.includes(item.id)} onChange={() => setPaymentSelection((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])} type="checkbox" />{item.employeeName} / {item.paymentType} / {item.status}</span><strong>{formatClp(item.amount)}</strong></label>)}
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              <button className="rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" onClick={generatePayroll} type="button">Exportar tramo banco</button>
+              <button className="inline-flex items-center justify-center gap-2 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" onClick={markSelectedPaid} type="button"><CheckCircle2 className="h-4 w-4" /> Marcar pagados</button>
+            </div>
           </div>
+        </article>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-3">
+        <article className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm">
+          <h2 className="font-semibold text-brand-900">Anticipos avanzados</h2>
+          <form className="mt-4 space-y-3" onSubmit={(event) => submitJson(event, "/api/hr/advances", "Anticipo registrado.")}>
+            <select className="w-full rounded-md border px-3 py-2 text-sm" name="employeeId">{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.fullName}</option>)}</select>
+            <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={today()} name="requestDate" type="date" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="requestedAmount" placeholder="Monto solicitado" type="number" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="approvedAmount" placeholder="Monto aprobado" type="number" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={data.period} name="discountPeriod" type="month" />
+            <select className="w-full rounded-md border px-3 py-2 text-sm" name="status"><option value="solicitado">Solicitado</option><option value="aprobado">Aprobado</option><option value="pagado">Pagado</option><option value="descontado">Descontado</option><option value="rechazado">Rechazado</option></select>
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="reason" placeholder="Motivo" />
+            <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" type="submit">Guardar anticipo</button>
+          </form>
+        </article>
+
+        <article className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm">
+          <h2 className="font-semibold text-brand-900">Finiquitos</h2>
+          <form className="mt-4 space-y-3" onSubmit={(event) => submitJson(event, "/api/hr/finiquitos", "Finiquito registrado.")}>
+            <select className="w-full rounded-md border px-3 py-2 text-sm" name="employeeId">{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.fullName}</option>)}</select>
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="terminationDate" type="date" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="causal" placeholder="Causal termino" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="settlementAmount" placeholder="Monto finiquito" type="number" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="pendingVacationDays" placeholder="Vacaciones pendientes" type="number" step="0.01" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="pendingAdvancesAmount" placeholder="Anticipos pendientes" type="number" />
+            <select className="w-full rounded-md border px-3 py-2 text-sm" name="status"><option value="pendiente_pago">Pendiente pago</option><option value="aprobado">Aprobado</option><option value="pagado">Pagado</option><option value="anulado">Anulado</option></select>
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="observation" placeholder="Observaciones" />
+            <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" type="submit">Generar finiquito</button>
+          </form>
+          <div className="mt-4 max-h-40 space-y-2 overflow-auto">{data.finiquitos.map((item) => <div className="rounded-md border p-2 text-xs" key={item.id}>{item.employeeName} / {item.terminationDate} / {formatClp(item.settlementAmount)} / {item.status}</div>)}</div>
+        </article>
+
+        <article className="rounded-lg border border-[#dfe4dd] bg-white p-5 shadow-sm">
+          <h2 className="font-semibold text-brand-900">Honorarios</h2>
+          <form className="mt-4 space-y-3" onSubmit={(event) => submitJson(event, "/api/hr/honorarios", "Honorario creado para pago.")}>
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="fullName" placeholder="Nombre" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="rut" placeholder="RUT" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" defaultValue={data.period} name="period" type="month" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="amount" placeholder="Monto" type="number" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="glosa" placeholder="Glosa" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="bankName" placeholder="Banco" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="bankCode" placeholder="Codigo banco" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="accountType" placeholder="Tipo cuenta" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="accountNumber" placeholder="Numero cuenta" />
+            <input className="w-full rounded-md border px-3 py-2 text-sm" name="paymentEmail" placeholder="Email pago" type="email" />
+            <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" type="submit">Crear honorario</button>
+          </form>
+          <div className="mt-4 max-h-40 space-y-2 overflow-auto">{data.honorarios.map((item) => <div className="rounded-md border p-2 text-xs" key={item.id}>{item.fullName} / {item.period} / {formatClp(item.amount)} / {item.status}</div>)}</div>
         </article>
       </div>
     </section>

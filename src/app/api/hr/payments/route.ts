@@ -5,12 +5,17 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 const paymentSchema = z.object({
   amount: z.coerce.number().positive(),
+  accountNumber: z.string().trim().max(80).optional().default(""),
+  accountType: z.string().trim().max(80).optional().default(""),
+  bankCode: z.string().trim().max(20).optional().default(""),
+  bankName: z.string().trim().max(120).optional().default(""),
   employeeId: z.string().uuid(),
   glosa: z.string().trim().max(240).optional().default(""),
+  paymentEmail: z.string().trim().email().or(z.literal("")).optional().default(""),
   paymentType: z.enum(["remuneracion_mensual", "anticipo", "honorarios", "finiquito", "bono_compensatorio", "bono_extra", "aguinaldo", "compensacion", "gratificacion", "ajuste", "prestamo_trabajador", "devolucion", "otro"]),
   period: z.string().regex(/^\d{4}-\d{2}$/),
   scheduledDate: z.string().date().optional().or(z.literal("")).default(""),
-  status: z.enum(["borrador", "pendiente_aprobacion", "aprobado", "incluido_en_nomina", "pagado", "anulado"]).default("aprobado")
+  status: z.enum(["borrador", "pendiente_aprobacion", "pendiente_pago", "aprobado", "en_nomina", "incluido_en_nomina", "pagado", "retenido", "anulado"]).default("aprobado")
 });
 
 export async function POST(request: Request) {
@@ -22,11 +27,16 @@ export async function POST(request: Request) {
   const supabase = createAdminClient();
   const { data, error } = await supabase.from("hr_payment_items").insert({
     amount: body.amount,
-    approved_at: body.status === "aprobado" ? new Date().toISOString() : null,
-    approved_by: body.status === "aprobado" ? ctx.user.id : null,
+    account_number: body.accountNumber || null,
+    account_type: body.accountType || null,
+    approved_at: ["aprobado", "pendiente_pago"].includes(body.status) ? new Date().toISOString() : null,
+    approved_by: ["aprobado", "pendiente_pago"].includes(body.status) ? ctx.user.id : null,
+    bank_code: body.bankCode || null,
+    bank_name: body.bankName || null,
     created_by: ctx.user.id,
     employee_id: body.employeeId,
     glosa: body.glosa || null,
+    payment_email: body.paymentEmail || null,
     payment_type: body.paymentType,
     period: body.period,
     scheduled_date: body.scheduledDate || null,

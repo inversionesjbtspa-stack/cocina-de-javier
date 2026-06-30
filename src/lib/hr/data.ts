@@ -51,6 +51,8 @@ export type HrPayslip = {
   period: string;
   originalFilename: string;
   netAmount: number;
+  sendAttempts: number;
+  sendStatus: string;
   status: string;
   storageBucket: string;
   storagePath: string;
@@ -80,6 +82,35 @@ export type HrPaymentItem = {
   glosa: string | null;
   status: string;
   scheduledDate: string | null;
+};
+
+export type HrTerminationSettlement = {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  terminationDate: string;
+  causal: string;
+  settlementAmount: number;
+  status: string;
+};
+
+export type HrHonorario = {
+  id: string;
+  fullName: string;
+  rut: string;
+  period: string;
+  amount: number;
+  status: string;
+};
+
+export type HrVacationLedger = {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  period: string;
+  movementType: string;
+  days: number;
+  balanceAfter: number;
 };
 
 export type HrPaymentBatch = {
@@ -133,6 +164,9 @@ export type HrDashboardData = {
   vacations: HrVacationRequest[];
   paymentItems: HrPaymentItem[];
   paymentBatches: HrPaymentBatch[];
+  finiquitos: HrTerminationSettlement[];
+  honorarios: HrHonorario[];
+  vacationLedger: HrVacationLedger[];
   kpis: {
     activeEmployees: number;
     payslipsLoaded: number;
@@ -272,19 +306,22 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
       paymentItems: [],
       payslips: [],
       period,
-      vacations: []
+      vacations: [],
+      finiquitos: [],
+      honorarios: [],
+      vacationLedger: []
     };
   }
 
   const supabase = createAdminClient();
-  const [{ data: employeeRows }, { data: payslipRows }, { data: vacationRows }, { data: paymentRows }, { data: batchRows }, { data: accountantRows }, { data: noveltyRows }] = await Promise.all([
+  const [{ data: employeeRows }, { data: payslipRows }, { data: vacationRows }, { data: paymentRows }, { data: batchRows }, { data: accountantRows }, { data: noveltyRows }, { data: finiquitoRows }, { data: honorarioRows }, { data: vacationLedgerRows }] = await Promise.all([
     supabase
       .from("hr_employees")
       .select("*,hr_employee_bank_accounts(id,bank_name,bank_code,account_type,account_number,payment_email,account_holder_name,account_holder_rut,validation_status)")
       .order("full_name", { ascending: true }),
     supabase
       .from("hr_payslips")
-      .select("id,employee_id,period,original_filename,net_amount,status,storage_bucket,storage_path,created_at,hr_employees(full_name)")
+      .select("id,employee_id,period,original_filename,net_amount,status,storage_bucket,storage_path,created_at,send_status,send_attempts,hr_employees(full_name)")
       .eq("period", period)
       .order("created_at", { ascending: false }),
     supabase
@@ -314,6 +351,23 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
       .eq("period", period)
       .order("created_at", { ascending: false })
       .limit(20)
+    ,
+    supabase
+      .from("hr_termination_settlements")
+      .select("id,employee_id,termination_date,causal,settlement_amount,status,hr_employees(full_name)")
+      .order("created_at", { ascending: false })
+      .limit(20),
+    supabase
+      .from("hr_honorarios")
+      .select("id,full_name,rut,period,amount,status")
+      .eq("period", period)
+      .order("created_at", { ascending: false })
+      .limit(20),
+    supabase
+      .from("hr_vacation_ledger")
+      .select("id,employee_id,period,movement_type,days,balance_after,hr_employees(full_name)")
+      .order("created_at", { ascending: false })
+      .limit(20)
   ]);
 
   const employees = ((employeeRows ?? []) as RawEmployee[]).map(mapEmployee);
@@ -326,6 +380,8 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
     netAmount: Number(row.net_amount ?? 0),
     originalFilename: row.original_filename,
     period: row.period,
+    sendAttempts: Number(row.send_attempts ?? 0),
+    sendStatus: row.send_status ?? "pendiente_envio",
     status: row.status,
     storageBucket: row.storage_bucket,
     storagePath: row.storage_path
@@ -392,6 +448,32 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
     status: row.status,
     type: row.novelty_type
   }));
+  const finiquitos = (finiquitoRows ?? []).map((row) => ({
+    causal: row.causal ?? "",
+    employeeId: row.employee_id,
+    employeeName: relatedFullName(row.hr_employees, "Trabajador"),
+    id: row.id,
+    settlementAmount: Number(row.settlement_amount ?? 0),
+    status: row.status,
+    terminationDate: row.termination_date
+  }));
+  const honorarios = (honorarioRows ?? []).map((row) => ({
+    amount: Number(row.amount ?? 0),
+    fullName: row.full_name,
+    id: row.id,
+    period: row.period,
+    rut: row.rut,
+    status: row.status
+  }));
+  const vacationLedger = (vacationLedgerRows ?? []).map((row) => ({
+    balanceAfter: Number(row.balance_after ?? 0),
+    days: Number(row.days ?? 0),
+    employeeId: row.employee_id,
+    employeeName: relatedFullName(row.hr_employees, "Trabajador"),
+    id: row.id,
+    movementType: row.movement_type,
+    period: row.period
+  }));
   const payslipEmployeeIds = new Set(payslips.map((payslip) => payslip.employeeId).filter(Boolean));
   const monthPaymentAmount = paymentItems
     .filter((item) => ["pendiente_pago", "aprobado", "incluido_en_nomina", "en_nomina", "pagado"].includes(item.status))
@@ -416,6 +498,9 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
     paymentBatches,
     paymentItems,
     monthlyNovelties,
+    finiquitos,
+    honorarios,
+    vacationLedger,
     payslips,
     period,
     vacations

@@ -22,10 +22,15 @@ test("HR module exposes operational tables, storage buckets and payment template
   const bankImportParser = await readFile("src/lib/hr/bank-import-parser.ts", "utf8");
   const bankMigration = await readFile("supabase/migrations/202605150023_hr_bank_import_and_accountant_columns.sql", "utf8");
   const phase1Migration = await readFile("supabase/migrations/202605290001_hr_phase1_monthly_workflow.sql", "utf8");
+  const phase2Migration = await readFile("supabase/migrations/202605300001_hr_phase2_workflow.sql", "utf8");
   const employeesRoute = await readFile("src/app/api/hr/employees/route.ts", "utf8");
   const payslipsRoute = await readFile("src/app/api/hr/payslips/route.ts", "utf8");
+  const payslipsSendRoute = await readFile("src/app/api/hr/payslips/send/route.ts", "utf8");
   const vacationRoute = await readFile("src/app/api/hr/vacations/route.ts", "utf8");
+  const vacationAccrualRoute = await readFile("src/app/api/hr/vacations/accruals/route.ts", "utf8");
   const noveltiesRoute = await readFile("src/app/api/hr/monthly-novelties/route.ts", "utf8");
+  const finiquitosRoute = await readFile("src/app/api/hr/finiquitos/route.ts", "utf8");
+  const honorariosRoute = await readFile("src/app/api/hr/honorarios/route.ts", "utf8");
 
   for (const table of [
     "hr_employees",
@@ -67,9 +72,19 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(phase1Migration, /hr_monthly_novelties_unique_idx/);
   assert.match(phase1Migration, /add column if not exists document_date/);
   assert.match(phase1Migration, /add column if not exists send_status/);
+  assert.match(phase2Migration, /create table if not exists public\.hr_termination_settlements/);
+  assert.match(phase2Migration, /create table if not exists public\.hr_honorarios/);
+  assert.match(phase2Migration, /create table if not exists public\.hr_vacation_ledger/);
+  assert.match(phase2Migration, /create table if not exists public\.hr_payslip_send_events/);
+  assert.match(phase2Migration, /notify pgrst, 'reload schema'/);
+  assert.doesNotMatch(phase2Migration, /^\s*(drop|delete|truncate)\b/im);
   assert.match(employeesRoute, /hr\.employee_created/);
   assert.match(payslipsRoute, /hr\.payslip_uploaded/);
+  assert.match(payslipsSendRoute, /hr\.payslip_send_requested/);
   assert.match(vacationRoute, /businessDaysInclusive/);
+  assert.match(vacationAccrualRoute, /hr\.vacation_accrual_recorded/);
+  assert.match(finiquitosRoute, /hr\.finiquito_created/);
+  assert.match(honorariosRoute, /hr\.honorario_created/);
   assert.match(noveltiesRoute, /tenant_id,employee_id,period,novelty_type/);
   assert.match(noveltiesRoute, /hr\.monthly_novelty_created/);
   assert.match(accountantRoute, /Schema cache de Supabase desactualizado/);
@@ -79,6 +94,9 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(client, /Novedades mensuales/);
   assert.match(client, /Datos Sueldos/);
   assert.match(client, /Feriado fraccionado/);
+  assert.match(client, /Anticipos avanzados/);
+  assert.match(client, /Exportar tramo banco/);
+  assert.match(client, /Enviar liquidaciones pendientes pagadas/);
 });
 
 test("HR payroll import parser reads the real April 2026 payslips and Datos Sueldos files", { skip: !existsSync("C:/Users/Jose Luis/Downloads/Liquidaciones de Abril 2026 (1).pdf") || !existsSync("C:/Users/Jose Luis/Downloads/4.- Datos sueldos abril 2026 V0.xlsx") }, () => {
