@@ -1,17 +1,32 @@
 import { NextResponse } from "next/server";
 import { requireHrContext } from "@/lib/hr/auth";
-import { getVacationRequestForTenant } from "@/lib/hr/vacation-server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
+
+type VacationRequestReceiptRow = {
+  employee_id: string;
+  id: string;
+  status: string | null;
+  tenant_id: string;
+};
+
+type VacationRequestReceiptResult = {
+  data: VacationRequestReceiptRow | null;
+};
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await requireHrContext();
   if (ctx.error) return ctx.error;
   const { id } = await params;
   const supabase = createAdminClient();
-  const vacation = await getVacationRequestForTenant(supabase, ctx.membership.tenant_id, id, "id,tenant_id,employee_id,status");
-  if (!vacation.ok) return NextResponse.json({ ok: false, error: "vacation_not_found" }, { status: 404 });
+  const { data: vacation }: VacationRequestReceiptResult = await supabase
+    .from("hr_vacation_requests")
+    .select("id,tenant_id,employee_id,status")
+    .eq("tenant_id", ctx.membership.tenant_id)
+    .eq("id", id)
+    .maybeSingle();
+  if (!vacation || vacation.tenant_id !== ctx.membership.tenant_id) return NextResponse.json({ ok: false, error: "vacation_not_found" }, { status: 404 });
   const { data: document, error } = await supabase
     .from("hr_vacation_documents")
     .select("id,storage_bucket,storage_path,file_sha256,mime_type,file_size,generated_at,document_status")

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
-import { getVacationRequestForTenant } from "@/lib/hr/vacation-server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -10,6 +9,16 @@ const patchSchema = z.object({
   reason: z.string().trim().max(800).optional().default(""),
   status: z.enum(["anulada"])
 });
+
+type VacationRequestLookupRow = {
+  id: string;
+  status: string | null;
+  tenant_id: string;
+};
+
+type VacationRequestLookupResult = {
+  data: VacationRequestLookupRow | null;
+};
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await requireHrContext();
@@ -43,7 +52,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     p_request_id: id
   });
   if (!result.error) return NextResponse.json({ ok: true, result: result.data });
-  const current = await getVacationRequestForTenant(supabase, ctx.membership.tenant_id, id, "id,tenant_id,status");
-  if (!current.ok) return NextResponse.json({ ok: false, error: "vacation_not_found" }, { status: 404 });
+  const { data: current }: VacationRequestLookupResult = await supabase
+    .from("hr_vacation_requests")
+    .select("id,tenant_id,status")
+    .eq("tenant_id", ctx.membership.tenant_id)
+    .eq("id", id)
+    .maybeSingle();
+  if (!current || current.tenant_id !== ctx.membership.tenant_id) return NextResponse.json({ ok: false, error: "vacation_not_found" }, { status: 404 });
   return NextResponse.json({ ok: false, error: result.error.message }, { status: 422 });
 }

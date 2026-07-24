@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
-import { getEmployeeForHrTenant } from "@/lib/hr/vacation-server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const schema = z.object({
@@ -12,6 +11,29 @@ const schema = z.object({
   period: z.string().regex(/^\d{4}-\d{2}$/)
 });
 
+type EmployeeLookupRow = {
+  id: string;
+  status: string | null;
+  tenant_id: string;
+};
+
+type EmployeeLookupResult = {
+  data: EmployeeLookupRow | null;
+};
+
+async function getEmployeeForHrTenant(
+  supabase: ReturnType<typeof createAdminClient>,
+  tenantId: string,
+  employeeId: string
+): Promise<EmployeeLookupResult> {
+  return supabase
+    .from("hr_employees")
+    .select("id,tenant_id,status")
+    .eq("tenant_id", tenantId)
+    .eq("id", employeeId)
+    .maybeSingle();
+}
+
 export async function POST(request: Request) {
   const ctx = await requireHrContext();
   if (ctx.error) return ctx.error;
@@ -19,9 +41,9 @@ export async function POST(request: Request) {
   if (!parsed.success) return NextResponse.json({ ok: false, error: "hr_vacation_accrual_validation_failed", fields: parsed.error.flatten().fieldErrors }, { status: 422 });
   const body = parsed.data;
   const supabase = createAdminClient();
-  const employee = await getEmployeeForHrTenant(supabase, ctx.membership.tenant_id, body.employeeId, "id,tenant_id,status");
-  if (!employee.checked.ok) return NextResponse.json({ ok: false, error: employee.checked.error }, { status: 404 });
-  if (employee.data?.status && employee.data.status !== "activo") {
+  const { data: employee } = await getEmployeeForHrTenant(supabase, ctx.membership.tenant_id, body.employeeId);
+  if (!employee || employee.tenant_id !== ctx.membership.tenant_id) return NextResponse.json({ ok: false, error: "employee_not_in_tenant" }, { status: 404 });
+  if (employee.status && employee.status !== "activo") {
     return NextResponse.json({ ok: false, error: "employee_not_active" }, { status: 422 });
   }
   const balance = await supabase.from("hr_vacation_balances").select("*").eq("tenant_id", ctx.membership.tenant_id).eq("employee_id", body.employeeId).maybeSingle();
