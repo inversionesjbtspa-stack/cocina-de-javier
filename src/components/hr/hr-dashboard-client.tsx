@@ -1005,21 +1005,53 @@ function EmployeeNoveltiesTab({ data, employee, novelties, saveNovelty }: { data
 
 function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJson, vacations }: { cancelVacationRequest: (id: string) => void; data: HrDashboardData; employee: HrEmployee; submitJson: (event: FormEvent<HTMLFormElement>, endpoint: string, success: string) => void; vacations: HrDashboardData["vacations"] }) {
   const ledger = data.vacationLedger.filter((item) => item.employeeId === employee.id);
-  const latestBalance = ledger[0]?.balanceAfter ?? vacations[0]?.resultingBalance ?? 0;
+  const periods = data.vacationPeriods.filter((item) => item.employeeId === employee.id);
+  const earnedBalance = periods.reduce((sum, period) => sum + period.availableBalance, 0);
+  const reservedDays = periods.reduce((sum, period) => sum + period.reservedDays, 0);
+  const advanceDays = periods.reduce((sum, period) => sum + period.advanceDays, 0);
+  const progressiveDays = periods.reduce((sum, period) => sum + period.progressiveDays, 0);
+  const projectedProportional = periods[0] ? ((periods[0].baseDays + periods[0].progressiveDays) / 12) : 1.25;
+  const latestBalance = periods.length ? earnedBalance : ledger[0]?.balanceAfter ?? vacations[0]?.resultingBalance ?? 0;
+  async function action(id: string, endpoint: string, body: Record<string, unknown> = {}) {
+    const response = await fetch(`/api/hr/vacations/${id}/${endpoint}`, {
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+      method: "POST"
+    });
+    const payload = await response.json().catch(() => null);
+    window.alert(response.ok ? "Accion registrada." : payload?.error ?? "No se pudo completar la accion.");
+  }
   return (
     <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
       <SectionCard className="p-5">
         <h3 className="font-semibold text-brand-900">Vacaciones</h3>
-        <div className="mt-3 grid gap-3 text-sm">
-          <div className="rounded-md bg-brand-50 p-3"><p className="text-[#667068]">Saldo actual</p><p className="text-2xl font-semibold text-brand-900">{latestBalance} dias</p></div>
-          <p className="text-[#667068]">Configuracion visible desde contrato actual. La configuracion avanzada queda para una etapa con schema dedicado.</p>
+        <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+          <MetricTile label="Saldo devengado" value={`${latestBalance.toFixed(2)} dias`} />
+          <MetricTile label="Proporcional proyectado" value={`${projectedProportional.toFixed(6)} / mes`} />
+          <MetricTile label="Reservados" value={`${reservedDays.toFixed(2)} dias`} />
+          <MetricTile label="Anticipados" value={`${advanceDays.toFixed(2)} dias`} />
+          <MetricTile label="Progresivos" value={`${progressiveDays.toFixed(2)} dias`} />
+          <MetricTile label="Proxima anualidad" value={employee.hireDate ? employee.hireDate.slice(5) : "Requiere ingreso"} />
         </div>
+        <p className="mt-3 text-xs text-[#667068]">El proporcional proyectado es informativo y no se suma al saldo utilizable salvo autorizacion explicita de vacaciones anticipadas.</p>
         <VacationForm employeeId={employee.id} submitJson={submitJson} />
       </SectionCard>
       <SectionCard className="overflow-hidden">
-        <TableHeader title="Ledger vacaciones" />
-        <SimpleTable headers={["Periodo", "Movimiento", "Dias", "Saldo"]}>
-          {ledger.map((item) => <tr className="border-t" key={item.id}><td className="px-4 py-3">{item.period}</td><td className="px-4 py-3">{item.movementType}</td><td className="px-4 py-3">{item.days}</td><td className="px-4 py-3">{item.balanceAfter}</td></tr>)}
+        <TableHeader action={<a className="rounded-md border border-brand-700 px-3 py-1.5 text-xs font-semibold text-brand-700" href="/api/hr/vacations/export" target="_blank">Exportar resumen</a>} title="Detalle por periodo" />
+        <SimpleTable headers={["Periodo", "Base", "Prog.", "Usados", "Reserv.", "Antic.", "Saldo", "Bloque"]}>
+          {periods.map((period) => (
+            <tr className="border-t" key={period.id}>
+              <td className="px-4 py-3">{period.periodStart} / {period.periodEnd}</td>
+              <td className="px-4 py-3">{period.baseDays}</td>
+              <td className="px-4 py-3">{period.progressiveDays}</td>
+              <td className="px-4 py-3">{period.usedDays}</td>
+              <td className="px-4 py-3">{period.reservedDays}</td>
+              <td className="px-4 py-3">{period.advanceDays}</td>
+              <td className="px-4 py-3">{period.availableBalance}</td>
+              <td className="px-4 py-3">{period.continuousBlockUsed}/{period.continuousBlockRequired}</td>
+            </tr>
+          ))}
+          {!periods.length ? <tr><td className="px-4 py-4 text-sm text-[#667068]" colSpan={8}>Sin periodos contractuales persistidos. Se usara vista previa calculada desde fecha de ingreso hasta aplicar migracion.</td></tr> : null}
         </SimpleTable>
         <div className="border-t border-[#dfe4dd] p-4">
           <p className="mb-2 text-sm font-semibold text-brand-900">Comprobantes recientes</p>
@@ -1029,7 +1061,8 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="font-semibold text-brand-900">{vacation.startDate} al {vacation.endDate}</p>
-                    <p className="text-xs text-[#667068]">Estado {vacation.status} / {vacation.businessDays} dias habiles / saldo {vacation.resultingBalance}</p>
+                    <p className="text-xs text-[#667068]">Estado {vacation.status} / {vacation.businessDays} dias habiles / saldo {vacation.resultingBalance} / retorno {vacation.returnToWorkDate ?? "por confirmar"}</p>
+                    <p className="text-xs text-[#667068]">Documento {vacation.documentNumber ?? "pendiente"} / proporcional proyectado {vacation.projectedBusinessDays?.toFixed(2) ?? "0.00"}</p>
                   </div>
                   <Pill className={statusClass(vacation.status)}>{vacation.status}</Pill>
                 </div>
@@ -1037,6 +1070,8 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
                   <a className="rounded-md border border-brand-700 px-3 py-1.5 text-xs font-semibold text-brand-700" href={`/api/hr/vacations/${vacation.id}/papeleta?format=html`} rel="noreferrer" target="_blank">Vista previa</a>
                   <a className="rounded-md border border-brand-700 px-3 py-1.5 text-xs font-semibold text-brand-700" href={`/api/hr/vacations/${vacation.id}/papeleta?format=html#print`} rel="noreferrer" target="_blank">Imprimir</a>
                   <a className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white" href={`/api/hr/vacations/${vacation.id}/papeleta?format=pdf`} rel="noreferrer" target="_blank">PDF <Download className="h-3.5 w-3.5" /></a>
+                  {["borrador", "solicitada", "pendiente"].includes(vacation.status) ? <button className="rounded-md border border-emerald-300 px-3 py-1.5 text-xs font-semibold text-emerald-700" onClick={() => action(vacation.id, "approve")} type="button">Aprobar</button> : null}
+                  {!["aprobada", "rechazada", "anulada"].includes(vacation.status) ? <button className="rounded-md border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-700" onClick={() => action(vacation.id, "reject", { reason: "Rechazo registrado desde RRHH" })} type="button">Rechazar</button> : null}
                   <button className="rounded-md border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700" disabled={vacation.status === "anulada"} onClick={() => cancelVacationRequest(vacation.id)} type="button">Anular solicitud</button>
                 </div>
               </div>
@@ -1044,9 +1079,19 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
             {!vacations.length ? <p className="rounded-md border border-dashed border-[#dfe4dd] p-4 text-sm text-[#667068]">Sin comprobantes de feriado para este trabajador.</p> : null}
           </div>
         </div>
+        <div className="border-t border-[#dfe4dd] p-4">
+          <p className="mb-2 text-sm font-semibold text-brand-900">Movimientos</p>
+          <SimpleTable headers={["Periodo", "Movimiento", "Dias", "Saldo"]}>
+            {ledger.map((item) => <tr className="border-t" key={item.id}><td className="px-4 py-3">{item.period}</td><td className="px-4 py-3">{item.movementType}</td><td className="px-4 py-3">{item.days}</td><td className="px-4 py-3">{item.balanceAfter}</td></tr>)}
+          </SimpleTable>
+        </div>
       </SectionCard>
     </div>
   );
+}
+
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-md bg-brand-50 p-3"><p className="text-xs uppercase tracking-[0.08em] text-[#667068]">{label}</p><p className="mt-1 text-lg font-semibold text-brand-900">{value}</p></div>;
 }
 
 function EmployeePayslipsTab({ data, employee, payslips, sendPayslips, uploadPayslip }: { data: HrDashboardData; employee: HrEmployee; payslips: HrDashboardData["payslips"]; sendPayslips: (payslipIds: string[], resend?: boolean) => void; uploadPayslip: (event: FormEvent<HTMLFormElement>) => void }) {
@@ -1624,22 +1669,65 @@ function AccountantRowForm({ data, onSubmit }: { data: HrDashboardData; onSubmit
 }
 
 function VacationForm({ employeeId, submitJson }: { employeeId: string; submitJson: (event: FormEvent<HTMLFormElement>, endpoint: string, success: string) => void }) {
+  const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
+  async function previewVacation(form: HTMLFormElement) {
+    const formData = new FormData(form);
+    const payload = {
+      advanceAuthorized: formData.get("advanceAuthorized") === "on",
+      employeeId,
+      endDate: String(formData.get("endDate") ?? ""),
+      fractionationAgreement: formData.get("fractionationAgreement") === "on",
+      requestedBusinessDays: formData.get("requestedBusinessDays") ? Number(formData.get("requestedBusinessDays")) : undefined,
+      startDate: String(formData.get("startDate") ?? "")
+    };
+    const response = await fetch("/api/hr/vacations/preview", {
+      body: JSON.stringify(payload),
+      headers: { "Content-Type": "application/json" },
+      method: "POST"
+    });
+    const result = await response.json().catch(() => null);
+    setPreview(result?.preview ?? { error: result?.error ?? "preview_failed" });
+  }
   return (
     <>
       <form className="mt-4 space-y-3" onSubmit={(event) => submitJson(event, "/api/hr/vacations", "Vacaciones registradas.")}>
         <input name="employeeId" type="hidden" value={employeeId} />
         <input className="w-full rounded-md border px-3 py-2 text-sm" name="documentDate" type="date" defaultValue={today()} />
-        <input className="w-full rounded-md border px-3 py-2 text-sm" name="contractPeriodStart" type="date" />
-        <input className="w-full rounded-md border px-3 py-2 text-sm" name="contractPeriodEnd" type="date" />
+        <div className="grid gap-2 sm:grid-cols-2">
+          <input className="w-full rounded-md border px-3 py-2 text-sm" name="contractPeriodStart" type="date" />
+          <input className="w-full rounded-md border px-3 py-2 text-sm" name="contractPeriodEnd" type="date" />
+        </div>
         <input className="w-full rounded-md border px-3 py-2 text-sm" name="startDate" type="date" required />
-        <input className="w-full rounded-md border px-3 py-2 text-sm" name="endDate" type="date" required />
-        <input className="w-full rounded-md border px-3 py-2 text-sm" name="progressiveDays" placeholder="Vacaciones progresivas" type="number" step="0.01" />
-        <input className="w-full rounded-md border px-3 py-2 text-sm" name="nonBusinessDays" placeholder="Domingos e inhabiles" type="number" step="0.01" />
-        <select className="w-full rounded-md border px-3 py-2 text-sm" name="status"><option value="solicitada">Solicitada</option><option value="aprobada">Aprobada</option><option value="tomada">Tomada</option><option value="rechazada">Rechazada</option></select>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <input className="w-full rounded-md border px-3 py-2 text-sm" name="requestedBusinessDays" placeholder="Dias habiles solicitados" type="number" step="0.01" />
+          <input className="w-full rounded-md border px-3 py-2 text-sm" name="endDate" type="date" />
+        </div>
+        <select className="w-full rounded-md border px-3 py-2 text-sm" name="status"><option value="borrador">Borrador</option><option value="solicitada">Solicitada</option><option value="pendiente">Pendiente</option><option value="aprobada">Aprobar y generar comprobante</option><option value="rechazada">Rechazada</option></select>
         <label className="flex items-center gap-2 text-sm"><input name="fractionalVacation" type="checkbox" /> Feriado fraccionado</label>
+        <label className="flex items-center gap-2 text-sm"><input name="fractionationAgreement" type="checkbox" /> Existe acuerdo de fraccionamiento</label>
+        <label className="flex items-center gap-2 text-sm"><input name="advanceAuthorized" type="checkbox" /> Autorizar vacaciones anticipadas</label>
         <input className="w-full rounded-md border px-3 py-2 text-sm" name="observation" placeholder="Observacion" />
         <input className="w-full rounded-md border px-3 py-2 text-sm" name="note" placeholder="Nota comprobante" />
-        <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" type="submit">Registrar vacaciones</button>
+        {preview ? (
+          <div className="rounded-md border border-brand-100 bg-brand-50 p-3 text-xs text-brand-900">
+            {"error" in preview ? <p>Vista previa no disponible: {String(preview.error)}</p> : (
+              <div className="grid gap-1 sm:grid-cols-2">
+                <p>Dias habiles: {String(preview.businessDays ?? "-")}</p>
+                <p>Ultimo dia computado: {String(preview.lastCountedVacationDate ?? "-")}</p>
+                <p>Fin descanso: {String(preview.effectiveRestEndDate ?? "-")}</p>
+                <p>Reincorporacion: {String(preview.returnToWorkDate ?? "-")}</p>
+                <p>Proporcional proyectado: {Number(preview.projectedProportional ?? 0).toFixed(6)}</p>
+                <p>Anticipo: {String(preview.advanceDays ?? 0)} dias</p>
+                <p>FIFO: {Array.isArray(preview.allocations) ? preview.allocations.length : 0} periodos</p>
+                <p>Valido: {preview.valid ? "SI" : "NO"}</p>
+              </div>
+            )}
+          </div>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <button className="rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" onClick={(event) => previewVacation(event.currentTarget.form as HTMLFormElement)} type="button">Vista previa</button>
+          <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" type="submit">Guardar solicitud</button>
+        </div>
       </form>
       <form className="mt-4 border-t border-[#dfe4dd] pt-4 space-y-3" onSubmit={(event) => submitJson(event, "/api/hr/vacations/accruals", "Movimiento de vacaciones registrado.")}>
         <input name="employeeId" type="hidden" value={employeeId} />
@@ -1752,8 +1840,8 @@ function PaymentsMiniTable({ payments }: { payments: HrDashboardData["paymentIte
   );
 }
 
-function TableHeader({ title }: { title: string }) {
-  return <div className="flex items-center gap-2 border-b border-[#dfe4dd] bg-white p-4"><SlidersHorizontal className="h-4 w-4 text-brand-700" /><h3 className="font-semibold text-brand-900">{title}</h3></div>;
+function TableHeader({ action, title }: { action?: React.ReactNode; title: string }) {
+  return <div className="flex items-center justify-between gap-2 border-b border-[#dfe4dd] bg-white p-4"><div className="flex items-center gap-2"><SlidersHorizontal className="h-4 w-4 text-brand-700" /><h3 className="font-semibold text-brand-900">{title}</h3></div>{action}</div>;
 }
 
 function SimpleTable({ children, headers }: { children: React.ReactNode; headers: string[] }) {

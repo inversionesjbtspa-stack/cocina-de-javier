@@ -70,10 +70,17 @@ export type HrVacationRequest = {
   id: string;
   employeeId: string;
   employeeName: string;
+  advanceDays?: number;
   startDate: string;
   endDate: string;
   businessDays: number;
+  documentNumber?: string | null;
+  effectiveRestEndDate?: string | null;
+  lastCountedVacationDate?: string | null;
   previousBalance: number;
+  projectedBusinessDays?: number;
+  receiptStatus?: string | null;
+  returnToWorkDate?: string | null;
   resultingBalance: number;
   status: string;
   observation: string | null;
@@ -118,6 +125,24 @@ export type HrVacationLedger = {
   movementType: string;
   days: number;
   balanceAfter: number;
+};
+
+export type HrVacationPeriod = {
+  id: string;
+  employeeId: string;
+  periodStart: string;
+  periodEnd: string;
+  baseDays: number;
+  progressiveDays: number;
+  positiveAdjustments: number;
+  negativeAdjustments: number;
+  usedDays: number;
+  reservedDays: number;
+  advanceDays: number;
+  availableBalance: number;
+  continuousBlockRequired: number;
+  continuousBlockUsed: number;
+  status: string;
 };
 
 export type HrPaymentBatch = {
@@ -181,6 +206,7 @@ export type HrDashboardData = {
   finiquitos: HrTerminationSettlement[];
   honorarios: HrHonorario[];
   vacationLedger: HrVacationLedger[];
+  vacationPeriods: HrVacationPeriod[];
   kpis: {
     activeEmployees: number;
     payslipsLoaded: number;
@@ -323,7 +349,8 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
       vacations: [],
       finiquitos: [],
       honorarios: [],
-      vacationLedger: []
+      vacationLedger: [],
+      vacationPeriods: []
     };
   }
 
@@ -331,7 +358,7 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
   const supabase = createAdminClient();
   // Admin client is required for server-side aggregation across HR tables; access is scoped
   // by the authenticated HR membership above and every tenant-owned table below.
-  const [{ data: employeeRows }, { data: payslipRows }, { data: vacationRows }, { data: paymentRows }, { data: batchRows }, { data: accountantRows }, { data: noveltyRows }, { data: finiquitoRows }, { data: honorarioRows }, { data: vacationLedgerRows }] = await Promise.all([
+  const [{ data: employeeRows }, { data: payslipRows }, { data: vacationRows }, { data: paymentRows }, { data: batchRows }, { data: accountantRows }, { data: noveltyRows }, { data: finiquitoRows }, { data: honorarioRows }, { data: vacationLedgerRows }, { data: vacationPeriodRows }] = await Promise.all([
     supabase
       .from("hr_employees")
       .select("*,hr_employee_bank_accounts(id,bank_name,bank_code,account_type,account_number,payment_email,account_holder_name,account_holder_rut,validation_status)")
@@ -345,7 +372,7 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
       .order("created_at", { ascending: false }),
     supabase
       .from("hr_vacation_requests")
-      .select("id,employee_id,start_date,end_date,business_days,previous_balance,resulting_balance,status,observation,hr_employees(full_name)")
+      .select("id,employee_id,start_date,end_date,business_days,previous_balance,resulting_balance,status,observation,projected_business_days,advance_days,last_counted_vacation_date,effective_rest_end_date,return_to_work_date,document_number,receipt_number,receipt_status,hr_employees(full_name)")
       .eq("tenant_id", ctx.tenantId)
       .order("start_date", { ascending: false })
       .limit(80),
@@ -395,6 +422,12 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
       .eq("tenant_id", ctx.tenantId)
       .order("created_at", { ascending: false })
       .limit(20)
+    ,
+    supabase
+      .from("hr_vacation_periods")
+      .select("id,employee_id,period_start,period_end,base_days,progressive_days,positive_adjustments,negative_adjustments,used_days,reserved_days,advance_days,available_balance,continuous_block_required,continuous_block_used,status")
+      .eq("tenant_id", ctx.tenantId)
+      .order("period_start", { ascending: true })
   ]);
 
   const employees = ((employeeRows ?? []) as RawEmployee[]).map(mapEmployee);
@@ -420,13 +453,20 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
     storagePath: row.storage_path
   }));
   const vacations = (vacationRows ?? []).map((row) => ({
+    advanceDays: Number(row.advance_days ?? 0),
     businessDays: Number(row.business_days ?? 0),
+    documentNumber: row.document_number ?? row.receipt_number,
     employeeId: row.employee_id,
     employeeName: relatedFullName(row.hr_employees, "Trabajador"),
     endDate: row.end_date,
+    effectiveRestEndDate: row.effective_rest_end_date,
     id: row.id,
+    lastCountedVacationDate: row.last_counted_vacation_date,
     observation: row.observation,
     previousBalance: Number(row.previous_balance ?? 0),
+    projectedBusinessDays: Number(row.projected_business_days ?? 0),
+    receiptStatus: row.receipt_status,
+    returnToWorkDate: row.return_to_work_date,
     resultingBalance: Number(row.resulting_balance ?? 0),
     startDate: row.start_date,
     status: row.status
@@ -514,6 +554,23 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
     movementType: row.movement_type,
     period: row.period
   }));
+  const vacationPeriods = (vacationPeriodRows ?? []).map((row) => ({
+    advanceDays: Number(row.advance_days ?? 0),
+    availableBalance: Number(row.available_balance ?? 0),
+    baseDays: Number(row.base_days ?? 15),
+    continuousBlockRequired: Number(row.continuous_block_required ?? 10),
+    continuousBlockUsed: Number(row.continuous_block_used ?? 0),
+    employeeId: row.employee_id,
+    id: row.id,
+    negativeAdjustments: Number(row.negative_adjustments ?? 0),
+    periodEnd: row.period_end,
+    periodStart: row.period_start,
+    positiveAdjustments: Number(row.positive_adjustments ?? 0),
+    progressiveDays: Number(row.progressive_days ?? 0),
+    reservedDays: Number(row.reserved_days ?? 0),
+    status: row.status,
+    usedDays: Number(row.used_days ?? 0)
+  }));
   const payslipEmployeeIds = new Set(payslips.map((payslip) => payslip.employeeId).filter(Boolean));
   const monthPaymentAmount = paymentItems
     .filter((item) => ["pendiente_pago", "aprobado", "incluido_en_nomina", "en_nomina", "pagado"].includes(item.status))
@@ -541,6 +598,7 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
     finiquitos,
     honorarios,
     vacationLedger,
+    vacationPeriods,
     payslips,
     period,
     vacations

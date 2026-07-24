@@ -11,6 +11,22 @@ import { buildSalaryRows, salaryRowHasNovelty } from "../src/lib/hr/salary-data.
 import { SALARY_EXPORT_COLUMNS, SALARY_PRESERVED_SHEETS, SALARY_TEMPLATE } from "../src/lib/hr/salary-export-map.ts";
 import { sanitizePayslipFilename, validatePayslipUploadBatch, validatePayslipUploadFile } from "../src/lib/hr/payslip-upload-policy.ts";
 import { businessDaysInclusive, accruedVacationDays } from "../src/lib/hr/utils.ts";
+import { buildVacationExcelXml } from "../src/lib/hr/vacation-export.ts";
+import {
+  allocateVacationFifo,
+  calculateAnnualEntitlement,
+  calculateProjectedProportional,
+  calculateReturnToWorkDate,
+  calculateVacationBusinessDays,
+  calculateVacationEndDate,
+  calculateVacationPreview,
+  CHILE_HOLIDAYS_FIXTURE,
+  evaluateHolidayCalendarStatus,
+  generateContractPeriods,
+  reverseVacationAllocation,
+  validateAdvanceVacation,
+  validateFractionation
+} from "../src/lib/hr/vacation-domain.ts";
 import { buildVacationReceiptModel, nextBusinessDateAfter, renderVacationReceiptHtml, renderVacationReceiptPdf, vacationReceiptHash } from "../src/lib/hr/vacation-receipt.ts";
 
 const fixturePath = (...segments: string[]) => path.resolve(process.cwd(), "tests", "fixtures", "hr", ...segments);
@@ -91,7 +107,7 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(employeesRoute, /hr\.employee_created/);
   assert.match(payslipsRoute, /hr\.payslip_uploaded/);
   assert.match(payslipsSendRoute, /hr\.payslip_send_requested/);
-  assert.match(vacationRoute, /businessDaysInclusive/);
+  assert.match(vacationRoute, /calculateVacationPreview/);
   assert.match(vacationAccrualRoute, /hr\.vacation_accrual_recorded/);
   assert.match(finiquitosRoute, /hr\.finiquito_created/);
   assert.match(honorariosRoute, /hr\.honorario_created/);
@@ -107,6 +123,91 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(client, /Anticipos avanzados/);
   assert.match(client, /Exportar tramo banco/);
   assert.match(client, /Enviar liquidaciones pendientes pagadas/);
+});
+
+test("HR vacation domain generates anniversary periods and separates projected proportional", () => {
+  const periods = generateContractPeriods("2024-07-23", "2026-07-24", 1);
+  assert.equal(periods[0].periodStart, "2024-07-23");
+  assert.equal(periods[0].periodEnd, "2025-07-22");
+  assert.equal(periods[0].status, "closed");
+  assert.equal(calculateAnnualEntitlement({ progressiveDays: 0 }), 15);
+  assert.equal(calculateProjectedProportional(15), 1.25);
+  assert.equal(Number(calculateProjectedProportional(16).toFixed(6)), 1.333333);
+  assert.equal(Number(calculateProjectedProportional(17).toFixed(6)), 1.416667);
+});
+
+test("HR vacation business days exclude Saturdays, Sundays and configured holidays", () => {
+  assert.equal(calculateVacationBusinessDays("2026-07-13", "2026-07-17", CHILE_HOLIDAYS_FIXTURE, "RM"), 4);
+  assert.equal(calculateVacationBusinessDays("2026-07-18", "2026-07-19", CHILE_HOLIDAYS_FIXTURE), 0);
+  assert.equal(calculateVacationEndDate("2026-07-13", 4, CHILE_HOLIDAYS_FIXTURE, "RM"), "2026-07-17");
+  assert.deepEqual(calculateReturnToWorkDate("2026-07-17", { source: "employee", workingWeekdays: [1, 2, 3, 4, 5, 6] }).returnDate, "2026-07-18");
+});
+
+test("HR vacation FIFO allocates mandatory example and keeps second period protected", () => {
+  const fifo = allocateVacationFifo([
+    { availableBalance: 5, baseDays: 15, continuousBlockRequired: 10, continuousBlockUsed: 10, periodEnd: "2025-07-22", periodStart: "2024-07-23", usedDays: 10 },
+    { availableBalance: 15, baseDays: 15, continuousBlockRequired: 10, continuousBlockUsed: 0, periodEnd: "2026-07-22", periodStart: "2025-07-23", usedDays: 0 }
+  ], 7);
+  assert.equal(fifo.remainingDays, 0);
+  assert.equal(fifo.allocations[0].days, 5);
+  assert.equal(fifo.allocations[0].resultingBalance, 0);
+  assert.equal(fifo.allocations[1].days, 2);
+  assert.equal(fifo.allocations[1].resultingBalance, 13);
+  assert.equal(validateFractionation({ agreementAccepted: true, periods: [{ availableBalance: 15, baseDays: 15, continuousBlockRequired: 10, continuousBlockUsed: 0, periodEnd: "2026-07-22", periodStart: "2025-07-23" }], requestedDays: 2 }).ok, true);
+});
+
+test("HR vacation blocks silent advances and permits explicit advance within projected proportional", () => {
+  assert.equal(validateAdvanceVacation({ availableDays: 1, projectedProportionalDays: 2, requestedDays: 2 }).ok, false);
+  assert.equal(validateAdvanceVacation({ advanceAuthorized: true, availableDays: 1, projectedProportionalDays: 2, requestedDays: 2 }).ok, true);
+  assert.equal(validateAdvanceVacation({ advanceAuthorized: true, availableDays: 0, projectedProportionalDays: 1, requestedDays: 3 }).ok, false);
+});
+
+test("HR vacation preview returns FIFO, return date, immutable snapshot inputs and reversal", () => {
+  const preview = calculateVacationPreview({
+    agreementAccepted: true,
+    asOf: "2026-07-24",
+    hireDate: "2024-07-23",
+    periods: [
+      { availableBalance: 5, baseDays: 15, continuousBlockRequired: 10, continuousBlockUsed: 10, periodEnd: "2025-07-22", periodStart: "2024-07-23" },
+      { availableBalance: 15, baseDays: 15, continuousBlockRequired: 10, continuousBlockUsed: 0, periodEnd: "2026-07-22", periodStart: "2025-07-23" }
+    ],
+    requestedBusinessDays: 7,
+    schedule: { source: "employee", workingWeekdays: [1, 2, 3, 4, 5] },
+    startDate: "2026-07-23"
+  });
+  assert.equal(preview.businessDays, 7);
+  assert.equal(preview.allocations.length, 2);
+  assert.equal(preview.returnToWorkDate, "2026-08-03");
+  assert.equal(reverseVacationAllocation(preview.allocations)[0].days, -5);
+});
+
+test("HR vacation calendar status exposes verified, incomplete and missing years", () => {
+  assert.deepEqual(evaluateHolidayCalendarStatus("2026-01-01", "2026-12-31", { "2026": "verified" }), {
+    calendarStatus: "verified",
+    calendarWarnings: [],
+    years: [2026]
+  });
+  assert.equal(evaluateHolidayCalendarStatus("2026-12-30", "2027-01-03", { "2026": "verified", "2027": "incomplete" }).calendarStatus, "incomplete");
+  assert.equal(evaluateHolidayCalendarStatus("2028-01-01", "2028-01-02", {}).calendarStatus, "missing");
+});
+
+test("HR vacation progressive entitlement requires accreditation", () => {
+  assert.equal(calculateAnnualEntitlement({ asOf: "2026-07-24", hireDate: "2016-07-23", progressiveRecords: [] }), 15);
+  assert.equal(calculateAnnualEntitlement({ asOf: "2026-07-24", hireDate: "2016-07-23", progressiveRecords: [{ effectiveFrom: "2026-01-01", previousEmployerYears: 10, status: "acreditado" }] }), 18);
+});
+
+test("HR vacation export workbook contains separated projected proportional columns", () => {
+  const xml = buildVacationExcelXml({
+    employees: [{ fullName: "Trabajador Demo", hireDate: "2024-07-23", id: "emp-1", rut: "12.345.678-5", status: "activo" }],
+    movements: [{ balanceAfter: 13, days: -7, employeeId: "emp-1", movementType: "aprobacion", period: "2026-07" }],
+    periods: [{ availableBalance: 13, baseDays: 15, employeeId: "emp-1", periodEnd: "2026-07-22", periodStart: "2025-07-23", progressiveDays: 0, reservedDays: 0, status: "open", usedDays: 2 }],
+    projectedByEmployee: new Map([["emp-1", 1.25]]),
+    requests: [{ businessDays: 7, documentNumber: "FER-2026-000001", employeeId: "emp-1", endDate: "2026-07-31", id: "req-1", resultingBalance: 13, startDate: "2026-07-23", status: "aprobada" }]
+  });
+  assert.match(xml, /RESUMEN/);
+  assert.match(xml, /Proporcional proyectado/);
+  assert.match(xml, /DETALLE POR PERIODO/);
+  assert.match(xml, /FER-2026-000001/);
 });
 
 test("HR mass payroll workflow exposes migrations, routes and UI controls", async () => {
@@ -261,9 +362,9 @@ test("HR payslip classifier matches a PDF-like file by RUT without writing stora
 
 test("HR vacation receipt renders the definitive feriado model without legacy trial watermark", async () => {
   const migration = await readFile("supabase/migrations/202607230002_hr_vacation_receipts.sql", "utf8");
+  const periodsMigration = await readFile("supabase/migrations/202607240001_hr_vacation_periods_workflow.sql", "utf8");
   const route = await readFile("src/app/api/hr/vacations/[id]/papeleta/route.ts", "utf8");
   const cancelRoute = await readFile("src/app/api/hr/vacations/[id]/route.ts", "utf8");
-  const createRoute = await readFile("src/app/api/hr/vacations/route.ts", "utf8");
   const model = buildVacationReceiptModel({
     allocations: [
       { balanceAfter: 0, balanceBefore: 5, daysUsed: 5, period: "2024-2025" },
@@ -297,10 +398,73 @@ test("HR vacation receipt renders the definitive feriado model without legacy tr
   assert.match(migration, /file_sha256 text/);
   assert.match(route, /format === "html"/);
   assert.match(route, /renderVacationReceiptPdf/);
-  assert.match(createRoute, /hr-vacation-documents/);
-  assert.match(createRoute, /hr\.vacation_receipt_generated/);
-  assert.match(cancelRoute, /hr\.vacation_cancelled/);
-  assert.match(cancelRoute, /hr_vacation_ledger/);
+  assert.match(route, /hr-vacation-documents/);
+  assert.match(route, /vacationReceiptHash/);
+  assert.match(periodsMigration, /hr\.vacation_cancelled/);
+  assert.match(cancelRoute, /hr_cancel_vacation_request/);
+  assert.match(periodsMigration, /hr_vacation_movements/);
+  assert.match(periodsMigration, /create table if not exists public\.hr_vacation_periods/);
+  assert.match(periodsMigration, /create table if not exists public\.hr_vacation_allocations/);
+  assert.match(periodsMigration, /create table if not exists public\.hr_holiday_calendar/);
+  assert.match(periodsMigration, /hr_next_document_number/);
+  assert.match(periodsMigration, /hr_approve_vacation_request/);
+  assert.match(periodsMigration, /hr_accredit_progressive_vacation/);
+});
+
+test("HR vacation hardening migration implements transactional FIFO, idempotent reserves and secure RPCs", async () => {
+  const migration = await readFile("supabase/migrations/202607240002_hr_vacation_transaction_hardening.sql", "utf8");
+  const createRoute = await readFile("src/app/api/hr/vacations/route.ts", "utf8");
+  const approveRoute = await readFile("src/app/api/hr/vacations/[id]/approve/route.ts", "utf8");
+  const rejectRoute = await readFile("src/app/api/hr/vacations/[id]/reject/route.ts", "utf8");
+  const cancelRoute = await readFile("src/app/api/hr/vacations/[id]/route.ts", "utf8");
+  const receiptRoute = await readFile("src/app/api/hr/vacations/[id]/receipt/route.ts", "utf8");
+  const accrualRoute = await readFile("src/app/api/hr/vacations/accruals/route.ts", "utf8");
+
+  assert.match(migration, /202607240002_hr_vacation_transaction_hardening/);
+  assert.match(migration, /hr_current_vacation_actor/);
+  assert.match(migration, /auth\.uid\(\)/);
+  assert.match(migration, /set search_path = public, pg_temp/i);
+  assert.match(migration, /drop function if exists public\.hr_approve_vacation_request\(text, uuid, uuid, uuid, uuid, jsonb\)/);
+  assert.match(migration, /create or replace function public\.hr_approve_vacation_request\(\s*p_request_id uuid,\s*p_expected_version integer default null,/);
+  assert.doesNotMatch(migration, /create or replace function public\.hr_approve_vacation_request\(\s*p_actor_role text/);
+  assert.match(migration, /for update/gi);
+  assert.match(migration, /hr_vacation_has_overlap/);
+  assert.match(migration, /vacation_overlap/);
+  assert.match(migration, /order by period_start asc, created_at asc, id asc/);
+  assert.match(migration, /drop constraint if exists hr_vacation_allocations_tenant_id_request_id_allocation_order_key/);
+  assert.match(migration, /insert into public\.hr_vacation_allocations/);
+  assert.match(migration, /reserved_days = reserved_days \+ v_take/);
+  assert.match(migration, /reserved_days = greatest\(0, reserved_days - v_allocation\.allocated_days\)/);
+  assert.match(migration, /used_days = used_days \+ v_allocation\.allocated_days/);
+  assert.match(migration, /used_days = greatest\(0, used_days - v_allocation\.allocated_days\)/);
+  assert.match(migration, /advance_days = greatest\(0, advance_days - v_allocation\.allocated_days\)/);
+  assert.match(migration, /allocation_status = 'reversed'/);
+  assert.match(migration, /vacation_already_cancelled/);
+  assert.match(migration, /vacation_not_rejectable/);
+  assert.match(migration, /vacation_calendar_not_verified/);
+  assert.match(migration, /hr_vacation_allocations_one_active_reservation_uidx/);
+  assert.match(migration, /revoke execute on function public\.hr_approve_vacation_request\(uuid, integer, text\) from public/);
+  assert.match(migration, /grant execute on function public\.hr_approve_vacation_request\(uuid, integer, text\) to authenticated/);
+
+  assert.match(createRoute, /hr_create_vacation_request/);
+  assert.doesNotMatch(createRoute, /p_actor_role/);
+  assert.doesNotMatch(createRoute, /p_tenant_id/);
+  assert.doesNotMatch(createRoute, /rpc_not_available_fallback_insert/);
+  assert.match(approveRoute, /p_expected_version/);
+  assert.doesNotMatch(approveRoute, /p_snapshot/);
+  assert.doesNotMatch(rejectRoute, /rpc_not_available_fallback_reject/);
+  assert.doesNotMatch(cancelRoute, /rpc_not_available_fallback_cancel/);
+  assert.match(receiptRoute, /createSignedUrl/);
+  assert.match(receiptRoute, /expiresInSeconds: 600/);
+  assert.match(accrualRoute, /getEmployeeForHrTenant/);
+  assert.match(accrualRoute, /employee_not_active/);
+});
+
+test("HR vacation hardening documents V1 limitations without pretending native XLSX or final PDF", async () => {
+  const receipt = await readFile("src/lib/hr/vacation-receipt.ts", "utf8");
+  const exportFile = await readFile("src/lib/hr/vacation-export.ts", "utf8");
+  assert.match(receipt, /renderVacationReceiptPdf/);
+  assert.match(exportFile, /urn:schemas-microsoft-com:office:spreadsheet/);
 });
 
 const aprilPayslipsFixture = fixturePath("liquidaciones-abril-2026.pdf");

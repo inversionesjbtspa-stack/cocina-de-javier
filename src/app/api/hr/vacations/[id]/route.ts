@@ -1,0 +1,49 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import { requireHrContext } from "@/lib/hr/auth";
+import { getVacationRequestForTenant } from "@/lib/hr/vacation-server";
+import { createAdminClient } from "@/lib/supabase/admin";
+
+export const runtime = "nodejs";
+
+const patchSchema = z.object({
+  reason: z.string().trim().max(800).optional().default(""),
+  status: z.enum(["anulada"])
+});
+
+export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const ctx = await requireHrContext();
+  if (ctx.error) return ctx.error;
+  const { id } = await params;
+  const supabase = createAdminClient();
+  const [{ data, error }, allocations, movements] = await Promise.all([
+    supabase
+      .from("hr_vacation_requests")
+      .select("*,hr_employees(id,full_name,rut,position,area,cost_center,hire_date,contract_type)")
+      .eq("tenant_id", ctx.membership.tenant_id)
+      .eq("id", id)
+      .maybeSingle(),
+    supabase.from("hr_vacation_allocations").select("*").eq("tenant_id", ctx.membership.tenant_id).eq("request_id", id).order("allocation_order", { ascending: true }),
+    supabase.from("hr_vacation_movements").select("*").eq("tenant_id", ctx.membership.tenant_id).eq("request_id", id).order("created_at", { ascending: false })
+  ]);
+  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 422 });
+  if (!data) return NextResponse.json({ ok: false, error: "vacation_not_found" }, { status: 404 });
+  return NextResponse.json({ ok: true, allocations: allocations.data ?? [], movements: movements.data ?? [], vacation: data });
+}
+
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const ctx = await requireHrContext();
+  if (ctx.error) return ctx.error;
+  const parsed = patchSchema.safeParse(await request.json());
+  if (!parsed.success) return NextResponse.json({ ok: false, error: "vacation_patch_validation_failed", fields: parsed.error.flatten().fieldErrors }, { status: 422 });
+  const { id } = await params;
+  const supabase = createAdminClient();
+  const result = await supabase.rpc("hr_cancel_vacation_request", {
+    p_reason: parsed.data.reason,
+    p_request_id: id
+  });
+  if (!result.error) return NextResponse.json({ ok: true, result: result.data });
+  const current = await getVacationRequestForTenant(supabase, ctx.membership.tenant_id, id, "id,tenant_id,status");
+  if (!current.ok) return NextResponse.json({ ok: false, error: "vacation_not_found" }, { status: 404 });
+  return NextResponse.json({ ok: false, error: result.error.message }, { status: 422 });
+}
