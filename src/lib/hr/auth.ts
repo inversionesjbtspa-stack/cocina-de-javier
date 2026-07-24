@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-
-const allowedRoles = ["owner", "admin", "finance_manager"] as const;
+import { isHrAllowedRole } from "@/lib/hr/security";
 
 export async function requireHrContext() {
   const auth = await createClient();
@@ -21,7 +20,7 @@ export async function requireHrContext() {
     .eq("status", "active")
     .maybeSingle();
 
-  if (!membership.data || !allowedRoles.includes(membership.data.role as typeof allowedRoles[number])) {
+  if (!membership.data || !isHrAllowedRole(membership.data.role)) {
     return {
       error: NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 }),
       membership: null,

@@ -1,6 +1,7 @@
 import { unstable_noStore as noStore } from "next/cache";
 import { hasSupabaseAdminConfig } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requireHrServerContext } from "@/lib/hr/security";
 import { accruedVacationDays, currentPeriod } from "@/lib/hr/utils";
 
 export type HrBankAccount = {
@@ -56,6 +57,12 @@ export type HrPayslip = {
   status: string;
   storageBucket: string;
   storagePath: string;
+  detectedRut?: string | null;
+  detectedName?: string | null;
+  fileSha256?: string | null;
+  matchLevel?: string | null;
+  matchMethod?: string | null;
+  reviewReason?: string | null;
   createdAt: string;
 };
 
@@ -139,7 +146,14 @@ export type HrAccountantDataRow = {
   responsibilityBonus: number;
   aguinaldo: number;
   advances: number;
+  cashAllowance: number;
+  ccafLoan: number;
+  companyLoan: number;
+  movilization: number;
   observations: string | null;
+  phoneAllowance: number;
+  reason: string | null;
+  sundaySurcharge: number;
 };
 
 export type HrMonthlyNovelty = {
@@ -313,41 +327,51 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
     };
   }
 
+  const ctx = await requireHrServerContext();
   const supabase = createAdminClient();
+  // Admin client is required for server-side aggregation across HR tables; access is scoped
+  // by the authenticated HR membership above and every tenant-owned table below.
   const [{ data: employeeRows }, { data: payslipRows }, { data: vacationRows }, { data: paymentRows }, { data: batchRows }, { data: accountantRows }, { data: noveltyRows }, { data: finiquitoRows }, { data: honorarioRows }, { data: vacationLedgerRows }] = await Promise.all([
     supabase
       .from("hr_employees")
       .select("*,hr_employee_bank_accounts(id,bank_name,bank_code,account_type,account_number,payment_email,account_holder_name,account_holder_rut,validation_status)")
+      .eq("tenant_id", ctx.tenantId)
       .order("full_name", { ascending: true }),
     supabase
       .from("hr_payslips")
-      .select("id,employee_id,period,original_filename,net_amount,status,storage_bucket,storage_path,created_at,send_status,send_attempts,hr_employees(full_name)")
+      .select("*,hr_employees(full_name)")
+      .eq("tenant_id", ctx.tenantId)
       .eq("period", period)
       .order("created_at", { ascending: false }),
     supabase
       .from("hr_vacation_requests")
       .select("id,employee_id,start_date,end_date,business_days,previous_balance,resulting_balance,status,observation,hr_employees(full_name)")
+      .eq("tenant_id", ctx.tenantId)
       .order("start_date", { ascending: false })
       .limit(80),
     supabase
       .from("hr_payment_items")
       .select("id,employee_id,period,payment_type,amount,glosa,status,scheduled_date,hr_employees(full_name)")
+      .eq("tenant_id", ctx.tenantId)
       .eq("period", period)
       .order("created_at", { ascending: false }),
     supabase
       .from("hr_payment_batches")
       .select("id,period,payment_type,glosa_global,total_amount,total_employees,status,generated_at")
+      .eq("tenant_id", ctx.tenantId)
       .order("generated_at", { ascending: false })
       .limit(20),
     supabase
       .from("hr_accountant_data_rows")
-      .select("id,period,employee_id,full_name,employee_name,rut,cost_center,absences,licenses,overtime_hours,production_bonus_amount,compensatory_bonus_amount,responsibility_bonus_amount,aguinaldo_amount,advances_amount,observations")
+      .select("*")
+      .eq("tenant_id", ctx.tenantId)
       .eq("period", period)
       .order("row_number", { ascending: true })
       .limit(120),
     supabase
       .from("hr_monthly_novelties")
       .select("id,employee_id,period,novelty_type,quantity,hours,amount,status,notes,hr_employees(full_name)")
+      .eq("tenant_id", ctx.tenantId)
       .eq("period", period)
       .order("created_at", { ascending: false })
       .limit(20)
@@ -355,17 +379,20 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
     supabase
       .from("hr_termination_settlements")
       .select("id,employee_id,termination_date,causal,settlement_amount,status,hr_employees(full_name)")
+      .eq("tenant_id", ctx.tenantId)
       .order("created_at", { ascending: false })
       .limit(20),
     supabase
       .from("hr_honorarios")
       .select("id,full_name,rut,period,amount,status")
+      .eq("tenant_id", ctx.tenantId)
       .eq("period", period)
       .order("created_at", { ascending: false })
       .limit(20),
     supabase
       .from("hr_vacation_ledger")
       .select("id,employee_id,period,movement_type,days,balance_after,hr_employees(full_name)")
+      .eq("tenant_id", ctx.tenantId)
       .order("created_at", { ascending: false })
       .limit(20)
   ]);
@@ -376,10 +403,16 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
     createdAt: row.created_at,
     employeeId: row.employee_id,
     employeeName: relatedFullName(row.hr_employees, "Pendiente revision"),
+    detectedName: row.detected_name,
+    detectedRut: row.detected_rut,
+    fileSha256: row.file_sha256,
     id: row.id,
+    matchLevel: row.match_level,
+    matchMethod: row.match_method,
     netAmount: Number(row.net_amount ?? 0),
     originalFilename: row.original_filename,
     period: row.period,
+    reviewReason: row.review_reason,
     sendAttempts: Number(row.send_attempts ?? 0),
     sendStatus: row.send_status ?? "pendiente_envio",
     status: row.status,
@@ -423,17 +456,24 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
     absences: Number(row.absences ?? 0),
     advances: Number(row.advances_amount ?? 0),
     aguinaldo: Number(row.aguinaldo_amount ?? 0),
+    cashAllowance: Number(row.cash_allowance_amount ?? 0),
+    ccafLoan: Number(row.ccaf_loan_amount ?? 0),
     compensatoryBonus: Number(row.compensatory_bonus_amount ?? 0),
+    companyLoan: Number(row.company_loan_amount ?? 0),
     costCenter: row.cost_center,
     employeeId: row.employee_id,
     fullName: row.full_name ?? row.employee_name ?? "Trabajador",
     id: row.id,
     licenses: Number(row.licenses ?? 0),
+    movilization: Number(row.movilization_amount ?? 0),
     observations: row.observations,
     overtimeHours: Number(row.overtime_hours ?? 0),
     period: row.period,
+    phoneAllowance: Number(row.phone_allowance_amount ?? 0),
     productionBonus: Number(row.production_bonus_amount ?? 0),
+    reason: row.reason,
     responsibilityBonus: Number(row.responsibility_bonus_amount ?? 0),
+    sundaySurcharge: Number(row.sunday_surcharge_amount ?? 0),
     rut: row.rut ?? ""
   }));
   const monthlyNovelties = (noveltyRows ?? []).map((row) => ({
