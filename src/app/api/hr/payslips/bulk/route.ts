@@ -41,6 +41,13 @@ function publicItem(item: Awaited<ReturnType<typeof buildPayslipPayrollImportIte
   };
 }
 
+function isConfirmable(item: Awaited<ReturnType<typeof buildPayslipPayrollImportItems>>[number]) {
+  return Boolean(item.employeeId)
+    && Boolean(item.period)
+    && (item.status === "listo" || item.status === "sin_pago")
+    && !item.warnings.includes("liquido_no_detectado");
+}
+
 export async function POST(request: Request) {
   const ctx = await requireHrContext();
   if (ctx.error) return ctx.error;
@@ -110,37 +117,58 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, mode: "preview", results: results.map(publicItem), summary });
   }
 
-  const unresolved = results.filter((item) => item.status === "requiere_revision" || item.status === "duplicado" || !item.employeeId);
-  if (unresolved.length) {
-    return NextResponse.json({ ok: false, error: "payslip_manual_review_required", results: results.map(publicItem), summary, unresolved: unresolved.map(publicItem) }, { status: 422 });
+  const confirmable = results.filter(isConfirmable);
+  const pendingReview = results.filter((item) => item.status === "requiere_revision" || !item.employeeId).length;
+  const duplicates = results.filter((item) => item.status === "duplicado").length;
+  if (!confirmable.length) {
+    return NextResponse.json({
+      ok: true,
+      confirmed: 0,
+      createdPayrollRows: 0,
+      duplicates,
+      failed: [],
+      mode: "commit",
+      paymentsCreated: 0,
+      pendingReview,
+      results: results.map(publicItem),
+      saved: 0,
+      savedIds: [],
+      summary,
+      zeroNet: 0
+    });
   }
 
   const batchPeriods = Array.from(new Set(results.map((item) => item.period).filter(Boolean)));
   const batch = await supabase.from("hr_payslip_import_batches").insert({
-    auto_matched: summary.ready + summary.zeroNet,
-    duplicated: summary.duplicates,
-    errors: summary.needsReview,
-    needs_review: summary.needsReview,
+    auto_matched: confirmable.length,
+    duplicated: duplicates,
+    errors: pendingReview,
+    needs_review: pendingReview,
     period: batchPeriods.length === 1 ? batchPeriods[0] : (fallbackPeriod || batchPeriods[0] || "multi"),
-    status: "confirmed",
+    status: pendingReview || duplicates ? "partially_confirmed" : "confirmed",
     tenant_id: ctx.membership.tenant_id,
     total_files: summary.total,
     uploaded_by: ctx.user.id
   }).select("id").single();
+  if (batch.error || !batch.data?.id) return NextResponse.json({ ok: false, error: "payslip_batch_insert_failed" }, { status: 500 });
 
   let paymentsCreated = 0;
   let saved = 0;
   let zeroNet = 0;
+  const failed: Array<{ error: string; fileName: string; page: number }> = [];
   const savedIds: string[] = [];
   const paymentIds: string[] = [];
-  for (const item of results) {
-    if (!item.employeeId || item.status === "duplicado" || item.status === "requiere_revision") continue;
+  for (const item of confirmable) {
+    if (!item.employeeId) continue;
     const path = `${ctx.membership.tenant_id}/${item.period}/${item.employeeId}/${Date.now()}-${sanitizePayslipFilename(item.fileName)}`;
     const upload = await supabase.storage.from("hr-payslips").upload(path, item.pagePdf, {
       contentType: "application/pdf",
       upsert: false
     });
-    if (upload.error) continue;
+    if (upload.error) {
+      failed.push({ error: "storage_upload_failed", fileName: item.fileName, page: item.page });
+      continue;
+    }
 
     const insert = await supabase.from("hr_payslips").insert({
       batch_id: batch.data?.id ?? null,
@@ -173,6 +201,7 @@ export async function POST(request: Request) {
     }).select("id").single();
     if (!insert.data?.id) {
       await supabase.storage.from("hr-payslips").remove([path]);
+      failed.push({ error: "payslip_insert_failed", fileName: item.fileName, page: item.page });
       continue;
     }
 
@@ -206,7 +235,10 @@ export async function POST(request: Request) {
     if (payment.error || !payment.data?.id) {
       await supabase.from("hr_payslips").delete().eq("tenant_id", ctx.membership.tenant_id).eq("id", insert.data.id);
       await supabase.storage.from("hr-payslips").remove([path]);
-      return NextResponse.json({ ok: false, error: "payment_item_insert_failed", saved, savedIds }, { status: 409 });
+      saved -= 1;
+      savedIds.pop();
+      failed.push({ error: "payment_item_insert_failed", fileName: item.fileName, page: item.page });
+      continue;
     }
 
     paymentsCreated += 1;
@@ -216,7 +248,7 @@ export async function POST(request: Request) {
   await supabase.from("audit_events").insert({
     actor_role: ctx.membership.role,
     actor_user_id: ctx.user.id,
-    after_data: { periods: batchPeriods, paymentsCreated, saved, summary, zeroNet },
+    after_data: { duplicates, failed: failed.length, paymentsCreated, pendingReview, periods: batchPeriods, saved, summary, zeroNet },
     company_id: ctx.membership.company_id,
     entity_id: batch.data?.id ?? null,
     entity_type: "hr_payslip_import_batch",
@@ -227,9 +259,14 @@ export async function POST(request: Request) {
   return NextResponse.json({
     ok: true,
     batchId: batch.data?.id,
+    confirmed: saved,
+    createdPayrollRows: paymentsCreated,
+    duplicates,
+    failed,
     mode: "commit",
     paymentsCreated,
     paymentIds,
+    pendingReview,
     results: results.map(publicItem),
     saved,
     savedIds,
