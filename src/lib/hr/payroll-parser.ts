@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
 import AdmZip from "adm-zip";
+import { SALARY_EXPORT_COLUMNS, SALARY_PRESERVED_SHEETS, SALARY_TEMPLATE } from "./salary-export-map.ts";
 
 export type ParsedPayslip = {
   page: number;
@@ -376,7 +377,7 @@ export function generatePayslipPdf(payslip: ParsedPayslip) {
   return Buffer.from(pdf);
 }
 
-export const accountantTemplatePath = path.join(process.cwd(), "src", "templates", "datos-sueldos-template.xlsx");
+export const accountantTemplatePath = path.join(process.cwd(), ...SALARY_TEMPLATE.templatePath);
 
 export function assertAccountantTemplateAvailable() {
   if (!fs.existsSync(accountantTemplatePath)) {
@@ -388,53 +389,87 @@ function escapeXml(value: string) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function inlineCell(column: string, row: number, value: string | number) {
+function inlineCell(column: string, row: number, value: string | number, style = "") {
+  const styleAttr = style ? ` s="${style}"` : "";
   if (typeof value === "number") {
-    return `<c r="${column}${row}"><v>${value}</v></c>`;
+    if (!value) return "";
+    return `<c r="${column}${row}"${styleAttr}><v>${value}</v></c>`;
   }
-  return `<c r="${column}${row}" t="inlineStr"><is><t>${escapeXml(value)}</t></is></c>`;
+  if (!value) return "";
+  return `<c r="${column}${row}"${styleAttr} t="inlineStr"><is><t>${escapeXml(value)}</t></is></c>`;
 }
 
-function accountantRowXml(rowNumber: number, row: AccountantRow) {
-  return `<row r="${rowNumber}">` +
-    inlineCell("A", rowNumber, row.fullName) +
-    inlineCell("B", rowNumber, row.rut) +
-    inlineCell("C", rowNumber, row.costCenter) +
-    inlineCell("D", rowNumber, row.absences) +
-    inlineCell("E", rowNumber, row.licenses) +
-    inlineCell("F", rowNumber, row.reason) +
-    inlineCell("G", rowNumber, row.overtimeHours) +
-    inlineCell("H", rowNumber, row.aguinaldo) +
-    inlineCell("I", rowNumber, 0) +
-    inlineCell("J", rowNumber, row.productionBonus) +
-    inlineCell("K", rowNumber, 0) +
-    inlineCell("L", rowNumber, row.compensatoryBonus) +
-    inlineCell("M", rowNumber, row.sundaySurcharge) +
-    inlineCell("N", rowNumber, row.responsibilityBonus) +
-    inlineCell("O", rowNumber, row.movilization) +
-    inlineCell("P", rowNumber, row.phoneAllowance) +
-    inlineCell("Q", rowNumber, row.cashAllowance) +
-    inlineCell("R", rowNumber, row.advances) +
-    inlineCell("S", rowNumber, 0) +
-    inlineCell("T", rowNumber, row.companyLoan) +
-    inlineCell("U", rowNumber, row.ccafLoan) +
-    inlineCell("V", rowNumber, 0) +
-    inlineCell("W", rowNumber, 0) +
+function cellStylesFromRow(rowXml: string) {
+  const styles: Record<string, string> = {};
+  for (const cell of rowXml.matchAll(/<c r="([A-Z]+)\d+"[^>]*?(?:\s+s="([^"]+)")?[^>]*>/g)) {
+    if (cell[2]) styles[cell[1]] = cell[2];
+  }
+  return styles;
+}
+
+function rowHeightAttr(rowXml: string) {
+  const attrs = rowXml.match(/<row\s+([^>]*)>/)?.[1] ?? "";
+  const ht = attrs.match(/\sht="[^"]+"/)?.[0] ?? "";
+  const customHeight = attrs.match(/\scustomHeight="[^"]+"/)?.[0] ?? "";
+  return `${ht}${customHeight}`;
+}
+
+function accountantRowXml(rowNumber: number, row: AccountantRow, styles: Record<string, string>, heightAttrs = "") {
+  const col = SALARY_EXPORT_COLUMNS;
+  return `<row r="${rowNumber}"${heightAttrs}>` +
+    inlineCell(col.fullName, rowNumber, row.fullName, styles[col.fullName]) +
+    inlineCell(col.rut, rowNumber, row.rut, styles[col.rut]) +
+    inlineCell(col.costCenter, rowNumber, row.costCenter, styles[col.costCenter]) +
+    inlineCell(col.absences, rowNumber, row.absences, styles[col.absences]) +
+    inlineCell(col.reason, rowNumber, row.reason, styles[col.reason]) +
+    inlineCell(col.overtimeHours, rowNumber, row.overtimeHours, styles[col.overtimeHours]) +
+    inlineCell(col.productionBonus, rowNumber, row.productionBonus, styles[col.productionBonus]) +
+    inlineCell(col.compensatoryBonus, rowNumber, row.compensatoryBonus, styles[col.compensatoryBonus]) +
+    inlineCell(col.sundaySurcharge, rowNumber, row.sundaySurcharge, styles[col.sundaySurcharge]) +
+    inlineCell(col.responsibilityBonus, rowNumber, row.responsibilityBonus, styles[col.responsibilityBonus]) +
+    inlineCell(col.movilization, rowNumber, row.movilization, styles[col.movilization]) +
+    inlineCell(col.phoneAllowance, rowNumber, row.phoneAllowance, styles[col.phoneAllowance]) +
+    inlineCell(col.cashAllowance, rowNumber, row.cashAllowance, styles[col.cashAllowance]) +
+    inlineCell(col.advances, rowNumber, row.advances, styles[col.advances]) +
+    inlineCell(col.companyLoan, rowNumber, row.companyLoan, styles[col.companyLoan]) +
+    inlineCell(col.ccafLoan, rowNumber, row.ccafLoan, styles[col.ccafLoan]) +
+    inlineCell(col.aguinaldo, rowNumber, row.aguinaldo, styles[col.aguinaldo]) +
     "</row>";
+}
+
+function totalRowXml(rowNumber: number, firstRow: number, lastRow: number, styles: Record<string, string>) {
+  const moneyColumns = ["D", "F", "I", "K", "L", "M", "N", "O", "P", "Q", "S", "T", "U", "V"];
+  const cells = [
+    inlineCell("A", rowNumber, "TOTAL", styles.A),
+    ...moneyColumns.map((column) => `<c r="${column}${rowNumber}"${styles[column] ? ` s="${styles[column]}"` : ""}><f>SUM(${column}${firstRow}:${column}${lastRow})</f></c>`)
+  ].join("");
+  return `<row r="${rowNumber}">${cells}</row>`;
 }
 
 export function generateAccountantWorkbook(rows: AccountantRow[]) {
   assertAccountantTemplateAvailable();
   const zip = new AdmZip(accountantTemplatePath);
+  const workbookXml = zip.getEntry("xl/workbook.xml")?.getData().toString("utf8") ?? "";
+  for (const sheetName of SALARY_PRESERVED_SHEETS) {
+    if (!workbookXml.includes(`name="${sheetName}"`)) {
+      throw new Error(`Template Datos Sueldos no contiene hoja requerida: ${sheetName}`);
+    }
+  }
   const entry = zip.getEntry("xl/worksheets/sheet1.xml");
   if (!entry) throw new Error("Template Datos Sueldos no contiene sheet1.xml.");
   const xml = entry.getData().toString("utf8");
+  const templateDataRow = xml.match(/<row[^>]*r="6"[\s\S]*?<\/row>/)?.[0] ?? "";
+  const styles = cellStylesFromRow(templateDataRow);
+  const heightAttrs = rowHeightAttr(templateDataRow);
   const headerRows = [...xml.matchAll(/<row[^>]*r="([1-5])"[\s\S]*?<\/row>/g)].map((match) => match[0]).join("");
-  const bodyRows = rows.map((row, index) => accountantRowXml(index + 6, row)).join("");
-  const maxRow = rows.length + 5;
+  const firstWorkerRow = SALARY_TEMPLATE.firstWorkerRow;
+  const bodyRows = rows.map((row, index) => accountantRowXml(index + firstWorkerRow, row, styles, heightAttrs)).join("");
+  const totalRowNumber = rows.length + firstWorkerRow;
+  const totals = rows.length ? totalRowXml(totalRowNumber, firstWorkerRow, totalRowNumber - 1, styles) : "";
+  const maxRow = Math.max(totalRowNumber, firstWorkerRow);
   const updated = xml
-    .replace(/<dimension ref="[^"]*"/, `<dimension ref="A1:W${Math.max(maxRow, 6)}"`)
-    .replace(/<sheetData>[\s\S]*?<\/sheetData>/, `<sheetData>${headerRows}${bodyRows}</sheetData>`);
+    .replace(/<dimension ref="[^"]*"/, `<dimension ref="A1:V${maxRow}"`)
+    .replace(/<sheetData>[\s\S]*?<\/sheetData>/, `<sheetData>${headerRows}${bodyRows}${totals}</sheetData>`);
   zip.updateFile("xl/worksheets/sheet1.xml", Buffer.from(updated, "utf8"));
   return zip.toBuffer();
 }

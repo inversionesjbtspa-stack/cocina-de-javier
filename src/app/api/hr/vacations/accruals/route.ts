@@ -11,6 +11,29 @@ const schema = z.object({
   period: z.string().regex(/^\d{4}-\d{2}$/)
 });
 
+type EmployeeLookupRow = {
+  id: string;
+  status: string | null;
+  tenant_id: string;
+};
+
+type EmployeeLookupResult = {
+  data: EmployeeLookupRow | null;
+};
+
+async function getEmployeeForHrTenant(
+  supabase: ReturnType<typeof createAdminClient>,
+  tenantId: string,
+  employeeId: string
+): Promise<EmployeeLookupResult> {
+  return supabase
+    .from("hr_employees")
+    .select("id,tenant_id,status")
+    .eq("tenant_id", tenantId)
+    .eq("id", employeeId)
+    .maybeSingle();
+}
+
 export async function POST(request: Request) {
   const ctx = await requireHrContext();
   if (ctx.error) return ctx.error;
@@ -18,6 +41,11 @@ export async function POST(request: Request) {
   if (!parsed.success) return NextResponse.json({ ok: false, error: "hr_vacation_accrual_validation_failed", fields: parsed.error.flatten().fieldErrors }, { status: 422 });
   const body = parsed.data;
   const supabase = createAdminClient();
+  const { data: employee } = await getEmployeeForHrTenant(supabase, ctx.membership.tenant_id, body.employeeId);
+  if (!employee || employee.tenant_id !== ctx.membership.tenant_id) return NextResponse.json({ ok: false, error: "employee_not_in_tenant" }, { status: 404 });
+  if (employee.status && employee.status !== "activo") {
+    return NextResponse.json({ ok: false, error: "employee_not_active" }, { status: 422 });
+  }
   const balance = await supabase.from("hr_vacation_balances").select("*").eq("tenant_id", ctx.membership.tenant_id).eq("employee_id", body.employeeId).maybeSingle();
   const current = Number(balance.data?.pending_days ?? balance.data?.initial_balance ?? 0);
   const balanceAfter = Math.round((current + body.days) * 100) / 100;

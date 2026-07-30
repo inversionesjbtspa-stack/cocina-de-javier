@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import pg from "pg";
+import { hrAccountantRowSchema, type HrAccountantRowInput } from "@/lib/hr/accountant-data-schema";
 import { requireHrContext } from "@/lib/hr/auth";
 import { generateAccountantWorkbook, type AccountantRow } from "@/lib/hr/payroll-parser";
 import { normalizeRut } from "@/lib/hr/utils";
@@ -53,31 +53,37 @@ function rawValue(value: unknown): Record<string, string | number> {
   return raw;
 }
 
-const rowSchema = z.object({
-  absences: z.coerce.number().min(0).optional().default(0),
-  advances: z.coerce.number().min(0).optional().default(0),
-  aguinaldo: z.coerce.number().min(0).optional().default(0),
-  cashAllowance: z.coerce.number().min(0).optional().default(0),
-  ccafLoan: z.coerce.number().min(0).optional().default(0),
-  compensatoryBonus: z.coerce.number().min(0).optional().default(0),
-  companyLoan: z.coerce.number().min(0).optional().default(0),
-  costCenter: z.string().trim().max(160).optional().default(""),
-  discounts: z.coerce.number().min(0).optional().default(0),
-  fullName: z.string().trim().min(2).max(240),
-  licenses: z.coerce.number().min(0).optional().default(0),
-  movilization: z.coerce.number().min(0).optional().default(0),
-  observations: z.string().trim().max(1000).optional().default(""),
-  overtimeHours: z.coerce.number().min(0).optional().default(0),
-  period: z.string().regex(/^\d{4}-\d{2}$/),
-  phoneAllowance: z.coerce.number().min(0).optional().default(0),
-  productionBonus: z.coerce.number().min(0).optional().default(0),
-  reason: z.string().trim().max(500).optional().default(""),
-  responsibilityBonus: z.coerce.number().min(0).optional().default(0),
-  rowNumber: z.coerce.number().int().min(1).optional().default(0),
-  rut: z.string().trim().min(7).max(14),
-  sheetName: z.string().trim().max(160).optional().default("LIBRO REMUNERACIONES"),
-  sundaySurcharge: z.coerce.number().min(0).optional().default(0)
-});
+function accountantPayload(body: HrAccountantRowInput, tenantId: string, userId: string, employeeId: string | null) {
+  return {
+    absences: body.absences,
+    advances_amount: body.advances,
+    aguinaldo_amount: body.aguinaldo,
+    cash_allowance_amount: body.cashAllowance,
+    ccaf_loan_amount: body.ccafLoan,
+    compensatory_bonus_amount: body.compensatoryBonus,
+    company_loan_amount: body.companyLoan,
+    cost_center: body.costCenter || null,
+    employee_id: employeeId,
+    full_name: body.fullName,
+    licenses: body.licenses,
+    movilization_amount: body.movilization,
+    observations: body.observations || null,
+    overtime_hours: body.overtimeHours,
+    period: body.period,
+    phone_allowance_amount: body.phoneAllowance,
+    production_bonus_amount: body.productionBonus,
+    raw_row: body,
+    reason: body.reason || null,
+    responsibility_bonus_amount: body.responsibilityBonus,
+    row_number: body.rowNumber || null,
+    rut: normalizeRut(body.rut),
+    sheet_name: body.sheetName,
+    source_file: "manual_rrhh",
+    sunday_surcharge_amount: body.sundaySurcharge,
+    tenant_id: tenantId,
+    updated_by: userId
+  };
+}
 
 export async function GET(request: Request) {
   const ctx = await requireHrContext();
@@ -125,18 +131,28 @@ export async function GET(request: Request) {
     );
   }
 
-  if (!data?.length) {
-    return htmlError(
-      "Sin datos de sueldos para exportar",
-      `No existen filas en Datos Sueldos para el periodo ${period}.`,
-      "Carga o importa el archivo Datos Sueldos del periodo desde Recursos Humanos y vuelve a exportar.",
-      404
-    );
-  }
+  const [{ data: activeEmployees }, { data: paymentItems }] = await Promise.all([
+    supabase
+      .from("hr_employees")
+      .select("id,full_name,rut,cost_center,area,status")
+      .eq("tenant_id", ctx.membership.tenant_id)
+      .eq("status", "activo")
+      .order("full_name", { ascending: true }),
+    supabase
+      .from("hr_payment_items")
+      .select("employee_id,period,payment_type,amount,status")
+      .eq("tenant_id", ctx.membership.tenant_id)
+      .eq("period", period)
+  ]);
 
-  const rows: AccountantRow[] = (data as AccountantDataRecord[]).map((row) => ({
+  const dataByEmployee = new Map((data ?? []).filter((row) => row.employee_id).map((row) => [String(row.employee_id), row]));
+  const rows: AccountantRow[] = (activeEmployees ?? []).map((employee) => {
+    const row = dataByEmployee.get(employee.id) ?? {};
+    const advances = numberValue(row.advances_amount ?? row.advances)
+      || (paymentItems ?? []).filter((item) => item.employee_id === employee.id && item.payment_type === "anticipo").reduce((sum, item) => sum + numberValue(item.amount), 0);
+    return {
     absences: numberValue(row.absences),
-    advances: numberValue(row.advances_amount ?? row.advances),
+    advances,
     aguinaldo: numberValue(row.aguinaldo_amount ?? row.aguinaldo),
     baseSalary: numberValue(row.base_salary),
     cashAllowance: numberValue(row.cash_allowance_amount),
@@ -145,7 +161,7 @@ export async function GET(request: Request) {
     companyLoan: numberValue(row.company_loan_amount),
     costCenter: textValue(row.cost_center),
     discounts: numberValue(row.discounts),
-    fullName: textValue(row.full_name ?? row.employee_name),
+    fullName: textValue(row.full_name ?? row.employee_name, employee.full_name),
     licenses: numberValue(row.licenses),
     movilization: numberValue(row.movilization_amount),
     observations: textValue(row.observations ?? row.notes),
@@ -157,10 +173,14 @@ export async function GET(request: Request) {
     reason: textValue(row.reason),
     responsibilityBonus: numberValue(row.responsibility_bonus_amount),
     rowNumber: numberValue(row.row_number),
-    rut: textValue(row.rut),
+    rut: textValue(row.rut, employee.rut),
     sheetName: textValue(row.sheet_name, "LIBRO REMUNERACIONES"),
     sundaySurcharge: numberValue(row.sunday_surcharge_amount)
-  }));
+    };
+  });
+  if (!rows.length) {
+    return htmlError("Sin trabajadores activos para exportar", `No existen trabajadores activos para el periodo ${period}.`, "Revisa el maestro de trabajadores activos del tenant.", 404);
+  }
   const buffer = generateAccountantWorkbook(rows);
   await supabase.from("audit_events").insert({
     actor_role: ctx.membership.role,
@@ -183,7 +203,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const ctx = await requireHrContext();
   if (ctx.error) return ctx.error;
-  const parsed = rowSchema.safeParse(await request.json());
+  const parsed = hrAccountantRowSchema.safeParse(await request.json());
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: "hr_accountant_row_validation_failed", fields: parsed.error.flatten().fieldErrors }, { status: 422 });
   }
@@ -197,55 +217,15 @@ export async function POST(request: Request) {
     .eq("rut", rut)
     .maybeSingle();
 
-  const payload = {
-    absences: body.absences,
-    advances_amount: body.advances,
-    aguinaldo_amount: body.aguinaldo,
-    cash_allowance_amount: body.cashAllowance,
-    ccaf_loan_amount: body.ccafLoan,
-    compensatory_bonus_amount: body.compensatoryBonus,
-    company_loan_amount: body.companyLoan,
-    cost_center: body.costCenter || null,
-    employee_id: employee.data?.id ?? null,
-    full_name: body.fullName,
-    licenses: body.licenses,
-    movilization_amount: body.movilization,
-    observations: body.observations || null,
-    overtime_hours: body.overtimeHours,
-    period: body.period,
-    phone_allowance_amount: body.phoneAllowance,
-    production_bonus_amount: body.productionBonus,
-    raw_row: body,
-    reason: body.reason || null,
-    responsibility_bonus_amount: body.responsibilityBonus,
-    row_number: body.rowNumber || null,
-    rut,
-    sheet_name: body.sheetName,
-    source_file: "manual_rrhh",
-    sunday_surcharge_amount: body.sundaySurcharge,
-    tenant_id: ctx.membership.tenant_id,
-    updated_by: ctx.user.id
-  };
-
-  const result = await supabase
-    .from("hr_accountant_data_rows")
-    .upsert({ ...payload, created_by: ctx.user.id }, { onConflict: "tenant_id,period,rut,sheet_name" })
-    .select("id")
-    .single();
-  if (result.error || !result.data) {
-    return NextResponse.json({ ok: false, error: result.error?.message ?? "hr_accountant_row_save_failed" }, { status: 422 });
-  }
-
-  await supabase.from("audit_events").insert({
-    actor_role: ctx.membership.role,
-    actor_user_id: ctx.user.id,
-    after_data: payload,
-    company_id: ctx.membership.company_id,
-    entity_id: result.data.id,
-    entity_type: "hr_accountant_data_row",
-    event_type: "hr.accountant_data_row_saved",
-    tenant_id: ctx.membership.tenant_id
+  const payload = accountantPayload(body, ctx.membership.tenant_id, ctx.user.id, employee.data?.id ?? null);
+  const result = await supabase.rpc("hr_upsert_accountant_data_rows", {
+    p_actor_role: ctx.membership.role,
+    p_company_id: ctx.membership.company_id,
+    p_rows: [payload],
+    p_tenant_id: ctx.membership.tenant_id,
+    p_user_id: ctx.user.id
   });
+  if (result.error || !result.data) return NextResponse.json({ ok: false, error: result.error?.message ?? "hr_accountant_row_save_failed" }, { status: 422 });
 
-  return NextResponse.json({ ok: true, row: result.data });
+  return NextResponse.json({ ok: true, row: Array.isArray(result.data) ? result.data[0] : result.data });
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   BadgeDollarSign,
   CalendarDays,
@@ -21,11 +21,33 @@ import {
 } from "lucide-react";
 import { formatClp } from "@/lib/dte/purchases-data";
 import type { HrDashboardData, HrEmployee } from "@/lib/hr/data";
+import { buildSalaryRows, salaryRowHasNovelty } from "@/lib/hr/salary-data";
 
 type HrSection = "workers" | "payroll" | "salary" | "payslips" | "imports" | "dashboard";
 type WorkerTab = "personal" | "contract" | "bank" | "novelties" | "vacations" | "payslips" | "payments" | "documents" | "audit";
 type WorkerSort = "name" | "status" | "area" | "vacations" | "payments";
+type WorkerColumn = "fullName" | "rut" | "position" | "area" | "status" | "vacations" | "payslips" | "payments" | "bank";
 type HrPaymentItem = HrDashboardData["paymentItems"][number];
+
+const paymentConcepts = [
+  ["remuneracion_mensual", "Remuneracion mensual", false],
+  ["anticipo", "Anticipo", false],
+  ["aguinaldo", "Aguinaldo", false],
+  ["anticipo_aguinaldo", "Anticipo de aguinaldo", false],
+  ["bono_produccion", "Bono de produccion", false],
+  ["bono_compensatorio", "Bono compensatorio", false],
+  ["bono_responsabilidad", "Bono de responsabilidad", false],
+  ["recargo_domingo", "Recargo domingo", false],
+  ["movilizacion", "Movilizacion", false],
+  ["asignacion_telefono", "Asignacion telefono", false],
+  ["prestamo_empresa", "Prestamo empresa", false],
+  ["prestamo_caja", "Prestamo caja", false],
+  ["finiquito", "Finiquito", false],
+  ["honorario", "Honorario", false],
+  ["reembolso", "Reembolso", false],
+  ["otro_bono", "Otro bono", true],
+  ["otro_concepto", "Otro concepto", true]
+] as const;
 
 const sections: Array<{ icon: typeof Users; id: HrSection; label: string }> = [
   { icon: Users, id: "workers", label: "Trabajadores" },
@@ -90,7 +112,27 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
   const [workerStatusFilter, setWorkerStatusFilter] = useState("");
   const [workerAreaFilter, setWorkerAreaFilter] = useState("");
   const [workerSort, setWorkerSort] = useState<WorkerSort>("name");
+  const [workerColumnFilters, setWorkerColumnFilters] = useState<Record<WorkerColumn, string>>({
+    area: "",
+    bank: "",
+    fullName: "",
+    payments: "",
+    payslips: "",
+    position: "",
+    rut: "",
+    status: "",
+    vacations: ""
+  });
+  const [workerColumnSort, setWorkerColumnSort] = useState<{ column: WorkerColumn; direction: "asc" | "desc" }>({ column: "fullName", direction: "asc" });
+  const [payrollDraft, setPayrollDraft] = useState<Record<string, { amount: string; glosa: string }>>({});
+  const [payrollSearch, setPayrollSearch] = useState("");
+  const [paymentBankFilter, setPaymentBankFilter] = useState("");
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState("");
+  const [bulkPayslipPreview, setBulkPayslipPreview] = useState<Array<Record<string, string | number | boolean | null>>>([]);
+  const [bulkPayslipSummary, setBulkPayslipSummary] = useState<Record<string, number> | null>(null);
+  const [bulkPayslipAssignments, setBulkPayslipAssignments] = useState<Record<string, string>>({});
   const [paymentSelection, setPaymentSelection] = useState<string[]>([]);
+  const [payrollEmployeeSelection, setPayrollEmployeeSelection] = useState<string[]>([]);
   const [paymentAreaFilter, setPaymentAreaFilter] = useState("");
   const [paymentPositionFilter, setPaymentPositionFilter] = useState("");
   const [paymentSort, setPaymentSort] = useState("name");
@@ -114,14 +156,65 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
   const positions = useMemo(() => Array.from(new Set(employees.map((employee) => employee.position).filter(Boolean) as string[])).sort(), [employees]);
   const statuses = useMemo(() => Array.from(new Set(employees.map((employee) => employee.status).filter(Boolean))).sort(), [employees]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setWorkerSearch(params.get("q") ?? "");
+    setWorkerStatusFilter(params.get("status") ?? "");
+    setWorkerAreaFilter(params.get("area") ?? "");
+    const columnFilters = params.get("workerFilters");
+    if (columnFilters) {
+      try {
+        setWorkerColumnFilters((current) => ({ ...current, ...JSON.parse(columnFilters) }));
+      } catch {}
+    }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (workerSearch) params.set("q", workerSearch); else params.delete("q");
+    if (workerStatusFilter) params.set("status", workerStatusFilter); else params.delete("status");
+    if (workerAreaFilter) params.set("area", workerAreaFilter); else params.delete("area");
+    const activeColumnFilters = Object.fromEntries(Object.entries(workerColumnFilters).filter(([, value]) => value));
+    if (Object.keys(activeColumnFilters).length) params.set("workerFilters", JSON.stringify(activeColumnFilters)); else params.delete("workerFilters");
+    window.history.replaceState(null, "", `${window.location.pathname}${params.toString() ? `?${params}` : ""}`);
+  }, [workerAreaFilter, workerColumnFilters, workerSearch, workerStatusFilter]);
+
   const filteredEmployees = (() => {
     const search = workerSearch.trim().toLowerCase();
     return employees
       .filter((employee) => {
         const searchable = `${employee.fullName} ${employee.rut} ${employee.position ?? ""} ${employee.area ?? ""}`.toLowerCase();
-        return (!search || searchable.includes(search)) && (!workerStatusFilter || employee.status === workerStatusFilter) && (!workerAreaFilter || employee.area === workerAreaFilter);
+        const vacations = vacationsFor(employee.id).length;
+        const payslips = payslipsFor(employee.id).length;
+        const payments = paymentsFor(employee.id).length;
+        const bank = employee.paymentAlerts.length ? "revisar incompleto pendiente" : "ok completo validado";
+        return (!search || searchable.includes(search))
+          && (!workerStatusFilter || employee.status === workerStatusFilter)
+          && (!workerAreaFilter || employee.area === workerAreaFilter)
+          && (!workerColumnFilters.fullName || employee.fullName.toLowerCase().includes(workerColumnFilters.fullName.toLowerCase()))
+          && (!workerColumnFilters.rut || employee.rut.toLowerCase().includes(workerColumnFilters.rut.toLowerCase()))
+          && (!workerColumnFilters.position || (employee.position ?? "").toLowerCase().includes(workerColumnFilters.position.toLowerCase()))
+          && (!workerColumnFilters.area || (employee.area ?? "").toLowerCase().includes(workerColumnFilters.area.toLowerCase()))
+          && (!workerColumnFilters.status || employee.status.toLowerCase().includes(workerColumnFilters.status.toLowerCase()))
+          && (!workerColumnFilters.vacations || String(vacations).includes(workerColumnFilters.vacations))
+          && (!workerColumnFilters.payslips || String(payslips).includes(workerColumnFilters.payslips))
+          && (!workerColumnFilters.payments || String(payments).includes(workerColumnFilters.payments))
+          && (!workerColumnFilters.bank || bank.includes(workerColumnFilters.bank.toLowerCase()));
       })
       .sort((a, b) => {
+        const direction = workerColumnSort.direction === "asc" ? 1 : -1;
+        const value = (employee: HrEmployee) => {
+          if (workerColumnSort.column === "vacations") return vacationsFor(employee.id).length;
+          if (workerColumnSort.column === "payslips") return payslipsFor(employee.id).length;
+          if (workerColumnSort.column === "payments") return paymentsFor(employee.id).length;
+          if (workerColumnSort.column === "bank") return employee.paymentAlerts.length ? "revisar" : "ok";
+          return String(employee[workerColumnSort.column] ?? "");
+        };
+        const left = value(a);
+        const right = value(b);
+        if (typeof left === "number" && typeof right === "number" && left !== right) return (left - right) * direction;
+        const columnResult = String(left).localeCompare(String(right));
+        if (columnResult) return columnResult * direction;
         if (workerSort === "status") return a.status.localeCompare(b.status) || a.fullName.localeCompare(b.fullName);
         if (workerSort === "area") return (a.area ?? "").localeCompare(b.area ?? "") || a.fullName.localeCompare(b.fullName);
         if (workerSort === "vacations") return vacationsFor(b.id).length - vacationsFor(a.id).length || a.fullName.localeCompare(b.fullName);
@@ -145,6 +238,19 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
         return (employeeA?.fullName ?? a.employeeName).localeCompare(employeeB?.fullName ?? b.employeeName);
       });
   }, [employeeById, payablePaymentItems, paymentAreaFilter, paymentPositionFilter, paymentSort]);
+
+  const selectablePayrollEmployees = useMemo(() => employees
+    .filter((employee) => employee.status === "activo")
+    .filter((employee) => {
+      const search = payrollSearch.trim().toLowerCase();
+      const bankStatus = employee.paymentAlerts.length ? "incompleto" : "completo";
+      return (!search || `${employee.fullName} ${employee.rut}`.toLowerCase().includes(search))
+        && (!paymentAreaFilter || employee.area === paymentAreaFilter)
+        && (!paymentPositionFilter || employee.position === paymentPositionFilter)
+        && (!paymentBankFilter || bankStatus === paymentBankFilter)
+        && (!paymentStatusFilter || (paymentStatusFilter === "habilitado" ? employee.paymentEnabled : !employee.paymentEnabled));
+    })
+    .sort((a, b) => a.fullName.localeCompare(b.fullName)), [employees, paymentAreaFilter, paymentBankFilter, paymentPositionFilter, paymentStatusFilter, payrollSearch]);
 
   function openProfile(employee: HrEmployee, tab: WorkerTab = "personal") {
     setSelectedEmployeeId(employee.id);
@@ -325,6 +431,69 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
     setMessage("Nomina RRHH exportada con Template Pagos JESUS.");
   }
 
+  async function createSelectablePayrollBatch(config: { concept: string; conceptDescription: string; glosaGlobal: string; period: string; scheduledDate: string; status: "borrador" | "pendiente_pago" | "aprobado" }) {
+    const items = payrollEmployeeSelection.map((employeeId) => ({
+      amount: Number(payrollDraft[employeeId]?.amount ?? 0),
+      employeeId,
+      glosa: payrollDraft[employeeId]?.glosa ?? ""
+    })).filter((item) => item.amount > 0);
+    if (!items.length) {
+      setMessage("Selecciona trabajadores e ingresa montos mayores a cero.");
+      return;
+    }
+    const concept = paymentConcepts.find(([code]) => code === config.concept);
+    if (concept?.[2] && !config.conceptDescription.trim()) {
+      setMessage("El concepto seleccionado requiere descripcion.");
+      return;
+    }
+    const response = await fetch("/api/hr/payments/batch", {
+      body: JSON.stringify({
+        conceptDescription: config.conceptDescription,
+        glosaGlobal: config.glosaGlobal,
+        items,
+        paymentType: config.concept,
+        period: config.period,
+        scheduledDate: config.scheduledDate,
+        status: config.status
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+    const payload = await response.json().catch(() => null);
+    if (response.status === 409) {
+      const confirmDuplicate = window.confirm(`Existen ${payload?.duplicates?.length ?? 0} pago(s) del mismo concepto y periodo. Deseas crear igualmente el lote?`);
+      if (confirmDuplicate) {
+        const retry = await fetch("/api/hr/payments/batch", {
+          body: JSON.stringify({ conceptDescription: config.conceptDescription, confirmDuplicates: true, glosaGlobal: config.glosaGlobal, items, paymentType: config.concept, period: config.period, scheduledDate: config.scheduledDate, status: config.status }),
+          headers: { "content-type": "application/json" },
+          method: "POST"
+        });
+        const retryPayload = await retry.json().catch(() => null);
+        setMessage(retry.ok ? `Lote creado: ${retryPayload.created} pago(s).` : retryPayload?.error ?? "No se pudo crear el lote.");
+      }
+      return;
+    }
+    setMessage(response.ok ? `Lote creado: ${payload.created} pago(s).` : payload?.error ?? "No se pudo crear el lote.");
+  }
+
+  async function previewBulkPayslips(event: FormEvent<HTMLFormElement>, commit = false) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const body = new FormData(form);
+    body.set("mode", commit ? "commit" : "preview");
+    body.set("assignments", JSON.stringify(bulkPayslipAssignments));
+    const response = await fetch("/api/hr/payslips/bulk", { body, method: "POST" });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      if (payload?.unresolved?.length) setBulkPayslipPreview(payload.results ?? []);
+      setMessage(payload?.error ?? "No se pudo clasificar carga masiva.");
+      return;
+    }
+    setBulkPayslipPreview(payload.results ?? []);
+    setBulkPayslipSummary(payload.summary ?? null);
+    setMessage(commit ? `Carga confirmada: ${payload.saved ?? 0} liquidacion(es) guardadas.` : `Previsualizacion lista: ${payload.summary?.autoMatched ?? 0} automaticas, ${payload.summary?.needsReview ?? 0} a revision.`);
+  }
+
   async function markSelectedPaid() {
     if (!paymentSelection.length) {
       setMessage("Selecciona pagos para marcarlos como pagados.");
@@ -356,6 +525,18 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
     }
     const blocked = payload?.results?.filter((item: { status: string }) => item.status !== "enviado").length ?? 0;
     setMessage(blocked ? `Envio controlado revisado: ${blocked} liquidacion(es) quedaron pendientes/bloqueadas.` : "Liquidaciones enviadas.");
+  }
+
+  async function cancelVacationRequest(id: string) {
+    const reason = window.prompt("Motivo de anulacion de la solicitud de vacaciones") ?? "";
+    if (!window.confirm("Anular esta solicitud sin eliminar su historial?")) return;
+    const response = await fetch(`/api/hr/vacations/${id}`, {
+      body: JSON.stringify({ reason, status: "anulada" }),
+      headers: { "content-type": "application/json" },
+      method: "PATCH"
+    });
+    const payload = await response.json().catch(() => null);
+    setMessage(response.ok ? "Solicitud de vacaciones anulada y auditada." : payload?.error ?? "No se pudo anular la solicitud.");
   }
 
   return (
@@ -398,6 +579,16 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
           paymentsFor={paymentsFor}
           payslipsFor={payslipsFor}
           area={workerAreaFilter}
+          columnFilters={workerColumnFilters}
+          columnSort={workerColumnSort}
+          setColumnFilters={setWorkerColumnFilters}
+          setColumnSort={setWorkerColumnSort}
+          clearFilters={() => {
+            setWorkerSearch("");
+            setWorkerStatusFilter("");
+            setWorkerAreaFilter("");
+            setWorkerColumnFilters({ area: "", bank: "", fullName: "", payments: "", payslips: "", position: "", rut: "", status: "", vacations: "" });
+          }}
         />
       ) : null}
 
@@ -410,25 +601,38 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
           generatePayroll={generatePayroll}
           markSelectedPaid={markSelectedPaid}
           paymentAreaFilter={paymentAreaFilter}
+          payrollEmployeeSelection={payrollEmployeeSelection}
           paymentPositionFilter={paymentPositionFilter}
           paymentSelection={paymentSelection}
           paymentSort={paymentSort}
+          payrollDraft={payrollDraft}
+          payrollSearch={payrollSearch}
           positions={positions}
+          selectableEmployees={selectablePayrollEmployees}
+          setPaymentBankFilter={setPaymentBankFilter}
           setPaymentAreaFilter={setPaymentAreaFilter}
+          setPayrollEmployeeSelection={setPayrollEmployeeSelection}
           setPaymentPositionFilter={setPaymentPositionFilter}
           setPaymentSelection={setPaymentSelection}
           setPaymentSort={setPaymentSort}
+          setPaymentStatusFilter={setPaymentStatusFilter}
+          setPayrollDraft={setPayrollDraft}
+          setPayrollSearch={setPayrollSearch}
           submitJson={submitJson}
+          createSelectablePayrollBatch={createSelectablePayrollBatch}
+          paymentBankFilter={paymentBankFilter}
+          paymentStatusFilter={paymentStatusFilter}
         />
       ) : null}
 
-      {activeSection === "salary" ? <SalaryDataSection data={data} onSave={saveAccountantRow} /> : null}
-      {activeSection === "payslips" ? <PayslipsSection data={data} employees={employees} sendPayslips={sendPayslips} uploadPayslip={uploadPayslip} /> : null}
+      {activeSection === "salary" ? <SalaryDataSection data={data} onSave={saveAccountantRow} setMessage={setMessage} /> : null}
+      {activeSection === "payslips" ? <PayslipsSection bulkPayslipAssignments={bulkPayslipAssignments} bulkPayslipPreview={bulkPayslipPreview} bulkPayslipSummary={bulkPayslipSummary} data={data} employees={employees} previewBulkPayslips={previewBulkPayslips} sendPayslips={sendPayslips} setBulkPayslipAssignments={setBulkPayslipAssignments} uploadPayslip={uploadPayslip} /> : null}
       {activeSection === "imports" ? <ImportsSection importBankAccounts={importBankAccounts} importPayroll={importPayroll} /> : null}
       {activeSection === "dashboard" ? <DashboardSection kpis={kpis} /> : null}
 
       {profileOpen && selectedEmployee ? (
         <WorkerProfilePanel
+          cancelVacationRequest={cancelVacationRequest}
           data={data}
           employee={selectedEmployee}
           novelties={noveltiesFor(selectedEmployee.id)}
@@ -452,6 +656,9 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
 function WorkersSection({
   area,
   areas,
+  clearFilters,
+  columnFilters,
+  columnSort,
   employees,
   onCreate,
   onOpen,
@@ -459,6 +666,8 @@ function WorkersSection({
   payslipsFor,
   search,
   setArea,
+  setColumnFilters,
+  setColumnSort,
   setSearch,
   setSort,
   setStatus,
@@ -469,6 +678,9 @@ function WorkersSection({
 }: {
   area: string;
   areas: string[];
+  clearFilters: () => void;
+  columnFilters: Record<WorkerColumn, string>;
+  columnSort: { column: WorkerColumn; direction: "asc" | "desc" };
   employees: HrEmployee[];
   onCreate: (event: FormEvent<HTMLFormElement>) => void;
   onOpen: (employee: HrEmployee, tab?: WorkerTab) => void;
@@ -476,6 +688,8 @@ function WorkersSection({
   payslipsFor: (employeeId: string) => HrDashboardData["payslips"];
   search: string;
   setArea: (value: string) => void;
+  setColumnFilters: React.Dispatch<React.SetStateAction<Record<WorkerColumn, string>>>;
+  setColumnSort: React.Dispatch<React.SetStateAction<{ column: WorkerColumn; direction: "asc" | "desc" }>>;
   setSearch: (value: string) => void;
   setSort: (value: WorkerSort) => void;
   setStatus: (value: string) => void;
@@ -484,6 +698,27 @@ function WorkersSection({
   statuses: string[];
   vacationsFor: (employeeId: string) => HrDashboardData["vacations"];
 }) {
+  const header = (label: string, column: WorkerColumn, placeholder = "Filtrar") => (
+    <div className="space-y-2">
+      <button
+        className="flex w-full items-center justify-between gap-2 text-left font-semibold"
+        onClick={() => setColumnSort((current) => ({ column, direction: current.column === column && current.direction === "asc" ? "desc" : "asc" }))}
+        type="button"
+      >
+        <span>{label}</span>
+        <span>{columnSort.column === column ? (columnSort.direction === "asc" ? "↑" : "↓") : "↕"}</span>
+      </button>
+      <div className="flex gap-1">
+        <input
+          className="w-full rounded border border-[#dfe4dd] bg-white px-2 py-1 text-[11px] normal-case text-brand-900"
+          onChange={(event) => setColumnFilters((current) => ({ ...current, [column]: event.target.value }))}
+          placeholder={placeholder}
+          value={columnFilters[column]}
+        />
+        {columnFilters[column] ? <button className="rounded border border-[#dfe4dd] px-1 text-[11px]" onClick={() => setColumnFilters((current) => ({ ...current, [column]: "" }))} type="button">x</button> : null}
+      </div>
+    </div>
+  );
   return (
     <div className="space-y-4">
       <SectionCard className="p-4">
@@ -522,6 +757,7 @@ function WorkersSection({
             <option value="vacations">Mas vacaciones</option>
             <option value="payments">Mas pagos</option>
           </select>
+          <button className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700 lg:col-span-4" onClick={clearFilters} type="button">Limpiar filtros</button>
         </div>
       </SectionCard>
 
@@ -530,15 +766,15 @@ function WorkersSection({
           <table className="min-w-[1120px] w-full text-left text-sm">
             <thead className="border-b border-[#dfe4dd] bg-brand-50 text-xs uppercase text-[#667068]">
               <tr>
-                <th className="px-4 py-3">Nombre</th>
-                <th className="px-4 py-3">RUT</th>
-                <th className="px-4 py-3">Cargo</th>
-                <th className="px-4 py-3">Area</th>
-                <th className="px-4 py-3">Estado</th>
-                <th className="px-4 py-3">Vacaciones</th>
-                <th className="px-4 py-3">Liquidaciones</th>
-                <th className="px-4 py-3">Pagos</th>
-                <th className="px-4 py-3">Banco</th>
+                <th className="px-4 py-3">{header("Nombre", "fullName", "Nombre")}</th>
+                <th className="px-4 py-3">{header("RUT", "rut", "RUT")}</th>
+                <th className="px-4 py-3">{header("Cargo", "position", "Cargo")}</th>
+                <th className="px-4 py-3">{header("Area", "area", "Area")}</th>
+                <th className="px-4 py-3">{header("Estado", "status", "Estado")}</th>
+                <th className="px-4 py-3">{header("Vacaciones", "vacations", "N")}</th>
+                <th className="px-4 py-3">{header("Liquidaciones", "payslips", "N")}</th>
+                <th className="px-4 py-3">{header("Pagos", "payments", "N")}</th>
+                <th className="px-4 py-3">{header("Banco", "bank", "OK/Revisar")}</th>
                 <th className="px-4 py-3">Acciones</th>
               </tr>
             </thead>
@@ -622,6 +858,7 @@ function NewEmployeeForm({ onSubmit }: { onSubmit: (event: FormEvent<HTMLFormEle
 }
 
 function WorkerProfilePanel({
+  cancelVacationRequest,
   data,
   employee,
   novelties,
@@ -637,6 +874,7 @@ function WorkerProfilePanel({
   uploadPayslip,
   vacations
 }: {
+  cancelVacationRequest: (id: string) => void;
   data: HrDashboardData;
   employee: HrEmployee;
   novelties: HrDashboardData["monthlyNovelties"];
@@ -680,10 +918,10 @@ function WorkerProfilePanel({
           {selectedTab === "contract" ? <EmployeeContractTab employee={employee} onSubmit={onSubmit} /> : null}
           {selectedTab === "bank" ? <EmployeeBankTab employee={employee} onSubmit={onSubmit} /> : null}
           {selectedTab === "novelties" ? <EmployeeNoveltiesTab data={data} employee={employee} novelties={novelties} saveNovelty={saveNovelty} /> : null}
-          {selectedTab === "vacations" ? <EmployeeVacationsTab data={data} employee={employee} submitJson={submitJson} vacations={vacations} /> : null}
+          {selectedTab === "vacations" ? <EmployeeVacationsTab cancelVacationRequest={cancelVacationRequest} data={data} employee={employee} submitJson={submitJson} vacations={vacations} /> : null}
           {selectedTab === "payslips" ? <EmployeePayslipsTab data={data} employee={employee} payslips={payslips} sendPayslips={sendPayslips} uploadPayslip={uploadPayslip} /> : null}
           {selectedTab === "payments" ? <EmployeePaymentsTab data={data} employee={employee} payments={payments} submitJson={submitJson} /> : null}
-          {selectedTab === "documents" ? <EmployeeDocumentsTab /> : null}
+          {selectedTab === "documents" ? <EmployeeDocumentsTab employee={employee} payslips={payslips} /> : null}
           {selectedTab === "audit" ? <EmployeeAuditTab employee={employee} /> : null}
         </div>
       </aside>
@@ -765,33 +1003,95 @@ function EmployeeNoveltiesTab({ data, employee, novelties, saveNovelty }: { data
   );
 }
 
-function EmployeeVacationsTab({ data, employee, submitJson, vacations }: { data: HrDashboardData; employee: HrEmployee; submitJson: (event: FormEvent<HTMLFormElement>, endpoint: string, success: string) => void; vacations: HrDashboardData["vacations"] }) {
+function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJson, vacations }: { cancelVacationRequest: (id: string) => void; data: HrDashboardData; employee: HrEmployee; submitJson: (event: FormEvent<HTMLFormElement>, endpoint: string, success: string) => void; vacations: HrDashboardData["vacations"] }) {
   const ledger = data.vacationLedger.filter((item) => item.employeeId === employee.id);
-  const latestBalance = ledger[0]?.balanceAfter ?? vacations[0]?.resultingBalance ?? 0;
+  const periods = data.vacationPeriods.filter((item) => item.employeeId === employee.id);
+  const earnedBalance = periods.reduce((sum, period) => sum + period.availableBalance, 0);
+  const reservedDays = periods.reduce((sum, period) => sum + period.reservedDays, 0);
+  const advanceDays = periods.reduce((sum, period) => sum + period.advanceDays, 0);
+  const progressiveDays = periods.reduce((sum, period) => sum + period.progressiveDays, 0);
+  const projectedProportional = periods[0] ? ((periods[0].baseDays + periods[0].progressiveDays) / 12) : 1.25;
+  const latestBalance = periods.length ? earnedBalance : ledger[0]?.balanceAfter ?? vacations[0]?.resultingBalance ?? 0;
+  async function action(id: string, endpoint: string, body: Record<string, unknown> = {}) {
+    const response = await fetch(`/api/hr/vacations/${id}/${endpoint}`, {
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+      method: "POST"
+    });
+    const payload = await response.json().catch(() => null);
+    window.alert(response.ok ? "Accion registrada." : payload?.error ?? "No se pudo completar la accion.");
+  }
   return (
     <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
       <SectionCard className="p-5">
         <h3 className="font-semibold text-brand-900">Vacaciones</h3>
-        <div className="mt-3 grid gap-3 text-sm">
-          <div className="rounded-md bg-brand-50 p-3"><p className="text-[#667068]">Saldo actual</p><p className="text-2xl font-semibold text-brand-900">{latestBalance} dias</p></div>
-          <p className="text-[#667068]">Configuracion visible desde contrato actual. La configuracion avanzada queda para una etapa con schema dedicado.</p>
+        <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+          <MetricTile label="Saldo devengado" value={`${latestBalance.toFixed(2)} dias`} />
+          <MetricTile label="Proporcional proyectado" value={`${projectedProportional.toFixed(6)} / mes`} />
+          <MetricTile label="Reservados" value={`${reservedDays.toFixed(2)} dias`} />
+          <MetricTile label="Anticipados" value={`${advanceDays.toFixed(2)} dias`} />
+          <MetricTile label="Progresivos" value={`${progressiveDays.toFixed(2)} dias`} />
+          <MetricTile label="Proxima anualidad" value={employee.hireDate ? employee.hireDate.slice(5) : "Requiere ingreso"} />
         </div>
+        <p className="mt-3 text-xs text-[#667068]">El proporcional proyectado es informativo y no se suma al saldo utilizable salvo autorizacion explicita de vacaciones anticipadas.</p>
         <VacationForm employeeId={employee.id} submitJson={submitJson} />
       </SectionCard>
       <SectionCard className="overflow-hidden">
-        <TableHeader title="Ledger vacaciones" />
-        <SimpleTable headers={["Periodo", "Movimiento", "Dias", "Saldo"]}>
-          {ledger.map((item) => <tr className="border-t" key={item.id}><td className="px-4 py-3">{item.period}</td><td className="px-4 py-3">{item.movementType}</td><td className="px-4 py-3">{item.days}</td><td className="px-4 py-3">{item.balanceAfter}</td></tr>)}
+        <TableHeader action={<a className="rounded-md border border-brand-700 px-3 py-1.5 text-xs font-semibold text-brand-700" href="/api/hr/vacations/export" target="_blank">Exportar resumen</a>} title="Detalle por periodo" />
+        <SimpleTable headers={["Periodo", "Base", "Prog.", "Usados", "Reserv.", "Antic.", "Saldo", "Bloque"]}>
+          {periods.map((period) => (
+            <tr className="border-t" key={period.id}>
+              <td className="px-4 py-3">{period.periodStart} / {period.periodEnd}</td>
+              <td className="px-4 py-3">{period.baseDays}</td>
+              <td className="px-4 py-3">{period.progressiveDays}</td>
+              <td className="px-4 py-3">{period.usedDays}</td>
+              <td className="px-4 py-3">{period.reservedDays}</td>
+              <td className="px-4 py-3">{period.advanceDays}</td>
+              <td className="px-4 py-3">{period.availableBalance}</td>
+              <td className="px-4 py-3">{period.continuousBlockUsed}/{period.continuousBlockRequired}</td>
+            </tr>
+          ))}
+          {!periods.length ? <tr><td className="px-4 py-4 text-sm text-[#667068]" colSpan={8}>Sin periodos contractuales persistidos. Se usara vista previa calculada desde fecha de ingreso hasta aplicar migracion.</td></tr> : null}
         </SimpleTable>
         <div className="border-t border-[#dfe4dd] p-4">
           <p className="mb-2 text-sm font-semibold text-brand-900">Comprobantes recientes</p>
           <div className="space-y-2">
-            {vacations.map((vacation) => <a className="flex items-center justify-between rounded-md border border-[#dfe4dd] px-3 py-2 text-sm font-semibold text-brand-700" href={`/api/hr/vacations/${vacation.id}/papeleta`} key={vacation.id} target="_blank"><span>{vacation.startDate} al {vacation.endDate}</span><Download className="h-4 w-4" /></a>)}
+            {vacations.map((vacation) => (
+              <div className="rounded-md border border-[#dfe4dd] bg-white p-3 text-sm" key={vacation.id}>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-brand-900">{vacation.startDate} al {vacation.endDate}</p>
+                    <p className="text-xs text-[#667068]">Estado {vacation.status} / {vacation.businessDays} dias habiles / saldo {vacation.resultingBalance} / retorno {vacation.returnToWorkDate ?? "por confirmar"}</p>
+                    <p className="text-xs text-[#667068]">Documento {vacation.documentNumber ?? "pendiente"} / proporcional proyectado {vacation.projectedBusinessDays?.toFixed(2) ?? "0.00"}</p>
+                  </div>
+                  <Pill className={statusClass(vacation.status)}>{vacation.status}</Pill>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <a className="rounded-md border border-brand-700 px-3 py-1.5 text-xs font-semibold text-brand-700" href={`/api/hr/vacations/${vacation.id}/papeleta?format=html`} rel="noreferrer" target="_blank">Vista previa</a>
+                  <a className="rounded-md border border-brand-700 px-3 py-1.5 text-xs font-semibold text-brand-700" href={`/api/hr/vacations/${vacation.id}/papeleta?format=html#print`} rel="noreferrer" target="_blank">Imprimir</a>
+                  <a className="inline-flex items-center gap-1 rounded-md bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white" href={`/api/hr/vacations/${vacation.id}/papeleta?format=pdf`} rel="noreferrer" target="_blank">PDF <Download className="h-3.5 w-3.5" /></a>
+                  {["borrador", "solicitada", "pendiente"].includes(vacation.status) ? <button className="rounded-md border border-emerald-300 px-3 py-1.5 text-xs font-semibold text-emerald-700" onClick={() => action(vacation.id, "approve")} type="button">Aprobar</button> : null}
+                  {!["aprobada", "rechazada", "anulada"].includes(vacation.status) ? <button className="rounded-md border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-700" onClick={() => action(vacation.id, "reject", { reason: "Rechazo registrado desde RRHH" })} type="button">Rechazar</button> : null}
+                  <button className="rounded-md border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700" disabled={vacation.status === "anulada"} onClick={() => cancelVacationRequest(vacation.id)} type="button">Anular solicitud</button>
+                </div>
+              </div>
+            ))}
+            {!vacations.length ? <p className="rounded-md border border-dashed border-[#dfe4dd] p-4 text-sm text-[#667068]">Sin comprobantes de feriado para este trabajador.</p> : null}
           </div>
+        </div>
+        <div className="border-t border-[#dfe4dd] p-4">
+          <p className="mb-2 text-sm font-semibold text-brand-900">Movimientos</p>
+          <SimpleTable headers={["Periodo", "Movimiento", "Dias", "Saldo"]}>
+            {ledger.map((item) => <tr className="border-t" key={item.id}><td className="px-4 py-3">{item.period}</td><td className="px-4 py-3">{item.movementType}</td><td className="px-4 py-3">{item.days}</td><td className="px-4 py-3">{item.balanceAfter}</td></tr>)}
+          </SimpleTable>
         </div>
       </SectionCard>
     </div>
   );
+}
+
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-md bg-brand-50 p-3"><p className="text-xs uppercase tracking-[0.08em] text-[#667068]">{label}</p><p className="mt-1 text-lg font-semibold text-brand-900">{value}</p></div>;
 }
 
 function EmployeePayslipsTab({ data, employee, payslips, sendPayslips, uploadPayslip }: { data: HrDashboardData; employee: HrEmployee; payslips: HrDashboardData["payslips"]; sendPayslips: (payslipIds: string[], resend?: boolean) => void; uploadPayslip: (event: FormEvent<HTMLFormElement>) => void }) {
@@ -818,11 +1118,23 @@ function EmployeePaymentsTab({ data, employee, payments, submitJson }: { data: H
   );
 }
 
-function EmployeeDocumentsTab() {
+function EmployeeDocumentsTab({ employee, payslips }: { employee: HrEmployee; payslips: HrDashboardData["payslips"] }) {
   return (
     <SectionCard className="p-5">
       <h3 className="font-semibold text-brand-900">Documentos</h3>
-      <p className="mt-2 text-sm text-[#667068]">Liquidaciones y comprobantes generados se administran en sus pestañas respectivas. Repositorio documental dedicado queda preparado para una etapa posterior sin tocar logica actual.</p>
+      <p className="mt-2 text-sm text-[#667068]">Liquidaciones asociadas automaticamente a la ficha de {employee.fullName}. Los archivos permanecen en el bucket privado configurado.</p>
+      <div className="mt-4 space-y-2">
+        {payslips.map((payslip) => (
+          <div className="flex flex-col gap-2 rounded-md border border-[#dfe4dd] bg-white p-3 text-sm md:flex-row md:items-center md:justify-between" key={payslip.id}>
+            <div>
+              <p className="font-semibold text-brand-900">{payslip.period} / {payslip.originalFilename}</p>
+              <p className="text-xs text-[#667068]">Estado {payslip.status} / envio {payslip.sendStatus} / match {payslip.matchLevel ?? "manual"}</p>
+            </div>
+            <Pill className={statusClass(payslip.status)}>{formatClp(payslip.netAmount)}</Pill>
+          </div>
+        ))}
+        {!payslips.length ? <p className="rounded-md border border-dashed border-[#dfe4dd] p-4 text-sm text-[#667068]">Sin liquidaciones asociadas a esta ficha.</p> : null}
+      </div>
     </SectionCard>
   );
 }
@@ -845,39 +1157,79 @@ function EmployeeAuditTab({ employee }: { employee: HrEmployee }) {
 
 function PayrollSection({
   areas,
+  createSelectablePayrollBatch,
   data,
   employees,
   filteredPaymentItems,
   generatePayroll,
   markSelectedPaid,
+  paymentBankFilter,
   paymentAreaFilter,
+  payrollEmployeeSelection,
   paymentPositionFilter,
   paymentSelection,
   paymentSort,
+  paymentStatusFilter,
+  payrollDraft,
+  payrollSearch,
   positions,
+  selectableEmployees,
+  setPaymentBankFilter,
   setPaymentAreaFilter,
+  setPayrollEmployeeSelection,
   setPaymentPositionFilter,
   setPaymentSelection,
   setPaymentSort,
+  setPaymentStatusFilter,
+  setPayrollDraft,
+  setPayrollSearch,
   submitJson
 }: {
   areas: string[];
+  createSelectablePayrollBatch: (config: { concept: string; conceptDescription: string; glosaGlobal: string; period: string; scheduledDate: string; status: "borrador" | "pendiente_pago" | "aprobado" }) => void;
   data: HrDashboardData;
   employees: HrEmployee[];
   filteredPaymentItems: HrPaymentItem[];
   generatePayroll: () => void;
   markSelectedPaid: () => void;
+  paymentBankFilter: string;
   paymentAreaFilter: string;
+  payrollEmployeeSelection: string[];
   paymentPositionFilter: string;
   paymentSelection: string[];
   paymentSort: string;
+  paymentStatusFilter: string;
+  payrollDraft: Record<string, { amount: string; glosa: string }>;
+  payrollSearch: string;
   positions: string[];
+  selectableEmployees: HrEmployee[];
+  setPaymentBankFilter: (value: string) => void;
   setPaymentAreaFilter: (value: string) => void;
+  setPayrollEmployeeSelection: React.Dispatch<React.SetStateAction<string[]>>;
   setPaymentPositionFilter: (value: string) => void;
   setPaymentSelection: React.Dispatch<React.SetStateAction<string[]>>;
   setPaymentSort: (value: string) => void;
+  setPaymentStatusFilter: (value: string) => void;
+  setPayrollDraft: React.Dispatch<React.SetStateAction<Record<string, { amount: string; glosa: string }>>>;
+  setPayrollSearch: (value: string) => void;
   submitJson: (event: FormEvent<HTMLFormElement>, endpoint: string, success: string) => void;
 }) {
+  const [concept, setConcept] = useState("remuneracion_mensual");
+  const [conceptDescription, setConceptDescription] = useState("");
+  const [glosaGlobal, setGlosaGlobal] = useState("");
+  const [period, setPeriod] = useState(data.period);
+  const [scheduledDate, setScheduledDate] = useState(today());
+  const [commonAmount, setCommonAmount] = useState("");
+  const selectedFilteredIds = selectableEmployees.map((employee) => employee.id);
+  const selectAllFiltered = () => setPayrollEmployeeSelection((current) => Array.from(new Set([...current, ...selectedFilteredIds])));
+  const applyCommonAmount = () => {
+    if (!commonAmount) return;
+    setPayrollDraft((current) => {
+      const next = { ...current };
+      for (const id of payrollEmployeeSelection) next[id] = { amount: commonAmount, glosa: next[id]?.glosa ?? "" };
+      return next;
+    });
+  };
   return (
     <div className="space-y-4">
       <SectionCard className="p-5">
@@ -893,13 +1245,30 @@ function PayrollSection({
         </div>
         <div className="mt-4 grid gap-3 lg:grid-cols-5">
           <input className="rounded-md border px-3 py-2 text-sm" id="hr-tranche-label" placeholder="Nombre tramo" />
-          <input className="rounded-md border px-3 py-2 text-sm lg:col-span-2" id="hr-glosa-global" placeholder="Glosa global nomina" />
+          <input className="rounded-md border px-3 py-2 text-sm lg:col-span-2" id="hr-glosa-global" onChange={(event) => setGlosaGlobal(event.target.value)} placeholder="Glosa global nomina" value={glosaGlobal} />
           <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentAreaFilter(event.target.value)} value={paymentAreaFilter}><option value="">Todas las areas</option>{areas.map((area) => <option key={area} value={area}>{area}</option>)}</select>
           <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentPositionFilter(event.target.value)} value={paymentPositionFilter}><option value="">Todos los cargos</option>{positions.map((position) => <option key={position} value={position}>{position}</option>)}</select>
           <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentSort(event.target.value)} value={paymentSort}><option value="name">A-Z trabajador</option><option value="amount_desc">Mayor monto</option><option value="amount_asc">Menor monto</option><option value="status">Estado</option></select>
           <p className="text-xs font-semibold text-[#667068] lg:col-span-5">Exportar tramo banco desde Template Pagos JESUS RRHH.</p>
         </div>
       </SectionCard>
+      <SectionCard className="p-5">
+        <div className="grid gap-3 lg:grid-cols-6">
+          <input className="rounded-md border px-3 py-2 text-sm lg:col-span-2" onChange={(event) => setPayrollSearch(event.target.value)} placeholder="Buscar trabajador o RUT" value={payrollSearch} />
+          <input className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPeriod(event.target.value)} type="month" value={period} />
+          <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setConcept(event.target.value)} value={concept}>{paymentConcepts.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select>
+          <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentBankFilter(event.target.value)} value={paymentBankFilter}><option value="">Banco: todos</option><option value="completo">Banco completo</option><option value="incompleto">Banco incompleto</option></select>
+          <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentStatusFilter(event.target.value)} value={paymentStatusFilter}><option value="">Pago: todos</option><option value="habilitado">Habilitado</option><option value="inhabilitado">Inhabilitado</option></select>
+          {paymentConcepts.find(([code]) => code === concept)?.[2] ? <input className="rounded-md border px-3 py-2 text-sm lg:col-span-2" onChange={(event) => setConceptDescription(event.target.value)} placeholder="Descripcion obligatoria" value={conceptDescription} /> : null}
+          <input className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setScheduledDate(event.target.value)} type="date" value={scheduledDate} />
+          <input className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setCommonAmount(event.target.value)} placeholder="Monto comun" type="number" value={commonAmount} />
+          <button className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" onClick={selectAllFiltered} type="button">Seleccionar filtrados</button>
+          <button className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" onClick={applyCommonAmount} type="button">Aplicar monto</button>
+          <button className="rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white" onClick={() => createSelectablePayrollBatch({ concept, conceptDescription, glosaGlobal, period, scheduledDate, status: "aprobado" })} type="button">Crear lote</button>
+        </div>
+        <p className="mt-3 text-xs text-[#667068]">Los trabajadores con banco incompleto pueden editarse, pero no quedan aptos para nomina bancaria hasta completar sus datos.</p>
+      </SectionCard>
+      <SelectableEmployeesTable employees={selectableEmployees} draft={payrollDraft} selection={payrollEmployeeSelection} setDraft={setPayrollDraft} setSelection={setPayrollEmployeeSelection} />
       <PaymentsTable employees={employees} items={filteredPaymentItems} selection={paymentSelection} setSelection={setPaymentSelection} />
       <div className="grid gap-4 xl:grid-cols-3">
         <SectionCard className="p-5"><h3 className="font-semibold text-brand-900">Pago manual RRHH</h3><PaymentCreateForm data={data} submitJson={submitJson} /></SectionCard>
@@ -907,6 +1276,54 @@ function PayrollSection({
         <SectionCard className="p-5"><h3 className="font-semibold text-brand-900">Finiquitos / Honorarios</h3><FiniquitoForm employees={employees} submitJson={submitJson} /><div className="my-4 border-t border-[#dfe4dd]" /><HonorarioForm data={data} submitJson={submitJson} /></SectionCard>
       </div>
     </div>
+  );
+}
+
+function SelectableEmployeesTable({
+  draft,
+  employees,
+  selection,
+  setDraft,
+  setSelection
+}: {
+  draft: Record<string, { amount: string; glosa: string }>;
+  employees: HrEmployee[];
+  selection: string[];
+  setDraft: React.Dispatch<React.SetStateAction<Record<string, { amount: string; glosa: string }>>>;
+  setSelection: React.Dispatch<React.SetStateAction<string[]>>;
+}) {
+  return (
+    <SectionCard className="overflow-hidden">
+      <TableHeader title="Nueva nomina: colaboradores seleccionables" />
+      <div className="overflow-x-auto">
+        <table className="min-w-[1280px] w-full text-left text-sm">
+          <thead className="bg-brand-50 text-xs uppercase text-[#667068]">
+            <tr><th className="px-4 py-3">Sel.</th><th className="px-4 py-3">Trabajador</th><th className="px-4 py-3">RUT</th><th className="px-4 py-3">Cargo</th><th className="px-4 py-3">Area</th><th className="px-4 py-3">Banco</th><th className="px-4 py-3">Estado bancario</th><th className="px-4 py-3">Monto</th><th className="px-4 py-3">Glosa individual</th><th className="px-4 py-3">Estado</th></tr>
+          </thead>
+          <tbody>
+            {employees.map((employee) => {
+              const selected = selection.includes(employee.id);
+              const bankReady = employee.paymentAlerts.length === 0;
+              return (
+                <tr className="border-t" key={employee.id}>
+                  <td className="px-4 py-3"><input checked={selected} onChange={() => setSelection((current) => current.includes(employee.id) ? current.filter((id) => id !== employee.id) : [...current, employee.id])} type="checkbox" /></td>
+                  <td className="px-4 py-3 font-semibold text-brand-900">{employee.fullName}</td>
+                  <td className="px-4 py-3">{employee.rut}</td>
+                  <td className="px-4 py-3">{employee.position || "Sin cargo"}</td>
+                  <td className="px-4 py-3">{employee.area || "Sin area"}</td>
+                  <td className="px-4 py-3">{employee.bankAccount?.bankName || "Sin banco"}</td>
+                  <td className="px-4 py-3"><Pill className={bankReady ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}>{bankReady ? "Completo" : `Revisar: ${employee.paymentAlerts.join(", ")}`}</Pill></td>
+                  <td className="px-4 py-3"><input className="w-28 rounded-md border px-2 py-1 text-sm" onChange={(event) => setDraft((current) => ({ ...current, [employee.id]: { amount: event.target.value, glosa: current[employee.id]?.glosa ?? "" } }))} type="number" value={draft[employee.id]?.amount ?? ""} /></td>
+                  <td className="px-4 py-3"><input className="w-56 rounded-md border px-2 py-1 text-sm" onChange={(event) => setDraft((current) => ({ ...current, [employee.id]: { amount: current[employee.id]?.amount ?? "", glosa: event.target.value } }))} value={draft[employee.id]?.glosa ?? ""} /></td>
+                  <td className="px-4 py-3">{employee.paymentEnabled ? "Habilitado" : "Inhabilitado"}</td>
+                </tr>
+              );
+            })}
+            {!employees.length ? <tr><td className="px-4 py-8 text-center text-sm text-[#667068]" colSpan={10}>Sin colaboradores activos para los filtros actuales.</td></tr> : null}
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
   );
 }
 
@@ -941,40 +1358,209 @@ function PaymentsTable({ employees, items, selection, setSelection }: { employee
   );
 }
 
-function SalaryDataSection({ data, onSave }: { data: HrDashboardData; onSave: (event: FormEvent<HTMLFormElement>) => void }) {
+function formObject(form: HTMLFormElement) {
+  return Object.fromEntries(new FormData(form).entries());
+}
+
+function formHasChanges(form: HTMLFormElement) {
+  return Array.from(form.elements).some((element) => {
+    if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement)) return false;
+    if (!element.name || element.type === "hidden" || element.type === "submit") return false;
+    if (element instanceof HTMLSelectElement) return element.value !== (element.dataset.initial ?? "");
+    return element.value !== element.defaultValue;
+  });
+}
+
+function SalaryDataSection({ data, onSave, setMessage }: { data: HrDashboardData; onSave: (event: FormEvent<HTMLFormElement>) => void; setMessage: (message: string | null) => void }) {
+  const [search, setSearch] = useState("");
+  const [onlyChanges, setOnlyChanges] = useState(false);
+  const salaryRows = buildSalaryRows(data)
+    .filter((row) => {
+      const text = `${row.employee.fullName} ${row.employee.rut} ${row.employee.area ?? ""} ${row.costCenter}`.toLowerCase();
+      const hasChanges = salaryRowHasNovelty(row);
+      return (!search || text.includes(search.toLowerCase())) && (!onlyChanges || hasChanges);
+    });
+  async function saveAllChangedRows() {
+    const forms = Array.from(document.querySelectorAll<HTMLFormElement>('form[id^="salary-"]'));
+    const rows = forms.filter(formHasChanges).map(formObject);
+    if (!rows.length) {
+      setMessage("No hay cambios pendientes en Datos Sueldos.");
+      return;
+    }
+    const response = await fetch("/api/hr/accountant-data/bulk", {
+      body: JSON.stringify({ rows }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+    const payload = await response.json().catch(() => null);
+    setMessage(response.ok ? `Datos Sueldos guardados: ${payload.saved ?? 0} fila(s), ${payload.auditEntries ?? 0} cambio(s) auditado(s).` : payload?.error ?? "No se pudo guardar Datos Sueldos masivo.");
+  }
+  const totals = salaryRows.reduce((acc, row) => ({
+    advances: acc.advances + row.advances,
+    bonuses: acc.bonuses + row.productionBonus + row.compensatoryBonus + row.responsibilityBonus + row.aguinaldo,
+    loans: acc.loans + row.companyLoan + row.ccafLoan,
+    movilization: acc.movilization + row.movilization,
+    phone: acc.phone + row.phoneAllowance
+  }), { advances: 0, bonuses: 0, loans: 0, movilization: 0, phone: 0 });
   return (
-    <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+    <div className="space-y-4">
       <SectionCard className="p-5">
-        <h2 className="text-lg font-semibold text-brand-900">Datos Sueldos</h2>
-        <p className="mt-1 text-sm text-[#667068]">Grilla operativa para el contador. El formulario actual queda concentrado como editor rapido de fila.</p>
-        <AccountantRowForm data={data} onSubmit={onSave} />
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-brand-900">Datos Sueldos</h2>
+            <p className="mt-1 text-sm text-[#667068]">Grilla mensual por trabajador activo. Periodo interno {data.period}.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button className="rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white" onClick={saveAllChangedRows} type="button">Guardar todos los cambios</button>
+            <a className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" href={`/api/hr/accountant-data?period=${data.period}`}>Exportar Excel contador</a>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
+          <input className="rounded-md border px-3 py-2 text-sm md:col-span-2" onChange={(event) => setSearch(event.target.value)} placeholder="Filtrar por nombre, RUT, area o centro de costo" value={search} />
+          <label className="flex items-center gap-2 text-sm"><input checked={onlyChanges} onChange={(event) => setOnlyChanges(event.target.checked)} type="checkbox" /> Solo filas con novedades</label>
+          <button className="rounded-md border border-[#dfe4dd] px-3 py-2 text-sm font-semibold text-[#4e5a52]" onClick={() => window.confirm("Copiar datos del mes anterior queda reservado para ejecucion confirmada en backend.")} type="button">Copiar mes anterior</button>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-5">
+          <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Bonos</p><p className="font-semibold">{formatClp(totals.bonuses)}</p></div>
+          <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Anticipos</p><p className="font-semibold">{formatClp(totals.advances)}</p></div>
+          <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Prestamos</p><p className="font-semibold">{formatClp(totals.loans)}</p></div>
+          <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Movilizacion</p><p className="font-semibold">{formatClp(totals.movilization)}</p></div>
+          <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Telefono</p><p className="font-semibold">{formatClp(totals.phone)}</p></div>
+        </div>
       </SectionCard>
       <SectionCard className="overflow-hidden">
-        <div className="flex items-center justify-between border-b border-[#dfe4dd] p-4">
-          <h3 className="font-semibold text-brand-900">Periodo {data.period}</h3>
-          <a className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" href={`/api/hr/accountant-data?period=${data.period}`}>Exportar Excel contador</a>
-        </div>
-        <SimpleTable headers={["Trabajador", "RUT", "HE", "Lic.", "Inas.", "Bonos", "Anticipos", "Obs."]}>
-          {data.accountantRows.map((row) => (
-            <tr className="border-t" key={row.id}>
-              <td className="px-4 py-3 font-semibold">{row.fullName}</td><td className="px-4 py-3">{row.rut}</td><td className="px-4 py-3">{row.overtimeHours}</td><td className="px-4 py-3">{row.licenses}</td><td className="px-4 py-3">{row.absences}</td><td className="px-4 py-3">{formatClp(row.productionBonus + row.compensatoryBonus + row.responsibilityBonus + row.aguinaldo)}</td><td className="px-4 py-3">{formatClp(row.advances)}</td><td className="px-4 py-3">{row.observations}</td>
-            </tr>
-          ))}
+        <SimpleTable headers={["Trabajador", "C. costo", "Inas.", "Motivo", "Lic.", "HE", "Aguinaldo", "B. prod.", "B. comp.", "B. resp.", "Rec. dom.", "Mov.", "Tel.", "Caja", "Anticipos", "P. emp.", "P. caja", "Obs.", "Guardar"]}>
+          {salaryRows.map((row) => <SalaryGridRow key={row.employee.id} data={data} onSave={onSave} row={row} />)}
+          {!salaryRows.length ? <tr><td className="px-4 py-8 text-center text-sm text-[#667068]" colSpan={19}>Sin trabajadores para los filtros actuales.</td></tr> : null}
         </SimpleTable>
+      </SectionCard>
+      <SectionCard className="p-5">
+        <h3 className="font-semibold text-brand-900">Editor rapido de fila adicional</h3>
+        <AccountantRowForm data={data} onSubmit={onSave} />
       </SectionCard>
     </div>
   );
 }
 
-function PayslipsSection({ data, employees, sendPayslips, uploadPayslip }: { data: HrDashboardData; employees: HrEmployee[]; sendPayslips: (payslipIds: string[], resend?: boolean) => void; uploadPayslip: (event: FormEvent<HTMLFormElement>) => void }) {
+function SalaryGridRow({ data, onSave, row }: { data: HrDashboardData; onSave: (event: FormEvent<HTMLFormElement>) => void; row: { absences: number; advances: number; aguinaldo: number; cashAllowance: number; ccafLoan: number; compensatoryBonus: number; companyLoan: number; costCenter: string; employee: HrEmployee; licenses: number; movilization: number; observations: string | null; overtimeHours: number; phoneAllowance: number; productionBonus: number; reason: string | null; responsibilityBonus: number; sundaySurcharge: number } }) {
+  const input = "w-24 rounded border px-2 py-1 text-xs";
+  const formId = `salary-${row.employee.id}`;
   return (
-    <div className="grid gap-4 xl:grid-cols-[0.75fr_1.25fr]">
+    <tr className="border-t align-top">
+      <td className="px-4 py-3 font-semibold text-brand-900">{row.employee.fullName}</td>
+      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.costCenter} name="costCenter" /></td>
+      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.absences} name="absences" type="number" step="0.01" /></td>
+      <td className="px-4 py-3"><input className="w-36 rounded border px-2 py-1 text-xs" form={formId} defaultValue={row.reason ?? ""} name="reason" /></td>
+      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.licenses} name="licenses" type="number" step="0.01" /></td>
+      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.overtimeHours} name="overtimeHours" type="number" step="0.01" /></td>
+      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.aguinaldo} name="aguinaldo" type="number" /></td>
+      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.productionBonus} name="productionBonus" type="number" /></td>
+      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.compensatoryBonus} name="compensatoryBonus" type="number" /></td>
+      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.responsibilityBonus} name="responsibilityBonus" type="number" /></td>
+      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.sundaySurcharge} name="sundaySurcharge" type="number" /></td>
+      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.movilization} name="movilization" type="number" /></td>
+      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.phoneAllowance} name="phoneAllowance" type="number" /></td>
+      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.cashAllowance} name="cashAllowance" type="number" /></td>
+      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.advances} name="advances" type="number" /></td>
+      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.companyLoan} name="companyLoan" type="number" /></td>
+      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.ccafLoan} name="ccafLoan" type="number" /></td>
+      <td className="px-4 py-3"><input className="w-44 rounded border px-2 py-1 text-xs" form={formId} defaultValue={row.observations ?? ""} name="observations" /></td>
+      <td className="px-4 py-3">
+        <form id={formId} onSubmit={onSave}>
+          <input name="period" type="hidden" value={data.period} />
+          <input name="rut" type="hidden" value={row.employee.rut} />
+          <input name="fullName" type="hidden" value={row.employee.fullName} />
+          <button className="rounded-md bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white" type="submit">Guardar</button>
+        </form>
+      </td>
+    </tr>
+  );
+}
+
+function PayslipsSection({
+  bulkPayslipAssignments,
+  bulkPayslipPreview,
+  bulkPayslipSummary,
+  data,
+  employees,
+  previewBulkPayslips,
+  sendPayslips,
+  setBulkPayslipAssignments,
+  uploadPayslip
+}: {
+  bulkPayslipAssignments: Record<string, string>;
+  bulkPayslipPreview: Array<Record<string, string | number | boolean | null>>;
+  bulkPayslipSummary: Record<string, number> | null;
+  data: HrDashboardData;
+  employees: HrEmployee[];
+  previewBulkPayslips: (event: FormEvent<HTMLFormElement>, commit?: boolean) => void;
+  sendPayslips: (payslipIds: string[], resend?: boolean) => void;
+  setBulkPayslipAssignments: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  uploadPayslip: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const submitBulkPayslips = (event: FormEvent<HTMLFormElement>) => {
+    const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
+    previewBulkPayslips(event, submitter?.value === "commit");
+  };
+  return (
+    <div className="grid gap-4 xl:grid-cols-[0.78fr_1.22fr]">
       <SectionCard className="p-5">
         <h2 className="text-lg font-semibold text-brand-900">Liquidaciones</h2>
         <PayslipUploadForm data={data} employees={employees} onSubmit={uploadPayslip} />
         <button className="mt-4 w-full rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" onClick={() => sendPayslips(data.payslips.map((payslip) => payslip.id))} type="button">Enviar liquidaciones pendientes pagadas</button>
       </SectionCard>
-      <PayslipsTable payslips={data.payslips} sendPayslips={sendPayslips} />
+      <div className="space-y-4">
+        <SectionCard className="p-5">
+          <h3 className="font-semibold text-brand-900">Carga masiva y clasificacion</h3>
+          <form className="mt-4 grid gap-3 md:grid-cols-[1fr_2fr_auto_auto]" onSubmit={submitBulkPayslips}>
+            <input className="rounded-md border px-3 py-2 text-sm" defaultValue={data.period} name="period" type="month" />
+            <input accept="application/pdf" className="rounded-md border px-3 py-2 text-sm" multiple name="files" required type="file" />
+            <button className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" type="submit" value="preview">Previsualizar</button>
+            <button className="rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white" type="submit" value="commit">Confirmar autoasociadas</button>
+          </form>
+          {bulkPayslipSummary ? (
+            <div className="mt-4 grid gap-2 text-sm sm:grid-cols-4">
+              <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Archivos</p><p className="font-semibold">{bulkPayslipSummary.total ?? 0}</p></div>
+              <div className="rounded-md bg-emerald-50 p-3 text-emerald-800"><p className="text-xs">Automaticas</p><p className="font-semibold">{bulkPayslipSummary.autoMatched ?? 0}</p></div>
+              <div className="rounded-md bg-amber-50 p-3 text-amber-800"><p className="text-xs">A revision</p><p className="font-semibold">{bulkPayslipSummary.needsReview ?? 0}</p></div>
+              <div className="rounded-md bg-rose-50 p-3 text-rose-800"><p className="text-xs">Duplicadas</p><p className="font-semibold">{bulkPayslipSummary.duplicates ?? 0}</p></div>
+            </div>
+          ) : null}
+          {bulkPayslipPreview.length ? (
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-[820px] w-full text-left text-xs">
+                <thead className="bg-brand-50 uppercase text-[#667068]"><tr><th className="px-3 py-2">Archivo</th><th className="px-3 py-2">Trabajador</th><th className="px-3 py-2">RUT</th><th className="px-3 py-2">Periodo</th><th className="px-3 py-2">Match</th><th className="px-3 py-2">Revision manual</th><th className="px-3 py-2">Estado</th></tr></thead>
+                <tbody>
+                  {bulkPayslipPreview.map((item, index) => (
+                    <tr className="border-t" key={`${item.fileName ?? "archivo"}-${index}`}>
+                      <td className="px-3 py-2">{String(item.fileName ?? "-")}</td>
+                      <td className="px-3 py-2 font-semibold text-brand-900">{String(item.employeeName ?? item.detectedName ?? "Sin asociar")}</td>
+                      <td className="px-3 py-2">{String(item.detectedRut ?? "-")}</td>
+                      <td className="px-3 py-2">{String(item.period ?? "-")}</td>
+                      <td className="px-3 py-2">{String(item.matchLevel ?? "-")} / {String(item.matchMethod ?? "-")}</td>
+                      <td className="px-3 py-2">
+                        <select
+                          className="w-52 rounded-md border px-2 py-1 text-xs"
+                          onChange={(event) => setBulkPayslipAssignments((current) => ({ ...current, [String(item.fileName ?? "")]: event.target.value }))}
+                          value={bulkPayslipAssignments[String(item.fileName ?? "")] ?? ""}
+                        >
+                          <option value="">Sin asignacion manual</option>
+                          {employees.filter((employee) => employee.status === "activo").map((employee) => (
+                            <option key={employee.id} value={employee.id}>{employee.fullName} / {employee.rut}</option>
+                          ))}
+                        </select>
+                        {item.reviewReason ? <p className="mt-1 max-w-xs text-[11px] text-[#667068]">{String(item.reviewReason)}</p> : null}
+                      </td>
+                      <td className="px-3 py-2"><Pill className={item.duplicate ? "border-rose-200 bg-rose-50 text-rose-800" : item.employeeId ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}>{item.duplicate ? "Duplicada" : item.employeeId ? "Autoasociada" : "Revision"}</Pill></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </SectionCard>
+        <PayslipsTable payslips={data.payslips} sendPayslips={sendPayslips} />
+      </div>
     </div>
   );
 }
@@ -1083,22 +1669,65 @@ function AccountantRowForm({ data, onSubmit }: { data: HrDashboardData; onSubmit
 }
 
 function VacationForm({ employeeId, submitJson }: { employeeId: string; submitJson: (event: FormEvent<HTMLFormElement>, endpoint: string, success: string) => void }) {
+  const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
+  async function previewVacation(form: HTMLFormElement) {
+    const formData = new FormData(form);
+    const payload = {
+      advanceAuthorized: formData.get("advanceAuthorized") === "on",
+      employeeId,
+      endDate: String(formData.get("endDate") ?? ""),
+      fractionationAgreement: formData.get("fractionationAgreement") === "on",
+      requestedBusinessDays: formData.get("requestedBusinessDays") ? Number(formData.get("requestedBusinessDays")) : undefined,
+      startDate: String(formData.get("startDate") ?? "")
+    };
+    const response = await fetch("/api/hr/vacations/preview", {
+      body: JSON.stringify(payload),
+      headers: { "Content-Type": "application/json" },
+      method: "POST"
+    });
+    const result = await response.json().catch(() => null);
+    setPreview(result?.preview ?? { error: result?.error ?? "preview_failed" });
+  }
   return (
     <>
       <form className="mt-4 space-y-3" onSubmit={(event) => submitJson(event, "/api/hr/vacations", "Vacaciones registradas.")}>
         <input name="employeeId" type="hidden" value={employeeId} />
         <input className="w-full rounded-md border px-3 py-2 text-sm" name="documentDate" type="date" defaultValue={today()} />
-        <input className="w-full rounded-md border px-3 py-2 text-sm" name="contractPeriodStart" type="date" />
-        <input className="w-full rounded-md border px-3 py-2 text-sm" name="contractPeriodEnd" type="date" />
+        <div className="grid gap-2 sm:grid-cols-2">
+          <input className="w-full rounded-md border px-3 py-2 text-sm" name="contractPeriodStart" type="date" />
+          <input className="w-full rounded-md border px-3 py-2 text-sm" name="contractPeriodEnd" type="date" />
+        </div>
         <input className="w-full rounded-md border px-3 py-2 text-sm" name="startDate" type="date" required />
-        <input className="w-full rounded-md border px-3 py-2 text-sm" name="endDate" type="date" required />
-        <input className="w-full rounded-md border px-3 py-2 text-sm" name="progressiveDays" placeholder="Vacaciones progresivas" type="number" step="0.01" />
-        <input className="w-full rounded-md border px-3 py-2 text-sm" name="nonBusinessDays" placeholder="Domingos e inhabiles" type="number" step="0.01" />
-        <select className="w-full rounded-md border px-3 py-2 text-sm" name="status"><option value="solicitada">Solicitada</option><option value="aprobada">Aprobada</option><option value="tomada">Tomada</option><option value="rechazada">Rechazada</option></select>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <input className="w-full rounded-md border px-3 py-2 text-sm" name="requestedBusinessDays" placeholder="Dias habiles solicitados" type="number" step="0.01" />
+          <input className="w-full rounded-md border px-3 py-2 text-sm" name="endDate" type="date" />
+        </div>
+        <select className="w-full rounded-md border px-3 py-2 text-sm" name="status"><option value="borrador">Borrador</option><option value="solicitada">Solicitada</option><option value="pendiente">Pendiente</option><option value="aprobada">Aprobar y generar comprobante</option><option value="rechazada">Rechazada</option></select>
         <label className="flex items-center gap-2 text-sm"><input name="fractionalVacation" type="checkbox" /> Feriado fraccionado</label>
+        <label className="flex items-center gap-2 text-sm"><input name="fractionationAgreement" type="checkbox" /> Existe acuerdo de fraccionamiento</label>
+        <label className="flex items-center gap-2 text-sm"><input name="advanceAuthorized" type="checkbox" /> Autorizar vacaciones anticipadas</label>
         <input className="w-full rounded-md border px-3 py-2 text-sm" name="observation" placeholder="Observacion" />
         <input className="w-full rounded-md border px-3 py-2 text-sm" name="note" placeholder="Nota comprobante" />
-        <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" type="submit">Registrar vacaciones</button>
+        {preview ? (
+          <div className="rounded-md border border-brand-100 bg-brand-50 p-3 text-xs text-brand-900">
+            {"error" in preview ? <p>Vista previa no disponible: {String(preview.error)}</p> : (
+              <div className="grid gap-1 sm:grid-cols-2">
+                <p>Dias habiles: {String(preview.businessDays ?? "-")}</p>
+                <p>Ultimo dia computado: {String(preview.lastCountedVacationDate ?? "-")}</p>
+                <p>Fin descanso: {String(preview.effectiveRestEndDate ?? "-")}</p>
+                <p>Reincorporacion: {String(preview.returnToWorkDate ?? "-")}</p>
+                <p>Proporcional proyectado: {Number(preview.projectedProportional ?? 0).toFixed(6)}</p>
+                <p>Anticipo: {String(preview.advanceDays ?? 0)} dias</p>
+                <p>FIFO: {Array.isArray(preview.allocations) ? preview.allocations.length : 0} periodos</p>
+                <p>Valido: {preview.valid ? "SI" : "NO"}</p>
+              </div>
+            )}
+          </div>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <button className="rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" onClick={(event) => previewVacation(event.currentTarget.form as HTMLFormElement)} type="button">Vista previa</button>
+          <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" type="submit">Guardar solicitud</button>
+        </div>
       </form>
       <form className="mt-4 border-t border-[#dfe4dd] pt-4 space-y-3" onSubmit={(event) => submitJson(event, "/api/hr/vacations/accruals", "Movimiento de vacaciones registrado.")}>
         <input name="employeeId" type="hidden" value={employeeId} />
@@ -1211,8 +1840,8 @@ function PaymentsMiniTable({ payments }: { payments: HrDashboardData["paymentIte
   );
 }
 
-function TableHeader({ title }: { title: string }) {
-  return <div className="flex items-center gap-2 border-b border-[#dfe4dd] bg-white p-4"><SlidersHorizontal className="h-4 w-4 text-brand-700" /><h3 className="font-semibold text-brand-900">{title}</h3></div>;
+function TableHeader({ action, title }: { action?: React.ReactNode; title: string }) {
+  return <div className="flex items-center justify-between gap-2 border-b border-[#dfe4dd] bg-white p-4"><div className="flex items-center gap-2"><SlidersHorizontal className="h-4 w-4 text-brand-700" /><h3 className="font-semibold text-brand-900">{title}</h3></div>{action}</div>;
 }
 
 function SimpleTable({ children, headers }: { children: React.ReactNode; headers: string[] }) {
