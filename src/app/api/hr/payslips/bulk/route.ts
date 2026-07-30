@@ -171,7 +171,10 @@ export async function POST(request: Request) {
       tenant_id: ctx.membership.tenant_id,
       uploaded_by: ctx.user.id
     }).select("id").single();
-    if (!insert.data?.id) continue;
+    if (!insert.data?.id) {
+      await supabase.storage.from("hr-payslips").remove([path]);
+      continue;
+    }
 
     saved += 1;
     savedIds.push(insert.data.id);
@@ -200,7 +203,11 @@ export async function POST(request: Request) {
       tenant_id: ctx.membership.tenant_id
     }).select("id").single();
 
-    if (payment.error) return NextResponse.json({ ok: false, error: "payment_item_insert_failed", saved, savedIds }, { status: 409 });
+    if (payment.error || !payment.data?.id) {
+      await supabase.from("hr_payslips").delete().eq("tenant_id", ctx.membership.tenant_id).eq("id", insert.data.id);
+      await supabase.storage.from("hr-payslips").remove([path]);
+      return NextResponse.json({ ok: false, error: "payment_item_insert_failed", saved, savedIds }, { status: 409 });
+    }
 
     paymentsCreated += 1;
     paymentIds.push(payment.data.id);
