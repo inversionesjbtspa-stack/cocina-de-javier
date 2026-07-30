@@ -87,7 +87,11 @@ function unescapePdf(value: string) {
 }
 
 function pdfStrings(stream: string) {
-  return [...stream.matchAll(/\((?:\\.|[^\\)])*\)\s*Tj/g)].map((match) => unescapePdf(match[0].replace(/\)\s*Tj$/, "").slice(1)));
+  const textItems = [...stream.matchAll(/\((?:\\.|[^\\)])*\)\s*Tj/g)].map((match) => unescapePdf(match[0].replace(/\)\s*Tj$/, "").slice(1)));
+  const arrayItems = [...stream.matchAll(/\[([\s\S]*?)\]\s*TJ/g)].flatMap((match) =>
+    [...match[1].matchAll(/\((?:\\.|[^\\)])*\)/g)].map((item) => unescapePdf(item[0].slice(1, -1)))
+  );
+  return [...textItems, ...arrayItems];
 }
 
 function amount(value: string | undefined | null) {
@@ -102,9 +106,17 @@ function valueAfter(strings: string[], label: string) {
   return index >= 0 ? strings[index + 1]?.trim() ?? "" : "";
 }
 
+export function payslipPaymentGlosa(period: string) {
+  const [year, month] = period.split("-");
+  const monthLabel = Object.entries(monthMap).find(([, value]) => value === month)?.[0]?.toLowerCase() ?? "periodo";
+  return `Pago remuneración ${monthLabel} ${year}`;
+}
+
 function lineAmount(strings: string[], label: RegExp) {
   const index = strings.findIndex((item) => label.test(item.trim().toUpperCase()));
   if (index < 0) return 0;
+  const inline = amount(strings[index].replace(label, ""));
+  if (inline || /\b0\b/.test(strings[index])) return inline;
   return amount(strings[index + 1]);
 }
 
@@ -113,22 +125,30 @@ function textLine(strings: string[], label: RegExp) {
   return found?.trim() ?? "";
 }
 
+function inlineValue(strings: string[], label: RegExp) {
+  for (const item of strings) {
+    const match = item.trim().match(label);
+    if (match?.[1]?.trim()) return match[1].trim();
+  }
+  return "";
+}
+
 function isoDate(value: string) {
   const match = value.match(/(\d{2})-(\d{2})-(\d{4})/);
   return match ? `${match[3]}-${match[2]}-${match[1]}` : null;
 }
 
-function periodFrom(monthLabel: string) {
-  const match = monthLabel.toUpperCase().match(/([A-ZÁÉÍÓÚÑ]+)\s+DE\s+(\d{4})/);
-  if (!match) return "2026-04";
-  return `${match[2]}-${monthMap[match[1].normalize("NFD").replace(/[\u0300-\u036f]/g, "")] ?? "04"}`;
+function safePeriodFrom(monthLabel: string) {
+  const normalized = monthLabel.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+  const match = normalized.match(/(ENERO|FEBRERO|MARZO|ABRIL|MAYO|JUNIO|JULIO|AGOSTO|SEPTIEMBRE|OCTUBRE|NOVIEMBRE|DICIEMBRE)\s+DE\s+(\d{4})/);
+  return match ? `${match[2]}-${monthMap[match[1]]}` : "";
 }
 
 function parseStream(stream: string, page: number): ParsedPayslip | null {
   const strings = pdfStrings(stream).map((item) => item.replace(/\s+/g, " ").trim()).filter(Boolean);
-  const monthLabel = valueAfter(strings, "MES :");
-  const fullName = valueAfter(strings, "NOMBRE :");
-  const rut = valueAfter(strings, "RUT :");
+  const monthLabel = valueAfter(strings, "MES :") || inlineValue(strings, /^MES\s*:?\s*(.+)$/i) || textLine(strings, /[A-ZÁÉÍÓÚÑ]+\s+DE\s+\d{4}/);
+  const fullName = valueAfter(strings, "NOMBRE :") || inlineValue(strings, /^NOMBRE\s*:?\s*(.+)$/i);
+  const rut = valueAfter(strings, "RUT :") || inlineValue(strings, /^RUT\s*:?\s*(.+)$/i);
   if (!fullName || !rut) return null;
   const baseLine = textLine(strings, /^SUELDO BASE MENSUAL/);
   const workedLine = textLine(strings, /^DÍAS TRABAJADOS|^DIAS TRABAJADOS/);
@@ -152,13 +172,13 @@ function parseStream(stream: string, page: number): ParsedPayslip | null {
     netPay,
     overtime: lineAmount(strings, /HORAS EXTRA/),
     page,
-    period: periodFrom(monthLabel),
-    position: valueAfter(strings, "CARGO :"),
+    period: safePeriodFrom(monthLabel),
+    position: valueAfter(strings, "CARGO :") || inlineValue(strings, /^CARGO\s*:?\s*(.+)$/i),
     productionBonus: lineAmount(strings, /BONO PRODUCCION|BONO PRODUCCIÓN/),
     rawText: strings.join("\n"),
     responsibilityBonus: lineAmount(strings, /BONO RESPONSABILIDAD/),
     rut,
-    section: valueAfter(strings, "SECCIÓN :"),
+    section: valueAfter(strings, "SECCIÓN :") || inlineValue(strings, /^SECCI[ÓO]N\s*:?\s*(.+)$/i),
     sundaySurcharge: lineAmount(strings, /RECARGO HRS DOMINGOS|RECARGO DOMINGOS/),
     totalDiscounts: lineAmount(strings, /TOTAL DESCUENTOS/),
     totalEarnings: lineAmount(strings, /TOTAL HABERES/),
