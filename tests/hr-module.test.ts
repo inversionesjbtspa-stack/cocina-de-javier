@@ -234,7 +234,14 @@ test("HR mass payroll workflow exposes migrations, routes and UI controls", asyn
   assert.match(client, /Liquidaciones asociadas automaticamente/);
   assert.match(bulkPayslipsRoute, /buildPayslipPayrollImportItems/);
   assert.match(bulkPayslipsRoute, /validatePayslipUploadFile/);
-  assert.match(bulkPayslipsRoute, /payslip_manual_review_required/);
+  assert.match(bulkPayslipsRoute, /const confirmable = results\.filter\(isConfirmable\)/);
+  assert.match(bulkPayslipsRoute, /for \(const item of confirmable\)/);
+  assert.match(bulkPayslipsRoute, /partially_confirmed/);
+  assert.match(bulkPayslipsRoute, /failed\.push/);
+  assert.doesNotMatch(bulkPayslipsRoute, /payslip_manual_review_required/);
+  assert.match(client, /bulkPayslipCommitMessage/);
+  assert.match(client, /No hay liquidaciones listas para confirmar/);
+  assert.doesNotMatch(client, /setMessage\(payload\?\.error \?\? "No se pudo clasificar carga masiva\."/);
   assert.match(bulkPayslipsRoute, /mode !== "commit"/);
   assert.match(bulkPayslipsRoute, /file_sha256/);
   assert.match(bulkPayslipsRoute, /source_type: "payslip_import"/);

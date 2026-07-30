@@ -94,6 +94,28 @@ function statusClass(status: string) {
   return "border-[#dfe4dd] bg-white text-[#4e5a52]";
 }
 
+function hrErrorMessage(error?: string) {
+  if (error === "payslip_manual_review_required") return "Hay liquidaciones pendientes de asignacion manual. Confirma solo las filas listas o asigna manualmente las pendientes.";
+  if (error === "payslip_files_required") return "Selecciona al menos un PDF de liquidaciones.";
+  if (error === "payslip_file_validation_failed") return "El archivo no cumple el formato PDF permitido.";
+  if (error === "payslip_parse_failed") return "No se pudo leer el PDF. Revisa que no este protegido o corrupto.";
+  if (error === "payslip_pages_not_detected") return "No se detectaron liquidaciones dentro del PDF.";
+  if (error === "payslip_batch_insert_failed") return "No se pudo crear el lote de importacion.";
+  if (error === "payment_item_insert_failed") return "Una liquidacion lista no pudo crear su fila de nomina.";
+  return "No se pudo clasificar carga masiva.";
+}
+
+function bulkPayslipCommitMessage(payload: Record<string, unknown>) {
+  const confirmed = Number(payload.confirmed ?? payload.saved ?? 0);
+  const payments = Number(payload.createdPayrollRows ?? payload.paymentsCreated ?? 0);
+  const pending = Number(payload.pendingReview ?? 0);
+  const duplicates = Number(payload.duplicates ?? 0);
+  const zeroNet = Number(payload.zeroNet ?? 0);
+  const failed = Array.isArray(payload.failed) ? payload.failed.length : Number(payload.failed ?? 0);
+  if (!confirmed && !payments && !zeroNet) return "No hay liquidaciones listas para confirmar.";
+  return `Se confirmaron ${confirmed} liquidacion(es). Quedaron ${pending} pendiente(s) de asignacion manual, ${duplicates} duplicada(s), ${failed} error(es). Se crearon ${payments} fila(s) de nomina y ${zeroNet} liquidacion(es) quedaron sin pago por liquido $0.`;
+}
+
 function Pill({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>{children}</span>;
 }
@@ -486,13 +508,13 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
       if (payload?.unresolved?.length) setBulkPayslipPreview(payload.results ?? []);
-      setMessage(payload?.error ?? "No se pudo clasificar carga masiva.");
+      setMessage(hrErrorMessage(payload?.error));
       return;
     }
     setBulkPayslipPreview(payload.results ?? []);
     setBulkPayslipSummary(payload.summary ?? null);
     setMessage(commit
-      ? `Carga confirmada: ${payload.saved ?? 0} liquidacion(es), ${payload.paymentsCreated ?? 0} fila(s) de nomina.`
+      ? bulkPayslipCommitMessage(payload)
       : `Previsualizacion lista: ${payload.summary?.ready ?? 0} listas, ${payload.summary?.zeroNet ?? 0} sin pago, ${payload.summary?.needsReview ?? 0} a revision.`);
   }
 
