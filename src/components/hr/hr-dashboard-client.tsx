@@ -124,8 +124,9 @@ function SectionCard({ children, className = "" }: { children: React.ReactNode; 
   return <article className={`rounded-lg border border-[#dfe4dd] bg-white shadow-sm ${className}`}>{children}</article>;
 }
 
-export function HrDashboardClient({ data }: { data: HrDashboardData }) {
-  const [activeSection, setActiveSection] = useState<HrSection>("workers");
+export function HrDashboardClient({ data, initialSection }: { data: HrDashboardData; initialSection?: string }) {
+  const initialActiveSection = sections.some((section) => section.id === initialSection) ? initialSection as HrSection : "workers";
+  const [activeSection, setActiveSection] = useState<HrSection>(initialActiveSection);
   const [employees, setEmployees] = useState(data.employees);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(data.employees[0]?.id ?? "");
   const [profileOpen, setProfileOpen] = useState(false);
@@ -200,6 +201,27 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
     if (Object.keys(activeColumnFilters).length) params.set("workerFilters", JSON.stringify(activeColumnFilters)); else params.delete("workerFilters");
     window.history.replaceState(null, "", `${window.location.pathname}${params.toString() ? `?${params}` : ""}`);
   }, [workerAreaFilter, workerColumnFilters, workerSearch, workerStatusFilter]);
+
+  useEffect(() => {
+    const importedPayroll = data.paymentItems.filter((item) =>
+      item.sourceType === "payslip_import"
+      && item.paymentType === "remuneracion_mensual"
+      && item.amount > 0
+    );
+    if (!importedPayroll.length) return;
+    setPayrollDraft((current) => {
+      const next = { ...current };
+      for (const item of importedPayroll) {
+        if (!next[item.employeeId]?.amount) {
+          next[item.employeeId] = {
+            amount: String(item.amount),
+            glosa: item.glosa ?? next[item.employeeId]?.glosa ?? ""
+          };
+        }
+      }
+      return next;
+    });
+  }, [data.paymentItems]);
 
   const filteredEmployees = (() => {
     const search = workerSearch.trim().toLowerCase();
@@ -516,6 +538,13 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
     setMessage(commit
       ? bulkPayslipCommitMessage(payload)
       : `Previsualizacion lista: ${payload.summary?.ready ?? 0} listas, ${payload.summary?.zeroNet ?? 0} sin pago, ${payload.summary?.needsReview ?? 0} a revision.`);
+    const periods = Array.isArray(payload.periods) ? payload.periods.filter((period: unknown): period is string => typeof period === "string" && /^\d{4}-\d{2}$/.test(period)) : [];
+    if (commit && periods.length === 1) {
+      const params = new URLSearchParams(window.location.search);
+      params.set("period", periods[0]);
+      params.set("section", "payroll");
+      window.location.assign(`${window.location.pathname}?${params.toString()}`);
+    }
   }
 
   async function markSelectedPaid() {
@@ -1246,6 +1275,14 @@ function PayrollSection({
   const [commonAmount, setCommonAmount] = useState("");
   const selectedFilteredIds = selectableEmployees.map((employee) => employee.id);
   const selectAllFiltered = () => setPayrollEmployeeSelection((current) => Array.from(new Set([...current, ...selectedFilteredIds])));
+  const changePayrollPeriod = (value: string) => {
+    setPeriod(value);
+    if (!/^\d{4}-\d{2}$/.test(value)) return;
+    const params = new URLSearchParams(window.location.search);
+    params.set("period", value);
+    params.set("section", "payroll");
+    window.location.assign(`${window.location.pathname}?${params.toString()}`);
+  };
   const applyCommonAmount = () => {
     if (!commonAmount) return;
     setPayrollDraft((current) => {
@@ -1279,7 +1316,7 @@ function PayrollSection({
       <SectionCard className="p-5">
         <div className="grid gap-3 lg:grid-cols-6">
           <input className="rounded-md border px-3 py-2 text-sm lg:col-span-2" onChange={(event) => setPayrollSearch(event.target.value)} placeholder="Buscar trabajador o RUT" value={payrollSearch} />
-          <input className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPeriod(event.target.value)} type="month" value={period} />
+          <input className="rounded-md border px-3 py-2 text-sm" onChange={(event) => changePayrollPeriod(event.target.value)} type="month" value={period} />
           <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setConcept(event.target.value)} value={concept}>{paymentConcepts.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select>
           <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentBankFilter(event.target.value)} value={paymentBankFilter}><option value="">Banco: todos</option><option value="completo">Banco completo</option><option value="incompleto">Banco incompleto</option></select>
           <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentStatusFilter(event.target.value)} value={paymentStatusFilter}><option value="">Pago: todos</option><option value="habilitado">Habilitado</option><option value="inhabilitado">Inhabilitado</option></select>

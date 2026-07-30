@@ -324,9 +324,9 @@ function relatedFullName(value: unknown, fallback: string) {
   return record?.full_name ?? fallback;
 }
 
-export async function getHrDashboardData(): Promise<HrDashboardData> {
+export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDashboardData> {
   noStore();
-  const period = currentPeriod();
+  const period = selectedPeriod && /^\d{4}-\d{2}$/.test(selectedPeriod) ? selectedPeriod : currentPeriod();
   if (!hasSupabaseAdminConfig()) {
     return {
       accountantRows: [],
