@@ -94,6 +94,9 @@ export type HrPaymentItem = {
   paymentType: string;
   amount: number;
   glosa: string | null;
+  payslipId: string | null;
+  sourceId: string | null;
+  sourceType: string | null;
   status: string;
   scheduledDate: string | null;
 };
@@ -378,7 +381,7 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
       .limit(80),
     supabase
       .from("hr_payment_items")
-      .select("id,employee_id,period,payment_type,amount,glosa,status,scheduled_date,hr_employees(full_name)")
+      .select("id,employee_id,period,payment_type,amount,glosa,status,scheduled_date,payslip_id,source_type,source_id,hr_employees(full_name)")
       .eq("tenant_id", ctx.tenantId)
       .eq("period", period)
       .order("created_at", { ascending: false }),
@@ -477,9 +480,12 @@ export async function getHrDashboardData(): Promise<HrDashboardData> {
     employeeName: relatedFullName(row.hr_employees, "Trabajador"),
     glosa: row.glosa,
     id: row.id,
+    payslipId: row.payslip_id,
     paymentType: row.payment_type,
     period: row.period,
     scheduledDate: row.scheduled_date,
+    sourceId: row.source_id,
+    sourceType: row.source_type,
     status: row.status
   }));
   const paymentBatches = (batchRows ?? []).map((row) => ({

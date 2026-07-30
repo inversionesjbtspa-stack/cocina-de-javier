@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import zlib from "node:zlib";
 import AdmZip from "adm-zip";
 import { classifyPayslipPdf } from "../src/lib/hr/payslip-classifier.ts";
 import test from "node:test";
-import { extractPayslipsFromPdf, generateAccountantWorkbook, parseAccountantWorkbook } from "../src/lib/hr/payroll-parser.ts";
+import { buildPayslipPayrollImportItems, summarizePayslipPayrollImport } from "../src/lib/hr/payslip-payroll-import.ts";
+import { extractPayslipsFromPdf, generateAccountantWorkbook, parseAccountantWorkbook, payslipPaymentGlosa } from "../src/lib/hr/payroll-parser.ts";
 import { validatePaymentBatchEmployee } from "../src/lib/hr/payment-batch.ts";
 import { buildSalaryRows, salaryRowHasNovelty } from "../src/lib/hr/salary-data.ts";
 import { SALARY_EXPORT_COLUMNS, SALARY_PRESERVED_SHEETS, SALARY_TEMPLATE } from "../src/lib/hr/salary-export-map.ts";
@@ -216,6 +218,7 @@ test("HR mass payroll workflow exposes migrations, routes and UI controls", asyn
   const bulkPayslipsRoute = await readFile("src/app/api/hr/payslips/bulk/route.ts", "utf8");
   const paymentBatchRoute = await readFile("src/app/api/hr/payments/batch/route.ts", "utf8");
   const hardeningMigration = await readFile("supabase/migrations/202607230003_hr_payroll_hardening.sql", "utf8");
+  const automationMigration = await readFile("supabase/migrations/202607300002_hr_payslip_to_payroll_automation.sql", "utf8");
   const hrData = await readFile("src/lib/hr/data.ts", "utf8");
 
   assert.match(migration, /create table if not exists public\.hr_payment_concepts/);
@@ -229,11 +232,14 @@ test("HR mass payroll workflow exposes migrations, routes and UI controls", asyn
   assert.match(client, /Carga masiva y clasificacion/);
   assert.match(client, /payrollEmployeeSelection/);
   assert.match(client, /Liquidaciones asociadas automaticamente/);
-  assert.match(bulkPayslipsRoute, /classifyPayslipPdf/);
+  assert.match(bulkPayslipsRoute, /buildPayslipPayrollImportItems/);
   assert.match(bulkPayslipsRoute, /validatePayslipUploadFile/);
   assert.match(bulkPayslipsRoute, /payslip_manual_review_required/);
   assert.match(bulkPayslipsRoute, /mode !== "commit"/);
   assert.match(bulkPayslipsRoute, /file_sha256/);
+  assert.match(bulkPayslipsRoute, /source_type: "payslip_import"/);
+  assert.match(bulkPayslipsRoute, /payslip_id: insert\.data\.id/);
+  assert.match(automationMigration, /hr_payment_items_payslip_import_payslip_uidx/);
   assert.match(paymentBatchRoute, /hr_payment_duplicates_need_confirmation/);
   assert.match(paymentBatchRoute, /validatePaymentBatchEmployee/);
   assert.match(paymentBatchRoute, /hr_create_payment_batch/);
@@ -294,7 +300,7 @@ test("HR salary rows include every active worker and isolate novelty logic", () 
   const rows = buildSalaryRows({
     accountantRows: [{ absences: 1, advances: 0, aguinaldo: 0, cashAllowance: 0, ccafLoan: 0, compensatoryBonus: 0, companyLoan: 0, costCenter: "COC", employeeId: "emp-a", fullName: "Activa Con Fila", id: "row-a", licenses: 0, movilization: 0, observations: null, overtimeHours: 0, period: "2026-06", phoneAllowance: 0, productionBonus: 0, reason: null, responsibilityBonus: 0, rut: "11.111.111-1", sundaySurcharge: 0 }],
     employees,
-    paymentItems: [{ amount: 5000, employeeId: "emp-b", employeeName: "Activa Sin Fila", glosa: null, id: "pay-b", paymentType: "anticipo", period: "2026-06", scheduledDate: null, status: "aprobado" }],
+    paymentItems: [{ amount: 5000, employeeId: "emp-b", employeeName: "Activa Sin Fila", glosa: null, id: "pay-b", paymentType: "anticipo", payslipId: null, period: "2026-06", scheduledDate: null, sourceId: null, sourceType: null, status: "aprobado" }],
     period: "2026-06"
   });
   assert.deepEqual(rows.map((row) => row.employee.id), ["emp-a", "emp-b"]);
@@ -358,6 +364,91 @@ test("HR payslip classifier matches a PDF-like file by RUT without writing stora
   assert.equal(result.matchMethod, "rut_exacto");
   assert.equal(result.employeeName, "Trabajador Demo");
   assert.equal(result.detectedPeriod, "2026-06");
+});
+
+function syntheticPayslipsPdf(pages: Array<{ name: string; rut: string; net: string; period?: string }>) {
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    `<< /Type /Pages /Kids [${pages.map((_, index) => `${3 + index * 2} 0 R`).join(" ")}] /Count ${pages.length} >>`
+  ];
+  for (const [pageIndex, item] of pages.entries()) {
+    const lines = [
+      "MES :",
+      item.period ?? "ABRIL DE 2026",
+      "NOMBRE :",
+      item.name,
+      "RUT :",
+      item.rut,
+      "CARGO :",
+      "VALIDADOR",
+      "SECCION :",
+      "RRHH",
+      "TOTAL HABERES",
+      "$ 9.999.999",
+      "TOTAL DESCUENTOS",
+      "$ 1",
+      "LIQUIDO A PAGAR",
+      item.net
+    ];
+    const textOps = lines.map((line, index) => `BT /F1 12 Tf 42 ${740 - index * 26} Td (${line.replace(/[()\\]/g, "")}) Tj ET`).join("\n");
+    const compressed = zlib.deflateSync(Buffer.from(textOps, "latin1"));
+    const pageObject = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${3 + pages.length * 2} 0 R >> >> /Contents ${4 + pageIndex * 2} 0 R >>`;
+    const streamObject = `<< /Filter /FlateDecode /Length ${compressed.length} >>\nstream\n${compressed.toString("latin1")}\nendstream`;
+    objects.push(pageObject, streamObject);
+  }
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(pdf, "latin1"));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = Buffer.byteLength(pdf, "latin1");
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  offsets.slice(1).forEach((offset) => { pdf += `${String(offset).padStart(10, "0")} 00000 n \n`; });
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return Buffer.from(pdf, "latin1");
+}
+
+test("HR multipage payslip import creates one preview row and payroll glosa per page", async () => {
+  const pdf = syntheticPayslipsPdf([
+    { name: "BETANCOURT PAREZ JESUS", net: "$1.379.182", rut: "25.289.035-1" },
+    { name: "BURGA TRUJILLO JOSE LUIS", net: "$707.282", rut: "27.891.945-5" },
+    { name: "TRABAJADOR SIN PAGO", net: "$0", rut: "11.111.111-1" }
+  ]);
+  const employees = [
+    { fullName: "BETANCOURT PAREZ JESUS", id: "11111111-1111-4111-8111-111111111111", rut: "25.289.035-1" },
+    { fullName: "BURGA TRUJILLO JOSE LUIS", id: "22222222-2222-4222-8222-222222222222", rut: "27.891.945-5" },
+    { fullName: "TRABAJADOR SIN PAGO", id: "33333333-3333-4333-8333-333333333333", rut: "11.111.111-1" }
+  ];
+
+  const items = await buildPayslipPayrollImportItems({ buffer: pdf, employees, filename: "liquidaciones-abril-demo.pdf" });
+  const summary = summarizePayslipPayrollImport(items);
+
+  assert.equal(items.length, 3);
+  assert.equal(items[0].period, "2026-04");
+  assert.equal(items[0].netAmount, 1379182);
+  assert.equal(items[0].glosa, "Pago remuneración abril 2026");
+  assert.equal(items[0].matchMethod, "rut_exacto");
+  assert.equal(items[1].netAmount, 707282);
+  assert.equal(items[2].status, "sin_pago");
+  assert.equal(items[2].paymentRequired, false);
+  assert.equal(summary.ready, 2);
+  assert.equal(summary.zeroNet, 1);
+  assert.equal(summary.totalPayable, 2086464);
+  assert.equal(payslipPaymentGlosa("2026-06"), "Pago remuneración junio 2026");
+});
+
+test("HR multipage payslip import flags repeated page hashes as duplicates", async () => {
+  const pdf = syntheticPayslipsPdf([
+    { name: "BETANCOURT PAREZ JESUS", net: "$1.379.182", rut: "25.289.035-1" }
+  ]);
+  const employees = [{ fullName: "BETANCOURT PAREZ JESUS", id: "11111111-1111-4111-8111-111111111111", rut: "25.289.035-1" }];
+  const first = await buildPayslipPayrollImportItems({ buffer: pdf, employees, filename: "liquidacion-demo.pdf" });
+  const repeated = await buildPayslipPayrollImportItems({ buffer: pdf, duplicateHashes: new Set([first[0].fileSha256]), employees, filename: "liquidacion-demo.pdf" });
+
+  assert.equal(repeated[0].status, "duplicado");
+  assert.equal(summarizePayslipPayrollImport(repeated).duplicates, 1);
 });
 
 test("HR vacation receipt renders the definitive feriado model without legacy trial watermark", async () => {

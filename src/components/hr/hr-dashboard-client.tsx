@@ -491,7 +491,9 @@ export function HrDashboardClient({ data }: { data: HrDashboardData }) {
     }
     setBulkPayslipPreview(payload.results ?? []);
     setBulkPayslipSummary(payload.summary ?? null);
-    setMessage(commit ? `Carga confirmada: ${payload.saved ?? 0} liquidacion(es) guardadas.` : `Previsualizacion lista: ${payload.summary?.autoMatched ?? 0} automaticas, ${payload.summary?.needsReview ?? 0} a revision.`);
+    setMessage(commit
+      ? `Carga confirmada: ${payload.saved ?? 0} liquidacion(es), ${payload.paymentsCreated ?? 0} fila(s) de nomina.`
+      : `Previsualizacion lista: ${payload.summary?.ready ?? 0} listas, ${payload.summary?.zeroNet ?? 0} sin pago, ${payload.summary?.needsReview ?? 0} a revision.`);
   }
 
   async function markSelectedPaid() {
@@ -1333,8 +1335,8 @@ function PaymentsTable({ employees, items, selection, setSelection }: { employee
     <SectionCard className="overflow-hidden">
       <TableHeader title="Pagos seleccionables" />
       <div className="overflow-x-auto">
-        <table className="min-w-[980px] w-full text-left text-sm">
-          <thead className="bg-brand-50 text-xs uppercase text-[#667068]"><tr><th className="px-4 py-3">Sel.</th><th className="px-4 py-3">Trabajador</th><th className="px-4 py-3">Tipo</th><th className="px-4 py-3">Periodo</th><th className="px-4 py-3">Monto</th><th className="px-4 py-3">Banco</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Glosa</th></tr></thead>
+        <table className="min-w-[1120px] w-full text-left text-sm">
+          <thead className="bg-brand-50 text-xs uppercase text-[#667068]"><tr><th className="px-4 py-3">Sel.</th><th className="px-4 py-3">Trabajador</th><th className="px-4 py-3">Tipo</th><th className="px-4 py-3">Periodo</th><th className="px-4 py-3">Monto</th><th className="px-4 py-3">Banco</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Origen</th><th className="px-4 py-3">Liquidacion</th><th className="px-4 py-3">Glosa</th></tr></thead>
           <tbody>
             {items.map((item) => {
               const employee = employeeById.get(item.employeeId);
@@ -1347,6 +1349,8 @@ function PaymentsTable({ employees, items, selection, setSelection }: { employee
                   <td className="px-4 py-3 font-semibold">{formatClp(item.amount)}</td>
                   <td className="px-4 py-3">{employee?.bankAccount?.bankName ?? "Sin banco"}</td>
                   <td className="px-4 py-3"><Pill className={statusClass(item.status)}>{item.status}</Pill></td>
+                  <td className="px-4 py-3">{item.sourceType === "payslip_import" ? "Liquidacion importada" : "Manual"}</td>
+                  <td className="px-4 py-3">{item.sourceType === "payslip_import" && (item.payslipId || item.sourceId) ? <a className="font-semibold text-brand-700 underline" href={`/api/hr/payslips/${item.payslipId ?? item.sourceId}/download`}>Abrir PDF</a> : "-"}</td>
                   <td className="px-4 py-3">{item.glosa ?? "Automatica"}</td>
                 </tr>
               );
@@ -1520,29 +1524,34 @@ function PayslipsSection({
           </form>
           {bulkPayslipSummary ? (
             <div className="mt-4 grid gap-2 text-sm sm:grid-cols-4">
-              <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Archivos</p><p className="font-semibold">{bulkPayslipSummary.total ?? 0}</p></div>
-              <div className="rounded-md bg-emerald-50 p-3 text-emerald-800"><p className="text-xs">Automaticas</p><p className="font-semibold">{bulkPayslipSummary.autoMatched ?? 0}</p></div>
+              <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Paginas</p><p className="font-semibold">{bulkPayslipSummary.total ?? 0}</p></div>
+              <div className="rounded-md bg-emerald-50 p-3 text-emerald-800"><p className="text-xs">Listas</p><p className="font-semibold">{bulkPayslipSummary.ready ?? 0}</p></div>
               <div className="rounded-md bg-amber-50 p-3 text-amber-800"><p className="text-xs">A revision</p><p className="font-semibold">{bulkPayslipSummary.needsReview ?? 0}</p></div>
               <div className="rounded-md bg-rose-50 p-3 text-rose-800"><p className="text-xs">Duplicadas</p><p className="font-semibold">{bulkPayslipSummary.duplicates ?? 0}</p></div>
+              <div className="rounded-md bg-slate-50 p-3 text-slate-800"><p className="text-xs">Liquido $0</p><p className="font-semibold">{bulkPayslipSummary.zeroNet ?? 0}</p></div>
+              <div className="rounded-md bg-brand-50 p-3 sm:col-span-2"><p className="text-xs text-[#667068]">Total a pagar confirmable</p><p className="font-semibold">{formatClp(Number(bulkPayslipSummary.totalPayable ?? 0))}</p></div>
             </div>
           ) : null}
           {bulkPayslipPreview.length ? (
             <div className="mt-4 overflow-x-auto">
-              <table className="min-w-[820px] w-full text-left text-xs">
-                <thead className="bg-brand-50 uppercase text-[#667068]"><tr><th className="px-3 py-2">Archivo</th><th className="px-3 py-2">Trabajador</th><th className="px-3 py-2">RUT</th><th className="px-3 py-2">Periodo</th><th className="px-3 py-2">Match</th><th className="px-3 py-2">Revision manual</th><th className="px-3 py-2">Estado</th></tr></thead>
+              <table className="min-w-[1120px] w-full text-left text-xs">
+                <thead className="bg-brand-50 uppercase text-[#667068]"><tr><th className="px-3 py-2">Pagina</th><th className="px-3 py-2">Archivo</th><th className="px-3 py-2">Trabajador detectado</th><th className="px-3 py-2">RUT</th><th className="px-3 py-2">Asociado</th><th className="px-3 py-2">Periodo</th><th className="px-3 py-2">Liquido</th><th className="px-3 py-2">Glosa nomina</th><th className="px-3 py-2">Revision manual</th><th className="px-3 py-2">Estado</th></tr></thead>
                 <tbody>
                   {bulkPayslipPreview.map((item, index) => (
                     <tr className="border-t" key={`${item.fileName ?? "archivo"}-${index}`}>
+                      <td className="px-3 py-2 font-semibold">{String(item.page ?? index + 1)}</td>
                       <td className="px-3 py-2">{String(item.fileName ?? "-")}</td>
-                      <td className="px-3 py-2 font-semibold text-brand-900">{String(item.employeeName ?? item.detectedName ?? "Sin asociar")}</td>
+                      <td className="px-3 py-2">{String(item.detectedName ?? "-")}</td>
                       <td className="px-3 py-2">{String(item.detectedRut ?? "-")}</td>
+                      <td className="px-3 py-2 font-semibold text-brand-900">{String(item.employeeName ?? "Sin asociar")}</td>
                       <td className="px-3 py-2">{String(item.period ?? "-")}</td>
-                      <td className="px-3 py-2">{String(item.matchLevel ?? "-")} / {String(item.matchMethod ?? "-")}</td>
+                      <td className="px-3 py-2 font-semibold">{formatClp(Number(item.netAmount ?? 0))}</td>
+                      <td className="px-3 py-2">{String(item.glosa ?? "-")}</td>
                       <td className="px-3 py-2">
                         <select
                           className="w-52 rounded-md border px-2 py-1 text-xs"
-                          onChange={(event) => setBulkPayslipAssignments((current) => ({ ...current, [String(item.fileName ?? "")]: event.target.value }))}
-                          value={bulkPayslipAssignments[String(item.fileName ?? "")] ?? ""}
+                          onChange={(event) => setBulkPayslipAssignments((current) => ({ ...current, [String(item.importKey ?? "")]: event.target.value }))}
+                          value={bulkPayslipAssignments[String(item.importKey ?? "")] ?? ""}
                         >
                           <option value="">Sin asignacion manual</option>
                           {employees.filter((employee) => employee.status === "activo").map((employee) => (
@@ -1551,7 +1560,7 @@ function PayslipsSection({
                         </select>
                         {item.reviewReason ? <p className="mt-1 max-w-xs text-[11px] text-[#667068]">{String(item.reviewReason)}</p> : null}
                       </td>
-                      <td className="px-3 py-2"><Pill className={item.duplicate ? "border-rose-200 bg-rose-50 text-rose-800" : item.employeeId ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}>{item.duplicate ? "Duplicada" : item.employeeId ? "Autoasociada" : "Revision"}</Pill></td>
+                      <td className="px-3 py-2"><Pill className={item.status === "duplicado" ? "border-rose-200 bg-rose-50 text-rose-800" : item.status === "listo" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : item.status === "sin_pago" ? "border-slate-200 bg-slate-50 text-slate-800" : "border-amber-200 bg-amber-50 text-amber-800"}>{item.status === "sin_pago" ? "Sin pago" : item.status === "listo" ? "Listo" : item.status === "duplicado" ? "Duplicada" : "Revision"}</Pill></td>
                     </tr>
                   ))}
                 </tbody>
