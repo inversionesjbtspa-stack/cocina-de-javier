@@ -220,6 +220,7 @@ test("HR mass payroll workflow exposes migrations, routes and UI controls", asyn
   const hardeningMigration = await readFile("supabase/migrations/202607230003_hr_payroll_hardening.sql", "utf8");
   const automationMigration = await readFile("supabase/migrations/202607300002_hr_payslip_to_payroll_automation.sql", "utf8");
   const hrData = await readFile("src/lib/hr/data.ts", "utf8");
+  const hrPage = await readFile("src/app/(erp)/recursos-humanos/page.tsx", "utf8");
 
   assert.match(migration, /create table if not exists public\.hr_payment_concepts/);
   assert.match(migration, /create table if not exists public\.hr_payslip_import_batches/);
@@ -241,9 +242,16 @@ test("HR mass payroll workflow exposes migrations, routes and UI controls", asyn
   assert.doesNotMatch(bulkPayslipsRoute, /payslip_manual_review_required/);
   assert.match(client, /bulkPayslipCommitMessage/);
   assert.match(client, /No hay liquidaciones listas para confirmar/);
+  assert.match(client, /item\.sourceType === "payslip_import"/);
+  assert.match(client, /item\.paymentType === "remuneracion_mensual"/);
+  assert.match(client, /params\.set\("period", periods\[0\]\)/);
+  assert.match(client, /params\.set\("section", "payroll"\)/);
   assert.doesNotMatch(client, /setMessage\(payload\?\.error \?\? "No se pudo clasificar carga masiva\."/);
   assert.match(bulkPayslipsRoute, /mode !== "commit"/);
   assert.match(bulkPayslipsRoute, /file_sha256/);
+  assert.match(bulkPayslipsRoute, /repairableDuplicates/);
+  assert.match(bulkPayslipsRoute, /repaired_from_existing_payslip/);
+  assert.match(bulkPayslipsRoute, /payment_item_repair_failed/);
   assert.match(bulkPayslipsRoute, /source_type: "payslip_import"/);
   assert.match(bulkPayslipsRoute, /payslip_id: insert\.data\.id/);
   assert.match(automationMigration, /hr_payment_items_payslip_import_payslip_uidx/);
@@ -255,6 +263,8 @@ test("HR mass payroll workflow exposes migrations, routes and UI controls", asyn
   assert.match(hardeningMigration, /hr_upsert_accountant_data_rows/);
   assert.match(hardeningMigration, /hr_salary_data_audit/);
   assert.match(hrData, /requireHrServerContext/);
+  assert.match(hrData, /getHrDashboardData\(selectedPeriod\?: string\)/);
+  assert.match(hrPage, /getHrDashboardData\(params\.period\)/);
   assert.match(hrData, /\.eq\("tenant_id", ctx\.tenantId\)/);
 });
 

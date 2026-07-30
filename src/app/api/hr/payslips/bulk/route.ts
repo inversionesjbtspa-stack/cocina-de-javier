@@ -7,6 +7,17 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 
+type ImportItem = Awaited<ReturnType<typeof buildPayslipPayrollImportItems>>[number];
+
+type ExistingPayslipRow = {
+  employee_id: string | null;
+  file_sha256: string | null;
+  id: string;
+  metadata: Record<string, unknown> | null;
+  net_amount: number | null;
+  period: string | null;
+};
+
 function parseAssignments(value: FormDataEntryValue | null) {
   if (typeof value !== "string" || !value.trim()) return new Map<string, string>();
   try {
@@ -17,7 +28,7 @@ function parseAssignments(value: FormDataEntryValue | null) {
   }
 }
 
-function publicItem(item: Awaited<ReturnType<typeof buildPayslipPayrollImportItems>>[number]) {
+function publicItem(item: ImportItem) {
   return {
     detectedName: item.detectedName,
     detectedPeriod: item.detectedPeriod,
@@ -41,11 +52,16 @@ function publicItem(item: Awaited<ReturnType<typeof buildPayslipPayrollImportIte
   };
 }
 
-function isConfirmable(item: Awaited<ReturnType<typeof buildPayslipPayrollImportItems>>[number]) {
+function isConfirmable(item: ImportItem) {
   return Boolean(item.employeeId)
     && Boolean(item.period)
     && (item.status === "listo" || item.status === "sin_pago")
     && !item.warnings.includes("liquido_no_detectado");
+}
+
+function payslipGlosa(payslip: ExistingPayslipRow, fallback: string) {
+  const glosa = payslip.metadata && typeof payslip.metadata.glosa === "string" ? payslip.metadata.glosa : "";
+  return glosa || fallback;
 }
 
 export async function POST(request: Request) {
@@ -95,10 +111,16 @@ export async function POST(request: Request) {
   const pageHashes = firstPass.map((item) => item.fileSha256);
   const repeatedHashes = new Set(pageHashes.filter((hash, index) => pageHashes.indexOf(hash) !== index));
   const existingHashes = pageHashes.length
-    ? await supabase.from("hr_payslips").select("file_sha256").eq("tenant_id", ctx.membership.tenant_id).in("file_sha256", pageHashes)
+    ? await supabase
+      .from("hr_payslips")
+      .select("id,employee_id,file_sha256,metadata,net_amount,period")
+      .eq("tenant_id", ctx.membership.tenant_id)
+      .in("file_sha256", pageHashes)
     : { data: [] };
+  const existingPayslips = (existingHashes.data ?? []) as ExistingPayslipRow[];
+  const existingPayslipByHash = new Map(existingPayslips.map((row) => [row.file_sha256, row]));
   const duplicateHashes = new Set([
-    ...(existingHashes.data ?? []).map((row) => row.file_sha256).filter(Boolean),
+    ...existingPayslips.map((row) => row.file_sha256).filter(Boolean),
     ...repeatedHashes
   ]);
 
@@ -118,9 +140,38 @@ export async function POST(request: Request) {
   }
 
   const confirmable = results.filter(isConfirmable);
+  const duplicateRepairCandidates = results
+    .map((item) => ({ item, payslip: existingPayslipByHash.get(item.fileSha256) }))
+    .filter(({ item, payslip }) =>
+      item.status === "duplicado"
+      && Boolean(payslip?.id)
+      && Boolean(payslip?.employee_id)
+      && Boolean(payslip?.period)
+      && Number(payslip?.net_amount ?? 0) > 0
+    );
+  const candidatePayslipIds = duplicateRepairCandidates.map(({ payslip }) => payslip?.id).filter((id): id is string => Boolean(id));
+  const [paymentsByPayslip, paymentsBySource] = candidatePayslipIds.length ? await Promise.all([
+    supabase
+      .from("hr_payment_items")
+      .select("payslip_id")
+      .eq("tenant_id", ctx.membership.tenant_id)
+      .eq("source_type", "payslip_import")
+      .in("payslip_id", candidatePayslipIds),
+    supabase
+      .from("hr_payment_items")
+      .select("source_id")
+      .eq("tenant_id", ctx.membership.tenant_id)
+      .eq("source_type", "payslip_import")
+      .in("source_id", candidatePayslipIds)
+  ]) : [{ data: [] }, { data: [] }];
+  const paymentLinkedPayslipIds = new Set([
+    ...((paymentsByPayslip.data ?? []) as Array<{ payslip_id: string | null }>).map((row) => row.payslip_id).filter(Boolean),
+    ...((paymentsBySource.data ?? []) as Array<{ source_id: string | null }>).map((row) => row.source_id).filter(Boolean)
+  ]);
+  const repairableDuplicates = duplicateRepairCandidates.filter(({ payslip }) => payslip?.id && !paymentLinkedPayslipIds.has(payslip.id));
   const pendingReview = results.filter((item) => item.status === "requiere_revision" || !item.employeeId).length;
   const duplicates = results.filter((item) => item.status === "duplicado").length;
-  if (!confirmable.length) {
+  if (!confirmable.length && !repairableDuplicates.length) {
     return NextResponse.json({
       ok: true,
       confirmed: 0,
@@ -134,13 +185,15 @@ export async function POST(request: Request) {
       saved: 0,
       savedIds: [],
       summary,
+      periods: Array.from(new Set(results.map((item) => item.period).filter(Boolean))),
+      repairedPayrollRows: 0,
       zeroNet: 0
     });
   }
 
   const batchPeriods = Array.from(new Set(results.map((item) => item.period).filter(Boolean)));
   const batch = await supabase.from("hr_payslip_import_batches").insert({
-    auto_matched: confirmable.length,
+    auto_matched: confirmable.length + repairableDuplicates.length,
     duplicated: duplicates,
     errors: pendingReview,
     needs_review: pendingReview,
@@ -153,6 +206,7 @@ export async function POST(request: Request) {
   if (batch.error || !batch.data?.id) return NextResponse.json({ ok: false, error: "payslip_batch_insert_failed" }, { status: 500 });
 
   let paymentsCreated = 0;
+  let repairedPayrollRows = 0;
   let saved = 0;
   let zeroNet = 0;
   const failed: Array<{ error: string; fileName: string; page: number }> = [];
@@ -245,10 +299,38 @@ export async function POST(request: Request) {
     paymentIds.push(payment.data.id);
   }
 
+  for (const { item, payslip } of repairableDuplicates) {
+    if (!payslip?.id || !payslip.employee_id || !payslip.period) continue;
+    const payment = await supabase.from("hr_payment_items").insert({
+      amount: Number(payslip.net_amount ?? 0),
+      created_by: ctx.user.id,
+      employee_id: payslip.employee_id,
+      glosa: payslipGlosa(payslip, item.glosa),
+      metadata: {
+        import_batch_id: batch.data?.id ?? null,
+        repaired_from_existing_payslip: true
+      },
+      payslip_id: payslip.id,
+      payment_type: "remuneracion_mensual",
+      period: payslip.period,
+      source_id: payslip.id,
+      source_type: "payslip_import",
+      status: "pendiente_pago",
+      tenant_id: ctx.membership.tenant_id
+    }).select("id").single();
+    if (payment.error || !payment.data?.id) {
+      failed.push({ error: "payment_item_repair_failed", fileName: item.fileName, page: item.page });
+      continue;
+    }
+    paymentsCreated += 1;
+    repairedPayrollRows += 1;
+    paymentIds.push(payment.data.id);
+  }
+
   await supabase.from("audit_events").insert({
     actor_role: ctx.membership.role,
     actor_user_id: ctx.user.id,
-    after_data: { duplicates, failed: failed.length, paymentsCreated, pendingReview, periods: batchPeriods, saved, summary, zeroNet },
+    after_data: { duplicates, failed: failed.length, paymentsCreated, pendingReview, periods: batchPeriods, repairedPayrollRows, saved, summary, zeroNet },
     company_id: ctx.membership.company_id,
     entity_id: batch.data?.id ?? null,
     entity_type: "hr_payslip_import_batch",
@@ -267,6 +349,8 @@ export async function POST(request: Request) {
     paymentsCreated,
     paymentIds,
     pendingReview,
+    periods: batchPeriods,
+    repairedPayrollRows,
     results: results.map(publicItem),
     saved,
     savedIds,

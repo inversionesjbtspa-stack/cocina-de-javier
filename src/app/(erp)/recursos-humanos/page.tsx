@@ -2,8 +2,9 @@ import { AppShell } from "@/components/layout/app-shell";
 import { HrDashboardClient } from "@/components/hr/hr-dashboard-client";
 import { getHrDashboardData } from "@/lib/hr/data";
 
-export default async function RecursosHumanosPage() {
-  const data = await getHrDashboardData();
+export default async function RecursosHumanosPage({ searchParams }: { searchParams: Promise<{ period?: string; section?: string }> }) {
+  const params = await searchParams;
+  const data = await getHrDashboardData(params.period);
 
   return (
     <AppShell>
@@ -25,7 +26,7 @@ export default async function RecursosHumanosPage() {
           </div>
         </div>
 
-        <HrDashboardClient data={data} />
+        <HrDashboardClient data={data} initialSection={params.section} />
       </section>
     </AppShell>
   );
