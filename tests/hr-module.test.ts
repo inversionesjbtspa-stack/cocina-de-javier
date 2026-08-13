@@ -14,6 +14,8 @@ import { SALARY_EXPORT_COLUMNS, SALARY_PRESERVED_SHEETS, SALARY_TEMPLATE } from 
 import { sanitizePayslipFilename, validatePayslipUploadBatch, validatePayslipUploadFile } from "../src/lib/hr/payslip-upload-policy.ts";
 import { businessDaysInclusive, accruedVacationDays } from "../src/lib/hr/utils.ts";
 import { buildVacationExcelXml } from "../src/lib/hr/vacation-export.ts";
+import { parseVacationImportFile, previewVacationImport, sha256 } from "../src/lib/hr/vacation-import.ts";
+import { calculateVacationBalanceAt, previewVacationPeriodBackfill } from "../src/lib/hr/vacation-persistence.ts";
 import {
   allocateVacationFifo,
   calculateAnnualEntitlement,
@@ -44,6 +46,7 @@ test("HR module exposes operational tables, storage buckets and payment template
   const repairMigration = await readFile("supabase/migrations/202605150022_hr_schema_repair.sql", "utf8");
   const page = await readFile("src/app/(erp)/recursos-humanos/page.tsx", "utf8");
   const client = await readFile("src/components/hr/hr-dashboard-client.tsx", "utf8");
+  const vacationComponents = await readFile("src/components/hr/vacation-components.tsx", "utf8");
   const paymentRoute = await readFile("src/app/api/hr/payment-template/route.ts", "utf8");
   const accountantRoute = await readFile("src/app/api/hr/accountant-data/route.ts", "utf8");
   const bankImportRoute = await readFile("src/app/api/hr/bank-import/route.ts", "utf8");
@@ -121,7 +124,7 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(accountantRoute, /employee_name/);
   assert.match(client, /Novedades mensuales/);
   assert.match(client, /Datos Sueldos/);
-  assert.match(client, /Feriado fraccionado/);
+  assert.match(vacationComponents, /Feriado fraccionado/);
   assert.match(client, /Anticipos avanzados/);
   assert.match(client, /Exportar tramo banco/);
   assert.match(client, /Enviar liquidaciones pendientes pagadas/);
@@ -210,6 +213,93 @@ test("HR vacation export workbook contains separated projected proportional colu
   assert.match(xml, /Proporcional proyectado/);
   assert.match(xml, /DETALLE POR PERIODO/);
   assert.match(xml, /FER-2026-000001/);
+});
+
+test("HR vacation persistent backfill is deterministic and idempotent", () => {
+  const first = previewVacationPeriodBackfill({
+    asOf: "2026-08-13",
+    employeeId: "emp-1",
+    existingPeriods: [],
+    hireDate: "2024-07-23",
+    yearsForward: 1
+  });
+  assert.equal(first.conflicts.length, 0);
+  assert.ok(first.missing.length >= 2);
+  const second = previewVacationPeriodBackfill({
+    asOf: "2026-08-13",
+    employeeId: "emp-1",
+    existingPeriods: first.missing.map((period) => ({ period_end: period.periodEnd, period_start: period.periodStart })),
+    hireDate: "2024-07-23",
+    yearsForward: 1
+  });
+  assert.equal(second.missing.length, 0);
+  assert.equal(second.conflicts.length, 0);
+});
+
+test("HR vacation balance is reproducible from persisted periods and movements", () => {
+  const balance = calculateVacationBalanceAt({
+    asOf: "2026-08-13",
+    periods: [
+      { advance_days: 0, available_balance: 2, base_days: 15, period_end: "2025-07-22", period_start: "2024-07-23", progressive_days: 0, reserved_days: 0, used_days: 13 },
+      { advance_days: 0, available_balance: 12, base_days: 15, period_end: "2026-07-22", period_start: "2025-07-23", progressive_days: 1, reserved_days: 3, used_days: 1 }
+    ],
+    movements: [
+      { days: -13, movement_type: "used" },
+      { days: 1, movement_type: "progressive" }
+    ]
+  });
+  assert.equal(balance.accrued, 31);
+  assert.equal(balance.used, 14);
+  assert.equal(balance.reserved, 3);
+  assert.equal(balance.available, 14);
+});
+
+test("HR vacation import preview matches only by RUT and blocks duplicates", async () => {
+  const csv = [
+    "RUT,Fecha corte,Saldo,Tipo",
+    "12.345.678-5,2026-07-25,5,saldo inicial",
+    "11.111.111-1,2026-07-25,3,vacaciones usadas",
+    "99.999.999-9,2026-07-25,2,saldo inicial",
+    "22.222.222-2,2026-07-25,1,saldo inicial",
+    "Trabajador Demo,2026-07-25,,saldo inicial"
+  ].join("\n");
+  const rawRows = parseVacationImportFile(Buffer.from(csv), "vacaciones.csv");
+  const baseInput = {
+    employees: [
+      { fullName: "Trabajador Demo", id: "emp-1", rut: "12.345.678-5" },
+      { fullName: "Trabajador Dos", id: "emp-2", rut: "11.111.111-1" },
+      { fullName: "Duplicado A", id: "emp-3", rut: "22.222.222-2" },
+      { fullName: "Duplicado B", id: "emp-4", rut: "22.222.222-2" }
+    ],
+    importType: "balances" as const,
+    periodResolver: () => ({ id: "period-1", periodEnd: "2027-07-22", periodStart: "2026-07-23" }),
+    parsedRows: rawRows,
+    sourceHash: sha256(csv)
+  };
+  const duplicateHash = previewVacationImport(baseInput).rows[1].rowHash;
+  const preview = previewVacationImport({
+    ...baseInput,
+    existingRowHashes: [{ row_hash: duplicateHash }],
+  });
+  assert.equal(preview.summary.total, 5);
+  assert.equal(preview.summary.ready, 1);
+  assert.equal(preview.summary.duplicates, 1);
+  assert.equal(preview.summary.review, 1);
+  assert.equal(preview.summary.invalid, 1);
+  assert.equal(preview.summary.notFound, 1);
+  assert.equal(preview.rows.find((row) => row.rut === "99999999-9")?.status, "TRABAJADOR NO ENCONTRADO");
+  assert.equal(preview.rows.find((row) => row.rut === "22222222-2")?.notes, "RUT duplicado entre trabajadores activos");
+});
+
+test("HR vacation persistence migration is additive and creates import idempotency", async () => {
+  const migration = await readFile("supabase/migrations/202608130001_hr_vacation_persistence_imports.sql", "utf8");
+  assert.match(migration, /create table if not exists public\.hr_vacation_import_batches/);
+  assert.match(migration, /add column if not exists row_hash/);
+  assert.match(migration, /hr_vacation_movements_row_hash_uidx/);
+  assert.match(migration, /enable row level security/);
+  assert.match(migration, /grant select, insert, update on table public\.hr_vacation_import_batches to authenticated/);
+  assert.doesNotMatch(migration, /to anon/);
+  assert.doesNotMatch(migration, /^\s*(drop\s+table|delete|truncate)\b/im);
 });
 
 test("HR mass payroll workflow exposes migrations, routes and UI controls", async () => {

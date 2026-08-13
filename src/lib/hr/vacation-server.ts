@@ -7,6 +7,7 @@ import {
   type Holiday,
   type VacationPeriod
 } from "./vacation-domain.ts";
+import { previewVacationPeriodBackfill } from "./vacation-persistence.ts";
 
 export type HrVacationContext = {
   companyId: string;
@@ -59,6 +60,61 @@ export function buildFallbackPeriods(employee: { hire_date?: string | null; id: 
     employeeId: employee.id,
     tenantId: employee.tenant_id ?? undefined
   }));
+}
+
+export async function ensureVacationPeriodsForEmployee(input: {
+  asOf: string;
+  employee: { hire_date?: string | null; id: string; tenant_id?: string | null };
+  supabase: unknown;
+  userId: string;
+  yearsForward?: number;
+}) {
+  if (!input.employee.hire_date || !input.employee.tenant_id) return { created: 0, periods: [] as VacationPeriod[], usedFallback: true };
+  const supabase = input.supabase as {
+    from: (table: string) => {
+      select: (columns: string) => {
+        eq: (column: string, value: string) => { eq: (column: string, value: string) => PromiseLike<{ data: Array<Record<string, unknown>> | null; error?: { message: string } | null }> };
+      };
+      upsert: (rows: unknown[], options: { ignoreDuplicates?: boolean; onConflict: string }) => {
+        select: (columns: string) => PromiseLike<{ data: unknown[] | null; error?: { message: string } | null }>;
+      };
+    };
+  };
+  const existingResult = await supabase
+    .from("hr_vacation_periods")
+    .select("*")
+    .eq("tenant_id", input.employee.tenant_id)
+    .eq("employee_id", input.employee.id);
+  const existing = existingResult.data ?? [];
+  const preview = previewVacationPeriodBackfill({
+    asOf: input.asOf,
+    employeeId: input.employee.id,
+    existingPeriods: existing.map((period) => ({
+      period_end: String(period.period_end),
+      period_start: String(period.period_start)
+    })),
+    hireDate: input.employee.hire_date,
+    yearsForward: input.yearsForward ?? 1
+  });
+  if (preview.conflicts.length) return { conflicts: preview.conflicts, created: 0, periods: existing.map(mapPeriodRow), usedFallback: false };
+  if (!preview.missing.length) return { created: 0, periods: existing.map(mapPeriodRow), usedFallback: false };
+  const rows = preview.missing.map((period) => ({
+    base_days: period.baseDays,
+    created_by: input.userId,
+    employee_id: input.employee.id,
+    period_end: period.periodEnd,
+    period_start: period.periodStart,
+    status: period.status,
+    tenant_id: input.employee.tenant_id,
+    updated_by: input.userId
+  }));
+  const inserted = await supabase
+    .from("hr_vacation_periods")
+    .upsert(rows, { ignoreDuplicates: true, onConflict: "tenant_id,employee_id,period_start,period_end" })
+    .select("*");
+  if (inserted.error) return { created: 0, error: inserted.error.message, periods: existing.map(mapPeriodRow), usedFallback: false };
+  const combined = [...existing, ...((inserted.data ?? []) as Array<Record<string, unknown>>)];
+  return { created: inserted.data?.length ?? 0, periods: combined.map(mapPeriodRow), usedFallback: false };
 }
 
 export function buildVacationSnapshot(input: {

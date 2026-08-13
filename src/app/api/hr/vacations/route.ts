@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
 import { calculateVacationPreview, yearsInRange, type HolidayCalendarStatus } from "@/lib/hr/vacation-domain";
-import { assertEmployeeInTenant, buildFallbackPeriods, buildVacationSnapshot, mapPeriodRow, safeVacationHolidays } from "@/lib/hr/vacation-server";
+import { assertEmployeeInTenant, buildFallbackPeriods, buildVacationSnapshot, ensureVacationPeriodsForEmployee, mapPeriodRow, safeVacationHolidays } from "@/lib/hr/vacation-server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -62,7 +62,10 @@ export async function POST(request: Request) {
 
   const holidays = safeVacationHolidays(holidayRows as Array<Record<string, unknown>> | null);
   const calendarStatusByYear = Object.fromEntries((calendarRows ?? []).map((row) => [String(row.calendar_year), String(row.verification_status) as HolidayCalendarStatus]));
-  const periods = periodRows?.length ? periodRows.map((row) => mapPeriodRow(row as Record<string, unknown>)) : buildFallbackPeriods(employeeRow, body.startDate);
+  const ensured = periodRows?.length
+    ? { periods: periodRows.map((row) => mapPeriodRow(row as Record<string, unknown>)), usedFallback: false }
+    : await ensureVacationPeriodsForEmployee({ asOf: body.startDate, employee: employeeRow, supabase, userId: ctx.user.id });
+  const periods = ensured.periods.length ? ensured.periods : buildFallbackPeriods(employeeRow, body.startDate);
   const preview = calculateVacationPreview({
     advanceAuthorized: body.advanceAuthorized,
     agreementAccepted: body.fractionationAgreement,
@@ -126,5 +129,5 @@ export async function POST(request: Request) {
     });
     if (approved.error) return NextResponse.json({ ok: false, error: approved.error.message, requestId }, { status: 422 });
   }
-  return NextResponse.json({ ok: true, preview, requestId });
+  return NextResponse.json({ ok: true, periodsPersisted: !ensured.usedFallback && periods.length > 0, preview, requestId });
 }
