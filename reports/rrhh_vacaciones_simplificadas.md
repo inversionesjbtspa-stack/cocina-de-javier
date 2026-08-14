@@ -111,10 +111,9 @@ Cobertura nueva:
 ## Commit y deploy
 
 - Rama de trabajo: `feat/rrhh-vacaciones-simplificadas`.
-- Commit: `d344766 feat(rrhh): simplify vacation requests and generate receipts`.
-- `main` remoto actualizado por fast-forward desde `788c201` a `d344766`.
-- Vercel Production: `READY`.
-- Deployment: `dpl_72Bmr6yZtm3RrC9BwDQkZ5asX89b`.
+- Commit principal: `feat(rrhh): simplify vacation requests and generate receipts`.
+- `main` remoto actualizado desde `788c201` con los cambios de vacaciones simplificadas.
+- Vercel Production validado en estado `READY`.
 - URL publica: `https://cocina-de-javier.vercel.app/recursos-humanos`.
 - Validacion publica:
   - `/recursos-humanos`: HTTP 200.
