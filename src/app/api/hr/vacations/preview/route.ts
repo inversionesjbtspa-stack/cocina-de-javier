@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
 import { calculateVacationPreview, yearsInRange, type HolidayCalendarStatus } from "@/lib/hr/vacation-domain";
-import { assertEmployeeInTenant, buildFallbackPeriods, ensureVacationPeriodsForEmployee, mapPeriodRow, safeVacationHolidays } from "@/lib/hr/vacation-server";
+import { assertEmployeeInTenant, buildFallbackPeriods, ensureVacationPeriodsForEmployee, mapPeriodRow, parseVacationWorkSchedule, safeVacationHolidays } from "@/lib/hr/vacation-server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -50,6 +50,7 @@ export async function POST(request: Request) {
     holidays: safeVacationHolidays(holidayRows as Array<Record<string, unknown>> | null),
     periods,
     requestedBusinessDays: body.requestedBusinessDays ?? null,
+    schedule: parseVacationWorkSchedule(employeeRow.work_schedule),
     startDate: body.startDate
   });
   return NextResponse.json({ ok: true, periodsPersisted: !ensured.usedFallback && periods.length > 0, preview });

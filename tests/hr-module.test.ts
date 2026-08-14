@@ -25,6 +25,7 @@ import {
   calculateVacationEndDate,
   calculateVacationPreview,
   CHILE_HOLIDAYS_FIXTURE,
+  classifyWorkCalendarDay,
   evaluateHolidayCalendarStatus,
   generateContractPeriods,
   reverseVacationAllocation,
@@ -113,6 +114,7 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(payslipsRoute, /hr\.payslip_uploaded/);
   assert.match(payslipsSendRoute, /hr\.payslip_send_requested/);
   assert.match(vacationRoute, /calculateVacationPreview/);
+  assert.match(vacationRoute, /persistVacationReceiptForRequest/);
   assert.match(vacationAccrualRoute, /hr\.vacation_accrual_recorded/);
   assert.match(finiquitosRoute, /hr\.finiquito_created/);
   assert.match(honorariosRoute, /hr\.honorario_created/);
@@ -125,6 +127,11 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(client, /Novedades mensuales/);
   assert.match(client, /Datos Sueldos/);
   assert.match(vacationComponents, /Feriado fraccionado/);
+  assert.match(vacationComponents, /CALCULAR VACACIONES/);
+  assert.match(vacationComponents, /CONFIRMAR VACACIONES/);
+  assert.match(vacationComponents, /Opciones avanzadas/);
+  assert.match(vacationComponents, /Vacaciones recientes/);
+  assert.match(client, /Detalle \/ Auditoria/);
   assert.match(client, /Anticipos avanzados/);
   assert.match(client, /Exportar tramo banco/);
   assert.match(client, /Enviar liquidaciones pendientes pagadas/);
@@ -146,6 +153,14 @@ test("HR vacation business days exclude Saturdays, Sundays and configured holida
   assert.equal(calculateVacationBusinessDays("2026-07-18", "2026-07-19", CHILE_HOLIDAYS_FIXTURE), 0);
   assert.equal(calculateVacationEndDate("2026-07-13", 4, CHILE_HOLIDAYS_FIXTURE, "RM"), "2026-07-17");
   assert.deepEqual(calculateReturnToWorkDate("2026-07-17", { source: "employee", workingWeekdays: [1, 2, 3, 4, 5, 6] }).returnDate, "2026-07-18");
+});
+
+test("HR vacation work calendar classifies holidays and employee schedules", () => {
+  assert.equal(classifyWorkCalendarDay("2026-07-16", CHILE_HOLIDAYS_FIXTURE, "RM").type, "HOLIDAY");
+  assert.equal(classifyWorkCalendarDay("2026-07-18", CHILE_HOLIDAYS_FIXTURE, "RM").type, "WEEKEND");
+  assert.equal(classifyWorkCalendarDay("2026-07-18", CHILE_HOLIDAYS_FIXTURE, "RM", null, { source: "employee", workingWeekdays: [1, 2, 3, 4, 5, 6] }).type, "WORKING_DAY");
+  assert.equal(calculateVacationBusinessDays("2026-07-13", "2026-07-18", CHILE_HOLIDAYS_FIXTURE, "RM", null, { source: "employee", workingWeekdays: [1, 2, 3, 4, 5, 6] }), 5);
+  assert.equal(calculateVacationBusinessDays("2026-07-13", "2026-07-18", CHILE_HOLIDAYS_FIXTURE, "RM", null, { source: "employee", workingWeekdays: [1, 2, 3, 4, 5] }), 4);
 });
 
 test("HR vacation FIFO allocates mandatory example and keeps second period protected", () => {
@@ -181,8 +196,11 @@ test("HR vacation preview returns FIFO, return date, immutable snapshot inputs a
     startDate: "2026-07-23"
   });
   assert.equal(preview.businessDays, 7);
+  assert.equal(preview.calendarDays, 11);
   assert.equal(preview.allocations.length, 2);
   assert.equal(preview.returnToWorkDate, "2026-08-03");
+  assert.equal(preview.totalAfterRequest, 13);
+  assert.equal(preview.scheduleReviewRequired, false);
   assert.equal(reverseVacationAllocation(preview.allocations)[0].days, -5);
 });
 

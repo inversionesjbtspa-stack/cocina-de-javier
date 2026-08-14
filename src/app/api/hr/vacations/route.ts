@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
 import { calculateVacationPreview, yearsInRange, type HolidayCalendarStatus } from "@/lib/hr/vacation-domain";
-import { assertEmployeeInTenant, buildFallbackPeriods, buildVacationSnapshot, ensureVacationPeriodsForEmployee, mapPeriodRow, safeVacationHolidays } from "@/lib/hr/vacation-server";
+import { assertEmployeeInTenant, buildFallbackPeriods, buildVacationSnapshot, ensureVacationPeriodsForEmployee, mapPeriodRow, parseVacationWorkSchedule, persistVacationReceiptForRequest, safeVacationHolidays, type VacationReceiptPersistenceClient } from "@/lib/hr/vacation-server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -75,6 +75,7 @@ export async function POST(request: Request) {
     holidays,
     periods,
     requestedBusinessDays: body.requestedBusinessDays ?? null,
+    schedule: parseVacationWorkSchedule(employeeRow.work_schedule),
     startDate: body.startDate
   });
   if (!preview.valid && body.status !== "borrador") {
@@ -128,6 +129,21 @@ export async function POST(request: Request) {
       p_expected_version: 1
     });
     if (approved.error) return NextResponse.json({ ok: false, error: approved.error.message, requestId }, { status: 422 });
+    const receipt = await persistVacationReceiptForRequest({
+      companyId: ctx.membership.company_id,
+      requestId,
+      supabase: supabase as unknown as VacationReceiptPersistenceClient,
+      tenantId: ctx.membership.tenant_id,
+      userId: ctx.user.id
+    });
+    if (!receipt.ok) return NextResponse.json({ ok: false, error: receipt.error, requestId }, { status: 422 });
   }
-  return NextResponse.json({ ok: true, periodsPersisted: !ensured.usedFallback && periods.length > 0, preview, requestId });
+  return NextResponse.json({
+    ok: true,
+    periodsPersisted: !ensured.usedFallback && periods.length > 0,
+    preview,
+    receiptPdfUrl: `/api/hr/vacations/${requestId}/papeleta?format=pdf`,
+    receiptPreviewUrl: `/api/hr/vacations/${requestId}/papeleta?format=html`,
+    requestId
+  });
 }

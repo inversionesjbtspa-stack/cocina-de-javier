@@ -5,8 +5,10 @@ import {
   calculateVacationPreview,
   generateContractPeriods,
   type Holiday,
-  type VacationPeriod
+  type VacationPeriod,
+  type VacationSchedule
 } from "./vacation-domain.ts";
+import { buildVacationReceiptModel, renderVacationReceiptPdf, vacationReceiptHash } from "./vacation-receipt.ts";
 import { previewVacationPeriodBackfill } from "./vacation-persistence.ts";
 
 export type HrVacationContext = {
@@ -51,6 +53,25 @@ export function mapPeriodRow(row: Record<string, unknown>): VacationPeriod {
     usedDays: Number(row.used_days ?? 0),
     version: Number(row.version ?? 1)
   };
+}
+
+export function parseVacationWorkSchedule(value: unknown): VacationSchedule {
+  if (!value) return { source: "default" };
+  if (typeof value === "object" && value !== null && "workingWeekdays" in value) {
+    const workingWeekdays = (value as { workingWeekdays?: unknown }).workingWeekdays;
+    return Array.isArray(workingWeekdays) ? { source: "employee", workingWeekdays: workingWeekdays.map(Number) } : { source: "employee" };
+  }
+  const text = String(value).trim().toLowerCase();
+  if (!text) return { source: "default" };
+  try {
+    const parsed = JSON.parse(text) as { workingWeekdays?: unknown };
+    if (Array.isArray(parsed.workingWeekdays)) return { source: "employee", workingWeekdays: parsed.workingWeekdays.map(Number) };
+  } catch {
+    // Plain text schedules are common in legacy HR records.
+  }
+  if (/lun(?:es)?\s*[-a]\s*s.{0,2}b|lunes a sab|lun-sab|6x1|seis/.test(text)) return { source: "employee", workingWeekdays: [1, 2, 3, 4, 5, 6] };
+  if (/lun(?:es)?\s*[-a]\s*vie|lunes a vie|lun-vie|5x2|cinco/.test(text)) return { source: "employee", workingWeekdays: [1, 2, 3, 4, 5] };
+  return { source: "employee" };
 }
 
 export function buildFallbackPeriods(employee: { hire_date?: string | null; id: string; tenant_id?: string | null }, asOf: string) {
@@ -149,6 +170,18 @@ export function buildVacationSnapshot(input: {
     observation: input.observation ?? null,
     periods: input.periods,
     projected_proportional: input.preview.projectedProportional,
+    workCalendar: {
+      calendar_days: input.preview.calendarDays,
+      non_business: input.preview.nonBusiness,
+      schedule_review_required: input.preview.scheduleReviewRequired,
+      schedule_source: input.preview.scheduleSource
+    },
+    balance: {
+      as_of: input.preview.effectiveRestEndDate,
+      before: input.preview.totalAvailable,
+      projected_proportional: input.preview.projectedProportional,
+      after_request: input.preview.totalAfterRequest
+    },
     return: {
       effective_rest_end_date: input.preview.effectiveRestEndDate,
       last_counted_vacation_date: input.preview.lastCountedVacationDate,
@@ -157,6 +190,110 @@ export function buildVacationSnapshot(input: {
       schedule_source: input.preview.scheduleSource
     }
   };
+}
+
+type ReceiptSelectBuilder = {
+  eq: (column: string, value: string) => ReceiptSelectBuilder;
+  maybeSingle: () => PromiseLike<{ data: Record<string, unknown> | null; error?: { message: string } | null }>;
+};
+
+type ReceiptTableBuilder = {
+  select: (columns: string) => ReceiptSelectBuilder;
+  upsert: (payload: Record<string, unknown>, options: { onConflict: string }) => PromiseLike<{ error?: { message: string } | null }>;
+};
+
+export type VacationReceiptPersistenceClient = {
+  from: (table: string) => ReceiptTableBuilder;
+  storage: {
+    from: (bucket: string) => {
+      upload: (path: string, body: Buffer, options: { contentType: string; upsert: boolean }) => PromiseLike<{ error?: { message: string } | null }>;
+    };
+  };
+};
+
+export async function persistVacationReceiptForRequest(input: {
+  companyId: string;
+  requestId: string;
+  supabase: VacationReceiptPersistenceClient;
+  tenantId: string;
+  userId: string;
+}) {
+  const [{ data }, company] = await Promise.all([
+    input.supabase
+      .from("hr_vacation_requests")
+      .select("*,hr_employees(id,full_name,rut,position,area,cost_center,hire_date,contract_type)")
+      .eq("tenant_id", input.tenantId)
+      .eq("id", input.requestId)
+      .maybeSingle(),
+    input.supabase
+      .from("companies")
+      .select("legal_name,name,rut,address,phone")
+      .eq("id", input.companyId)
+      .maybeSingle()
+  ]);
+  if (!data) return { ok: false as const, error: "vacation_not_found" };
+  if (data.status !== "aprobada") return { ok: false as const, error: "vacation_not_approved" };
+
+  const snapshot = data.receipt_snapshot as Record<string, unknown> | null | undefined ?? data.snapshot as Record<string, unknown> | null | undefined;
+  const snapshotEmployee = snapshot?.employee as Record<string, string | null> | undefined;
+  const snapshotCompany = snapshot?.company;
+  const employee = firstRelation(data.hr_employees as Array<Record<string, string | null>> | Record<string, string | null> | null);
+  const model = buildVacationReceiptModel({
+    allocations: (snapshot?.allocations as Parameters<typeof buildVacationReceiptModel>[0]["allocations"]) ?? [],
+    approvedByName: data.approved_by_name as string | undefined,
+    businessDays: Number(data.business_days ?? 0),
+    company: snapshotCompany ? companyConfigFromRow(snapshotCompany) : companyConfigFromRow(company.data),
+    contractPeriodEnd: data.contract_period_end as string | null,
+    contractPeriodStart: data.contract_period_start as string | null,
+    documentDate: data.document_date as string | null,
+    employee: {
+      area: snapshotEmployee?.area ?? employee?.area ?? null,
+      contractType: snapshotEmployee?.contractType ?? employee?.contract_type ?? null,
+      costCenter: snapshotEmployee?.costCenter ?? employee?.cost_center ?? null,
+      fullName: snapshotEmployee?.fullName ?? employee?.full_name ?? "Trabajador",
+      hireDate: snapshotEmployee?.hireDate ?? employee?.hire_date ?? null,
+      id: snapshotEmployee?.id ?? employee?.id ?? null,
+      position: snapshotEmployee?.position ?? employee?.position ?? null,
+      rut: snapshotEmployee?.rut ?? employee?.rut ?? ""
+    },
+    endDate: (data.effective_rest_end_date ?? data.end_date) as string,
+    fractionalVacation: data.fractional_vacation as boolean | null,
+    id: input.requestId,
+    nonBusinessDays: data.non_business_days as number | null,
+    note: data.note as string | null,
+    previousBalance: Number(data.previous_balance ?? 0),
+    progressiveDays: Number(data.progressive_days ?? 0),
+    projectedProportional: Number(snapshot?.projected_proportional ?? data.projected_business_days ?? 0),
+    receiptNumber: (data.document_number ?? data.receipt_number) as string | null,
+    returnToWorkDate: (data.return_to_work_date ?? (snapshot?.return as Record<string, unknown> | undefined)?.return_to_work_date) as string | null,
+    requestedStatus: data.status as string,
+    resultingBalance: Number(data.resulting_balance ?? 0),
+    startDate: data.start_date as string
+  });
+  const pdf = renderVacationReceiptPdf(model);
+  const storagePath = `tenants/${input.tenantId}/employees/${employee?.id ?? "sin-empleado"}/vacations/${input.requestId}/${model.receiptNumber ?? "sin-correlativo"}.pdf`;
+  const upload = await input.supabase.storage.from("hr-vacation-documents").upload(storagePath, pdf, {
+    contentType: "application/pdf",
+    upsert: true
+  });
+  if (upload.error) return { ok: false as const, error: upload.error.message };
+  const document = await input.supabase.from("hr_vacation_documents").upsert({
+    document_status: data.receipt_status ?? "vigente",
+    document_type: "comprobante_feriado",
+    employee_id: employee?.id,
+    file_name: model.filename,
+    file_sha256: vacationReceiptHash(pdf),
+    file_size: pdf.byteLength,
+    generated_by: input.userId,
+    immutable_snapshot: model,
+    mime_type: "application/pdf",
+    storage_bucket: "hr-vacation-documents",
+    storage_path: storagePath,
+    tenant_id: input.tenantId,
+    vacation_request_id: input.requestId
+  }, { onConflict: "tenant_id,vacation_request_id,document_type" });
+  if (document.error) return { ok: false as const, error: document.error.message };
+  return { ok: true as const, filename: model.filename, storagePath };
 }
 
 export function safeVacationHolidays(rows: Array<Record<string, unknown>> | null | undefined) {

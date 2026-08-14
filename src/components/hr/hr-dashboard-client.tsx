@@ -29,6 +29,7 @@ import {
   VacationMovements,
   VacationPeriodsTable,
   VacationRequestForm,
+  VacationRecentRequests,
   VacationSummary
 } from "@/components/hr/vacation-components";
 
@@ -1128,17 +1129,22 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
     window.alert(response.ok ? "Accion registrada." : payload?.error ?? "No se pudo completar la accion.");
   }
   return (
-    <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+    <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
       <SectionCard className="p-5">
         <h3 className="font-semibold text-brand-900">Vacaciones</h3>
         <VacationSummary employee={employee} periods={periods} />
         <VacationRequestForm employeeId={employee.id} submitJson={submitJson} />
-        <VacationAccrualForm employeeId={employee.id} submitJson={submitJson} />
+        <VacationRecentRequests vacations={vacations} />
       </SectionCard>
-      <SectionCard className="overflow-hidden">
-        <TableHeader action={<a className="rounded-md border border-brand-700 px-3 py-1.5 text-xs font-semibold text-brand-700" href="/api/hr/vacations/export" target="_blank">Exportar resumen</a>} title="Detalle por periodo" />
-        <VacationPeriodsTable periods={periods} />
-        <div className="border-t border-[#dfe4dd] p-4">
+      <SectionCard className="overflow-hidden p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-brand-900">Comprobantes y auditoria</h3>
+            <p className="mt-1 text-sm text-[#667068]">La operacion normal queda a la izquierda. Aqui se conserva trazabilidad, exportacion y herramientas administrativas.</p>
+          </div>
+          <a className="rounded-md border border-brand-700 px-3 py-1.5 text-xs font-semibold text-brand-700" href="/api/hr/vacations/export" target="_blank">Exportar resumen</a>
+        </div>
+        <div className="mt-4">
           <p className="mb-2 text-sm font-semibold text-brand-900">Comprobantes recientes</p>
           <div className="space-y-2">
             {vacations.map((vacation) => (
@@ -1164,14 +1170,26 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
             {!vacations.length ? <p className="rounded-md border border-dashed border-[#dfe4dd] p-4 text-sm text-[#667068]">Sin comprobantes de feriado para este trabajador.</p> : null}
           </div>
         </div>
-        <div className="border-t border-[#dfe4dd] p-4">
-          <p className="mb-2 text-sm font-semibold text-brand-900">Movimientos persistentes</p>
-          <VacationMovements movements={movements} />
-          <p className="mb-2 mt-5 text-sm font-semibold text-brand-900">Ledger legacy</p>
-          <SimpleTable headers={["Periodo", "Movimiento", "Dias", "Saldo"]}>
-            {ledger.map((item) => <tr className="border-t" key={item.id}><td className="px-4 py-3">{item.period}</td><td className="px-4 py-3">{item.movementType}</td><td className="px-4 py-3">{item.days}</td><td className="px-4 py-3">{item.balanceAfter}</td></tr>)}
-          </SimpleTable>
-        </div>
+        <details className="mt-4 rounded-md border border-[#dfe4dd] bg-white p-4">
+          <summary className="cursor-pointer text-sm font-semibold text-brand-900">Detalle / Auditoria</summary>
+          <div className="mt-4 overflow-hidden rounded-md border border-[#dfe4dd]">
+            <TableHeader title="Detalle por periodo" />
+            <VacationPeriodsTable periods={periods} />
+          </div>
+          <div className="mt-4">
+            <p className="mb-2 text-sm font-semibold text-brand-900">Movimientos persistentes</p>
+            <VacationMovements movements={movements} />
+          </div>
+          <div className="mt-4">
+            <p className="mb-2 text-sm font-semibold text-brand-900">Ledger legacy</p>
+            <SimpleTable headers={["Periodo", "Movimiento", "Dias", "Saldo"]}>
+              {ledger.map((item) => <tr className="border-t" key={item.id}><td className="px-4 py-3">{item.period}</td><td className="px-4 py-3">{item.movementType}</td><td className="px-4 py-3">{item.days}</td><td className="px-4 py-3">{item.balanceAfter}</td></tr>)}
+            </SimpleTable>
+          </div>
+          <div className="mt-4">
+            <VacationAccrualForm employeeId={employee.id} submitJson={submitJson} />
+          </div>
+        </details>
       </SectionCard>
     </div>
   );

@@ -21,6 +21,10 @@ function SummaryMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export function EmployeeSummary({ data, employee }: { data: HrDashboardData; employee: HrEmployee }) {
   const periods = data.vacationPeriods.filter((period) => period.employeeId === employee.id);
   const vacations = data.vacations.filter((vacation) => vacation.employeeId === employee.id);
@@ -31,6 +35,9 @@ export function EmployeeSummary({ data, employee }: { data: HrDashboardData; emp
   const vacationReserved = periods.reduce((sum, period) => sum + period.reservedDays, 0);
   const vacationUsed = periods.reduce((sum, period) => sum + period.usedDays, 0);
   const currentPeriod = periods.find((period) => period.status === "open") ?? periods[0] ?? null;
+  const nextVacation = vacations
+    .filter((vacation) => !["anulada", "rechazada"].includes(vacation.status) && (vacation.effectiveRestEndDate ?? vacation.endDate) >= todayIso())
+    .sort((a, b) => a.startDate.localeCompare(b.startDate))[0] ?? null;
   const latestPayslip = payslips[0] ?? null;
   const pendingPayments = payments.filter((payment) => ["aprobado", "pendiente_pago", "en_nomina"].includes(payment.status));
   const alerts = [
@@ -57,22 +64,22 @@ export function EmployeeSummary({ data, employee }: { data: HrDashboardData; emp
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryMetric label="Contrato" value={`${employee.contractType || "Sin tipo"} / ingreso ${employee.hireDate ?? "pendiente"}`} />
-        <SummaryMetric label="Vacaciones" value={`${vacationAvailable.toFixed(2)} disp. / ${vacationReserved.toFixed(2)} res. / ${vacationUsed.toFixed(2)} usadas`} />
+        <SummaryMetric label="Vacaciones disponibles" value={`${vacationAvailable.toFixed(2)} dias`} />
         <SummaryMetric label="Ultima liquidacion" value={latestPayslip ? `${latestPayslip.period} / ${formatClp(latestPayslip.netAmount)}` : "Sin liquidacion reciente"} />
         <SummaryMetric label="Pagos pendientes" value={`${pendingPayments.length} / ${formatClp(pendingPayments.reduce((sum, payment) => sum + payment.amount, 0))}`} />
       </div>
       <div className="mt-4 grid gap-3 lg:grid-cols-3">
         <div className="rounded-md bg-brand-50 p-3 text-sm">
+          <p className="font-semibold text-brand-900">Proximas vacaciones</p>
+          <p className="mt-1 text-[#667068]">{nextVacation ? `${nextVacation.startDate} al ${nextVacation.effectiveRestEndDate ?? nextVacation.endDate} / ${nextVacation.businessDays} dias habiles / saldo despues ${nextVacation.resultingBalance.toFixed(2)}` : "Sin vacaciones programadas"}</p>
+        </div>
+        <div className="rounded-md bg-brand-50 p-3 text-sm">
           <p className="font-semibold text-brand-900">Periodo vigente</p>
           <p className="mt-1 text-[#667068]">{currentPeriod ? `${currentPeriod.periodStart} al ${currentPeriod.periodEnd}` : "No resuelto"}</p>
         </div>
         <div className="rounded-md bg-brand-50 p-3 text-sm">
-          <p className="font-semibold text-brand-900">Documentos</p>
-          <p className="mt-1 text-[#667068]">{documents.length ? documents.map((doc) => doc.period).join(", ") : "Sin documentos recientes"}</p>
-        </div>
-        <div className="rounded-md bg-brand-50 p-3 text-sm">
           <p className="font-semibold text-brand-900">Alertas</p>
-          <p className="mt-1 text-[#667068]">{alerts.length ? alerts.join(", ") : "Sin alertas criticas"}</p>
+          <p className="mt-1 text-[#667068]">{alerts.length ? alerts.join(", ") : `Sin alertas criticas / ${vacationReserved.toFixed(2)} reservados / ${vacationUsed.toFixed(2)} usados`}</p>
         </div>
       </div>
       {vacations[0] ? <p className="mt-3 text-xs text-[#667068]">Ultima solicitud: {vacations[0].startDate} al {vacations[0].endDate} / {vacations[0].status}</p> : null}
