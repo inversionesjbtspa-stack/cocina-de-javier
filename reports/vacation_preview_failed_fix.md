@@ -75,12 +75,14 @@ Nota: no se consultaron ni modificaron saldos reales de produccion durante esta 
 
 ## Validacion productiva
 
-Pendiente de completar tras push/deploy productivo:
-
-- Production Ready.
-- `POST /api/hr/vacations/preview` ya no debe responder `405`.
-- `/recursos-humanos` debe responder HTTP 200.
-- Con sesion RRHH valida, `CALCULAR VACACIONES` debe mostrar preview y no crear solicitud.
+- Deployment: `dpl_CG2twSZ2jzgXx9CDiWeUTUc91dgq`.
+- Estado Vercel: Production `READY`.
+- URL productiva: `https://cocina-de-javier.vercel.app/recursos-humanos`.
+- `/recursos-humanos`: HTTP `200` en 3 verificaciones consecutivas.
+- `/api/health/supabase`: HTTP `200`.
+- `POST /api/hr/vacations/preview` sin sesion: HTTP `401 Unauthorized`, no `405`.
+- El build remoto lista `/api/hr/vacations/preview`: SI.
+- Validacion autenticada del trabajador real: no ejecutada desde herramienta de navegador porque la sesion controlable no entrego salida util. No se confirmo ninguna solicitud real.
 
 ## Archivos modificados
 
