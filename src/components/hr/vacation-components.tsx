@@ -104,6 +104,7 @@ export function VacationMovements({ movements }: { movements: HrDashboardData["v
 type VacationPreviewState = {
   data: Record<string, unknown> | null;
   error: string | null;
+  key: string | null;
   loading: boolean;
 };
 
@@ -128,6 +129,17 @@ function previewAllocations(preview: Record<string, unknown> | null) {
   return Array.isArray(value) ? value as Array<Record<string, unknown>> : [];
 }
 
+function humanVacationPreviewMessage(result: Record<string, unknown> | null) {
+  const message = typeof result?.message === "string" ? result.message : null;
+  if (message) return message;
+  const code = String(result?.code ?? result?.error ?? "");
+  if (code === "INVALID_DATE_RANGE") return "La fecha Hasta no puede ser anterior a Desde.";
+  if (code === "EMPLOYEE_HIRE_DATE_REQUIRED") return "No se puede calcular porque falta la fecha de ingreso del trabajador.";
+  if (code === "EMPLOYEE_NOT_FOUND") return "No se encontro el trabajador seleccionado.";
+  if (code === "VACATION_PREVIEW_VALIDATION_FAILED") return "Completa las fechas requeridas para calcular la vista previa.";
+  return "No se pudo calcular la solicitud. Intenta nuevamente.";
+}
+
 export function VacationRequestForm({ employeeId, submitJson }: { employeeId: string; submitJson: (event: FormEvent<HTMLFormElement>, endpoint: string, success: string) => void }) {
   const [advanceAuthorized, setAdvanceAuthorized] = useState(false);
   const [confirmed, setConfirmed] = useState<VacationConfirmationState | null>(null);
@@ -137,7 +149,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
   const [manualBusinessDays, setManualBusinessDays] = useState("");
   const [note, setNote] = useState("");
   const [observation, setObservation] = useState("");
-  const [preview, setPreview] = useState<VacationPreviewState>({ data: null, error: null, loading: false });
+  const [preview, setPreview] = useState<VacationPreviewState>({ data: null, error: null, key: null, loading: false });
   const [startDate, setStartDate] = useState("");
   void submitJson;
 
@@ -150,9 +162,10 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
     startDate
   }), [advanceAuthorized, employeeId, endDate, fractionationAgreement, manualBusinessDays, startDate]);
 
+  const previewKey = useMemo(() => JSON.stringify(payload), [payload]);
+
   const previewVacation = useCallback(async () => {
     if (!startDate || !endDate) return;
-    setPreview((current) => ({ ...current, loading: true }));
     const payload = {
       advanceAuthorized,
       employeeId,
@@ -161,28 +174,45 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
       requestedBusinessDays: manualBusinessDays ? Number(manualBusinessDays) : undefined,
       startDate
     };
-    const response = await fetch("/api/hr/vacations/preview", {
-      body: JSON.stringify(payload),
-      headers: { "Content-Type": "application/json" },
-      method: "POST"
-    });
-    const result = await response.json().catch(() => null);
-    setPreview({
-      data: response.ok ? result?.preview ?? null : null,
-      error: response.ok ? null : result?.error ?? "preview_failed",
-      loading: false
-    });
+    const requestKey = JSON.stringify(payload);
+    setPreview({ data: null, error: null, key: requestKey, loading: true });
+    try {
+      const response = await fetch("/api/hr/vacations/preview", {
+        body: JSON.stringify(payload),
+        headers: { "Content-Type": "application/json" },
+        method: "POST"
+      });
+      const result = await response.json().catch(() => null) as Record<string, unknown> | null;
+      const previewData = response.ok && result?.ok === true && typeof result.preview === "object" && result.preview !== null
+        ? result.preview as Record<string, unknown>
+        : null;
+      setPreview({
+        data: previewData,
+        error: previewData ? null : humanVacationPreviewMessage(result),
+        key: requestKey,
+        loading: false
+      });
+    } catch {
+      setPreview({ data: null, error: "No se pudo calcular la solicitud. Intenta nuevamente.", key: requestKey, loading: false });
+    }
   }, [advanceAuthorized, employeeId, endDate, fractionationAgreement, manualBusinessDays, startDate]);
 
   useEffect(() => {
-    if (!startDate || !endDate) return;
+    setPreview({ data: null, error: null, key: null, loading: Boolean(startDate && endDate) });
+    if (!startDate || !endDate) {
+      setPreview({ data: null, error: null, key: null, loading: false });
+      return;
+    }
     const timer = window.setTimeout(() => { void previewVacation(); }, 450);
     return () => window.clearTimeout(timer);
-  }, [endDate, previewVacation, startDate]);
+  }, [previewKey, previewVacation, startDate, endDate]);
+
+  const previewIsCurrent = preview.key === previewKey;
+  const previewValidAndCurrent = previewIsCurrent && preview.data?.valid === true && !preview.error && !preview.loading;
 
   async function confirmVacation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!preview.data || preview.error) {
+    if (!previewValidAndCurrent) {
       await previewVacation();
       return;
     }
@@ -239,8 +269,8 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
           <input className="w-full rounded-md border px-3 py-2 text-sm sm:col-span-2" onChange={(event) => setNote(event.target.value)} placeholder="Nota para comprobante" value={note} />
         </div>
       </details>
-      {preview.error ? <p className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">Vista previa no disponible: {preview.error}</p> : null}
-      {preview.data ? (
+      {preview.error && previewIsCurrent ? <p className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{preview.error}</p> : null}
+      {preview.data && previewIsCurrent ? (
         <div className="rounded-lg border border-brand-100 bg-brand-50 p-4 text-sm text-brand-900">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="font-semibold">Resumen de vacaciones</h4>
@@ -283,7 +313,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
           </div>
         </div>
       ) : null}
-      <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" disabled={!preview.data || preview.data.valid !== true} type="submit">CONFIRMAR VACACIONES</button>
+      <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50" disabled={!previewValidAndCurrent} type="submit">CONFIRMAR VACACIONES</button>
     </form>
   );
 }

@@ -163,6 +163,57 @@ test("HR vacation work calendar classifies holidays and employee schedules", () 
   assert.equal(calculateVacationBusinessDays("2026-07-13", "2026-07-18", CHILE_HOLIDAYS_FIXTURE, "RM", null, { source: "employee", workingWeekdays: [1, 2, 3, 4, 5] }), 4);
 });
 
+test("HR vacation preview supports the reproduced August 2026 inclusive range", () => {
+  const preview = calculateVacationPreview({
+    agreementAccepted: true,
+    calendarStatusByYear: { "2026": "verified" },
+    endDate: "2026-08-23",
+    hireDate: "2025-07-28",
+    holidays: CHILE_HOLIDAYS_FIXTURE,
+    periods: [
+      { availableBalance: 10, baseDays: 15, continuousBlockUsed: 10, periodEnd: "2026-07-27", periodStart: "2025-07-28", status: "closed", usedDays: 5 },
+      { availableBalance: 15, baseDays: 15, periodEnd: "2027-07-27", periodStart: "2026-07-28", status: "open", usedDays: 0 }
+    ],
+    schedule: { source: "employee", workingWeekdays: [1, 2, 3, 4, 5] },
+    startDate: "2026-08-19"
+  });
+
+  assert.equal(preview.calendarDays, 5);
+  assert.equal(preview.businessDays, 3);
+  assert.equal(preview.nonBusiness.saturdays, 1);
+  assert.equal(preview.nonBusiness.sundays, 1);
+  assert.equal(preview.holidaysApplied.length, 0);
+  assert.equal(preview.totalAvailable, 25);
+  assert.equal(preview.totalAfterRequest, 22);
+  assert.equal(preview.remainingDays, 0);
+  assert.equal(preview.valid, true);
+  assert.equal(preview.allocations[0].days, 3);
+  assert.equal(preview.allocations[0].periodStart, "2025-07-28");
+});
+
+test("HR vacation preview reports domain states without generic preview_failed", async () => {
+  const route = await readFile("src/app/api/hr/vacations/preview/route.ts", "utf8");
+  const vacationComponents = await readFile("src/components/hr/vacation-components.tsx", "utf8");
+
+  assert.match(route, /INVALID_DATE_RANGE/);
+  assert.match(route, /balanceBefore/);
+  assert.match(route, /balanceAfter/);
+  assert.match(route, /workingDays/);
+  assert.match(route, /VACATION_PREVIEW_UNEXPECTED_ERROR/);
+  assert.match(vacationComponents, /humanVacationPreviewMessage/);
+  assert.doesNotMatch(vacationComponents, /Vista previa no disponible: \{preview\.error\}/);
+  assert.match(vacationComponents, /previewValidAndCurrent/);
+  assert.match(vacationComponents, /disabled=\{!previewValidAndCurrent\}/);
+  assert.match(vacationComponents, /setPreview\(\{ data: null, error: null, key: null/);
+});
+
+test("Vercel ignore keeps the HR vacation preview API route deployable", async () => {
+  const vercelIgnore = await readFile(".vercelignore", "utf8");
+  assert.ok(existsSync("src/app/api/hr/vacations/preview/route.ts"));
+  assert.match(vercelIgnore, /^\/preview\/$/m);
+  assert.doesNotMatch(vercelIgnore, /^preview\/$/m);
+});
+
 test("HR vacation FIFO allocates mandatory example and keeps second period protected", () => {
   const fifo = allocateVacationFifo([
     { availableBalance: 5, baseDays: 15, continuousBlockRequired: 10, continuousBlockUsed: 10, periodEnd: "2025-07-22", periodStart: "2024-07-23", usedDays: 10 },
