@@ -2,7 +2,8 @@
 
 Fecha: 2026-08-20  
 Rama: feat/rrhh-ficha-simple  
-Base: 3b2251e
+Base: 3b2251e  
+Commit implementacion: 73aae53
 
 ## Navegacion anterior
 
@@ -152,6 +153,17 @@ Ejecutado con Node v24.19.0:
 - `npm run lint`: OK
 - `npm test`: OK, 47 pass, 2 skipped por fixtures opcionales
 - `npm run build`: OK
+
+## Commit, push y produccion
+
+- Commit local: `73aae53 feat(rrhh): simplify employee profile around core workflows`
+- Rama publicada: `origin/feat/rrhh-ficha-simple`
+- Main productivo actualizado: `origin/main` = `73aae53`
+- URL productiva comprobada: `https://cocina-de-javier.vercel.app/recursos-humanos`
+- HTTP publico sin sesion: 307 a `/login?next=%2Frecursos-humanos`
+- HTTP login publico: 200
+
+Limitacion de validacion: no se pudo completar validacion visual autenticada desde esta sesion porque la URL productiva exige login y el navegador controlado no entrego una sesion interactiva utilizable. No se usaron credenciales ni se forzo acceso.
 
 ## Alcance preservado
 
