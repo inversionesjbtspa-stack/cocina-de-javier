@@ -93,8 +93,13 @@ export type HrPaymentItem = {
   period: string;
   paymentType: string;
   amount: number;
+  accountNumber?: string | null;
+  accountType?: string | null;
+  bankCode?: string | null;
+  bankName?: string | null;
   glosa: string | null;
   payslipId: string | null;
+  paymentEmail?: string | null;
   sourceId: string | null;
   sourceType: string | null;
   status: string;
@@ -397,7 +402,7 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
       .limit(80),
     supabase
       .from("hr_payment_items")
-      .select("id,employee_id,period,payment_type,amount,glosa,status,scheduled_date,payslip_id,source_type,source_id,hr_employees(full_name)")
+      .select("id,employee_id,period,payment_type,amount,glosa,status,scheduled_date,payslip_id,source_type,source_id,bank_name,bank_code,account_type,account_number,payment_email,hr_employees(full_name)")
       .eq("tenant_id", ctx.tenantId)
       .eq("period", period)
       .order("created_at", { ascending: false }),
@@ -498,12 +503,17 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
     status: row.status
   }));
   const paymentItems = (paymentRows ?? []).map((row) => ({
+    accountNumber: row.account_number ?? null,
+    accountType: row.account_type ?? null,
     amount: Number(row.amount ?? 0),
+    bankCode: row.bank_code ?? null,
+    bankName: row.bank_name ?? null,
     employeeId: row.employee_id,
     employeeName: relatedFullName(row.hr_employees, "Trabajador"),
     glosa: row.glosa,
     id: row.id,
     payslipId: row.payslip_id,
+    paymentEmail: row.payment_email ?? null,
     paymentType: row.payment_type,
     period: row.period,
     scheduledDate: row.scheduled_date,

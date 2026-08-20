@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
-import { calculateVacationPreview, yearsInRange, type HolidayCalendarStatus } from "@/lib/hr/vacation-domain";
+import { calculateVacationPreview, yearsInRange, type Holiday, type HolidayCalendarStatus } from "@/lib/hr/vacation-domain";
 import { assertEmployeeInTenant, buildFallbackPeriods, ensureVacationPeriodsForEmployee, mapPeriodRow, parseVacationWorkSchedule, safeVacationHolidays } from "@/lib/hr/vacation-server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -12,6 +12,10 @@ const previewSchema = z.object({
   endDate: z.string().date().optional().or(z.literal("")).default(""),
   employeeId: z.string().uuid(),
   fractionationAgreement: z.coerce.boolean().optional().default(false),
+  manualNonWorkingDays: z.array(z.object({
+    date: z.string().date(),
+    reason: z.string().trim().max(160).optional().default("Feriado / dia inhabil manual")
+  })).optional().default([]),
   requestedBusinessDays: z.coerce.number().positive().optional(),
   startDate: z.string().date()
 }).refine((value) => value.requestedBusinessDays || value.endDate, { message: "start_and_days_or_end_required", path: ["endDate"] })
@@ -19,6 +23,20 @@ const previewSchema = z.object({
 
 function domainError(code: string, message: string, status = 422, fields?: Record<string, unknown>) {
   return NextResponse.json({ ok: false, code, error: code, message, fields }, { status });
+}
+
+function mergeManualNonWorkingDays(holidays: Holiday[], manualDays: Array<{ date: string; reason: string }>, startDate: string, endDate: string) {
+  const existing = new Set(holidays.map((item) => item.date));
+  const manual: Holiday[] = [];
+  for (const day of manualDays) {
+    if (day.date < startDate || day.date > endDate) {
+      return { error: "manual_non_working_day_out_of_range", holidays, manual };
+    }
+    if (existing.has(day.date)) continue;
+    existing.add(day.date);
+    manual.push({ date: day.date, mandatory: false, name: day.reason, scope: "tenant", status: "active" });
+  }
+  return { holidays: [...holidays, ...manual], manual };
 }
 
 export async function POST(request: Request) {
@@ -54,13 +72,16 @@ export async function POST(request: Request) {
       ? { periods: periodRows.map((row) => mapPeriodRow(row as Record<string, unknown>)), usedFallback: false }
       : await ensureVacationPeriodsForEmployee({ asOf: body.startDate, employee: employeeRow, supabase, userId: ctx.user.id });
     const periods = ensured.periods.length ? ensured.periods : buildFallbackPeriods(employeeRow, body.startDate);
+    const holidays = safeVacationHolidays(holidayRows as Array<Record<string, unknown>> | null);
+    const mergedHolidays = mergeManualNonWorkingDays(holidays, body.manualNonWorkingDays, body.startDate, body.endDate || body.startDate);
+    if (mergedHolidays.error) return domainError("MANUAL_NON_WORKING_DAY_OUT_OF_RANGE", "El feriado manual debe estar dentro del rango solicitado.", 422);
     const preview = calculateVacationPreview({
       advanceAuthorized: body.advanceAuthorized,
       agreementAccepted: body.fractionationAgreement,
       calendarStatusByYear,
       endDate: body.endDate || null,
       hireDate: employeeRow.hire_date,
-      holidays: safeVacationHolidays(holidayRows as Array<Record<string, unknown>> | null),
+      holidays: mergedHolidays.holidays,
       periods,
       requestedBusinessDays: body.requestedBusinessDays ?? null,
       schedule: parseVacationWorkSchedule(employeeRow.work_schedule),

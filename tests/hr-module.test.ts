@@ -124,7 +124,7 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(accountantRoute, /notify pgrst, 'reload schema'/);
   assert.match(accountantRoute, /readRowsWithPg/);
   assert.match(accountantRoute, /employee_name/);
-  assert.match(client, /Novedades mensuales/);
+  assert.match(noveltiesRoute, /hr\.monthly_novelty_created/);
   assert.match(client, /Datos Sueldos/);
   assert.match(vacationComponents, /Feriado fraccionado/);
   assert.match(vacationComponents, /CALCULAR VACACIONES/);
@@ -135,6 +135,41 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(client, /Anticipos avanzados/);
   assert.match(client, /Exportar tramo banco/);
   assert.match(client, /Enviar liquidaciones pendientes pagadas/);
+});
+
+test("HR employee profile is simplified to four visible tabs and reuses existing data", async () => {
+  const client = await readFile("src/components/hr/hr-dashboard-client.tsx", "utf8");
+  const employeeRoute = await readFile("src/app/api/hr/employees/[id]/route.ts", "utf8");
+  const hrData = await readFile("src/lib/hr/data.ts", "utf8");
+  const vacationComponents = await readFile("src/components/hr/vacation-components.tsx", "utf8");
+
+  assert.match(client, /type WorkerTab = "personal" \| "bank" \| "vacations" \| "payslips"/);
+  assert.match(client, /label: "Datos personales"/);
+  assert.match(client, /label: "Banco"/);
+  assert.match(client, /label: "Vacaciones"/);
+  assert.match(client, /label: "Liquidaciones"/);
+  assert.doesNotMatch(client, /label: "Contrato"/);
+  assert.doesNotMatch(client, /label: "Novedades"/);
+  assert.doesNotMatch(client, /label: "Pagos"/);
+  assert.doesNotMatch(client, /label: "Documentos"/);
+  assert.doesNotMatch(client, /label: "Auditoria"/);
+  assert.match(client, /normalizeWorkerTab/);
+  assert.match(client, /if \(tab === "payments"\) return "bank"/);
+  assert.match(client, /if \(tab === "documents"\) return "payslips"/);
+  assert.match(client, /Informacion laboral/);
+  assert.match(client, /Jornada laboral/);
+  assert.match(client, /Falta configurar jornada laboral/);
+  assert.match(client, /Configure la jornada laboral en Datos personales/);
+  assert.match(employeeRoute, /workSchedulePreset/);
+  assert.match(employeeRoute, /work_schedule = JSON\.stringify\(workSchedule\)/);
+  assert.match(hrData, /bank_name,bank_code,account_type,account_number,payment_email/);
+  assert.match(client, /maskAccountNumber/);
+  assert.match(client, /Historial de pagos/);
+  assert.match(client, /Exportar historial Excel/);
+  assert.match(client, /Liquidaciones del trabajador/);
+  assert.match(client, /Enviar liquidacion/);
+  assert.match(vacationComponents, /manualHolidayDate/);
+  assert.match(vacationComponents, /manualNonWorkingDays/);
 });
 
 test("HR vacation domain generates anniversary periods and separates projected proportional", () => {

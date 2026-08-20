@@ -147,6 +147,8 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
   const [fractionationAgreement, setFractionationAgreement] = useState(false);
   const [fractionalVacation, setFractionalVacation] = useState(false);
   const [manualBusinessDays, setManualBusinessDays] = useState("");
+  const [manualHolidayDate, setManualHolidayDate] = useState("");
+  const [manualHolidayReason, setManualHolidayReason] = useState("");
   const [note, setNote] = useState("");
   const [observation, setObservation] = useState("");
   const [preview, setPreview] = useState<VacationPreviewState>({ data: null, error: null, key: null, loading: false });
@@ -158,9 +160,10 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
     employeeId,
     endDate,
     fractionationAgreement,
+    manualNonWorkingDays: manualHolidayDate ? [{ date: manualHolidayDate, reason: manualHolidayReason || "Feriado / dia inhabil manual" }] : [],
     requestedBusinessDays: manualBusinessDays ? Number(manualBusinessDays) : undefined,
     startDate
-  }), [advanceAuthorized, employeeId, endDate, fractionationAgreement, manualBusinessDays, startDate]);
+  }), [advanceAuthorized, employeeId, endDate, fractionationAgreement, manualBusinessDays, manualHolidayDate, manualHolidayReason, startDate]);
 
   const previewKey = useMemo(() => JSON.stringify(payload), [payload]);
 
@@ -171,6 +174,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
       employeeId,
       endDate,
       fractionationAgreement,
+      manualNonWorkingDays: manualHolidayDate ? [{ date: manualHolidayDate, reason: manualHolidayReason || "Feriado / dia inhabil manual" }] : [],
       requestedBusinessDays: manualBusinessDays ? Number(manualBusinessDays) : undefined,
       startDate
     };
@@ -195,7 +199,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
     } catch {
       setPreview({ data: null, error: "No se pudo calcular la solicitud. Intenta nuevamente.", key: requestKey, loading: false });
     }
-  }, [advanceAuthorized, employeeId, endDate, fractionationAgreement, manualBusinessDays, startDate]);
+  }, [advanceAuthorized, employeeId, endDate, fractionationAgreement, manualBusinessDays, manualHolidayDate, manualHolidayReason, startDate]);
 
   useEffect(() => {
     setPreview({ data: null, error: null, key: null, loading: Boolean(startDate && endDate) });
@@ -262,6 +266,10 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
         <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-[#667068]">Opciones avanzadas</summary>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <input className="w-full rounded-md border px-3 py-2 text-sm" onChange={(event) => setManualBusinessDays(event.target.value)} placeholder="Dias habiles manuales" step="0.01" type="number" value={manualBusinessDays} />
+          <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">Agregar feriado / dia inhabil
+            <input className="w-full rounded-md border px-3 py-2 text-sm font-normal normal-case" max={endDate || undefined} min={startDate || undefined} onChange={(event) => setManualHolidayDate(event.target.value)} type="date" value={manualHolidayDate} />
+          </label>
+          <input className="w-full rounded-md border px-3 py-2 text-sm" onChange={(event) => setManualHolidayReason(event.target.value)} placeholder="Motivo feriado manual" value={manualHolidayReason} />
           <label className="flex items-center gap-2 text-sm"><input checked={fractionalVacation} onChange={(event) => setFractionalVacation(event.target.checked)} type="checkbox" /> Feriado fraccionado</label>
           <label className="flex items-center gap-2 text-sm"><input checked={fractionationAgreement} onChange={(event) => setFractionationAgreement(event.target.checked)} type="checkbox" /> Acuerdo de fraccionamiento</label>
           <label className="flex items-center gap-2 text-sm"><input checked={advanceAuthorized} onChange={(event) => setAdvanceAuthorized(event.target.checked)} type="checkbox" /> Autorizar anticipadas</label>

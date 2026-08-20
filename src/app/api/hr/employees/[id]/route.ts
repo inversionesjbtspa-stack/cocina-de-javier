@@ -25,8 +25,24 @@ const patchSchema = z.object({
   tipoCuenta: z.string().trim().optional(),
   titularCuenta: z.string().trim().optional(),
   titularRut: z.string().trim().optional(),
-  workEmail: z.string().trim().email().or(z.literal("")).optional()
+  workEmail: z.string().trim().email().or(z.literal("")).optional(),
+  workScheduleDays: z.array(z.union([z.string(), z.number()])).optional(),
+  workSchedulePreset: z.enum(["mon_fri", "mon_sat", "custom"]).optional()
 });
+
+function buildWorkSchedule(preset?: "mon_fri" | "mon_sat" | "custom", days?: Array<string | number>) {
+  if (!preset) return undefined;
+  const presetDays = preset === "mon_fri" ? [1, 2, 3, 4, 5] : preset === "mon_sat" ? [1, 2, 3, 4, 5, 6] : [];
+  const customDays = (days ?? []).map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6);
+  const workingWeekdays = preset === "custom" ? Array.from(new Set(customDays)).sort((a, b) => a - b) : presetDays;
+  const label = preset === "mon_fri" ? "Lunes a viernes" : preset === "mon_sat" ? "Lunes a sabado" : "Personalizada";
+  return {
+    label,
+    source: "employee_profile",
+    updatedAt: new Date().toISOString(),
+    workingWeekdays
+  };
+}
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await requireHrContext();
@@ -51,6 +67,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (body.salary !== undefined) employeeUpdate.base_salary = body.salary;
   if (body.status) employeeUpdate.status = body.status;
   if (body.workEmail !== undefined) employeeUpdate.work_email = body.workEmail || null;
+  const workSchedule = buildWorkSchedule(body.workSchedulePreset, body.workScheduleDays);
+  if (workSchedule) employeeUpdate.work_schedule = JSON.stringify(workSchedule);
   if (typeof body.paymentEnabled === "boolean") {
     employeeUpdate.payment_enabled = body.paymentEnabled && (body.status ?? before.data.status) === "activo";
     employeeUpdate.payment_toggle_reason = body.reason ?? null;
@@ -97,5 +115,5 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     event_type: "hr.employee_updated",
     tenant_id: ctx.membership.tenant_id
   });
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ employee: employeeUpdate, ok: true });
 }

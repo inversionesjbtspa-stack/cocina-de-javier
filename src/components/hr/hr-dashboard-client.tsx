@@ -34,7 +34,8 @@ import {
 } from "@/components/hr/vacation-components";
 
 type HrSection = "workers" | "payroll" | "salary" | "payslips" | "imports" | "dashboard";
-type WorkerTab = "personal" | "contract" | "bank" | "novelties" | "vacations" | "payslips" | "payments" | "documents" | "audit";
+type WorkerTab = "personal" | "bank" | "vacations" | "payslips";
+type LegacyWorkerTab = WorkerTab | "contract" | "novelties" | "payments" | "documents" | "audit";
 type WorkerSort = "name" | "status" | "area" | "vacations" | "payments";
 type WorkerColumn = "fullName" | "rut" | "position" | "area" | "status" | "vacations" | "payslips" | "payments" | "bank";
 type HrPaymentItem = HrDashboardData["paymentItems"][number];
@@ -70,15 +71,26 @@ const sections: Array<{ icon: typeof Users; id: HrSection; label: string }> = [
 
 const workerTabs: Array<{ id: WorkerTab; label: string }> = [
   { id: "personal", label: "Datos personales" },
-  { id: "contract", label: "Contrato" },
   { id: "bank", label: "Banco" },
-  { id: "novelties", label: "Novedades" },
   { id: "vacations", label: "Vacaciones" },
-  { id: "payslips", label: "Liquidaciones" },
-  { id: "payments", label: "Pagos" },
-  { id: "documents", label: "Documentos" },
-  { id: "audit", label: "Auditoria" }
+  { id: "payslips", label: "Liquidaciones" }
 ];
+
+const schedulePresets = [
+  { id: "mon_fri", label: "Lunes a viernes", weekdays: [1, 2, 3, 4, 5] },
+  { id: "mon_sat", label: "Lunes a sabado", weekdays: [1, 2, 3, 4, 5, 6] },
+  { id: "custom", label: "Personalizada", weekdays: [] }
+] as const;
+
+const weekdayOptions = [
+  { id: 1, label: "L" },
+  { id: 2, label: "M" },
+  { id: 3, label: "X" },
+  { id: 4, label: "J" },
+  { id: 5, label: "V" },
+  { id: 6, label: "S" },
+  { id: 0, label: "D" }
+] as const;
 
 function monthToday() {
   return new Date().toISOString().slice(0, 7);
@@ -102,6 +114,92 @@ function statusClass(status: string) {
   if (status === "pendiente_pago" || status === "en_nomina" || status === "solicitada") return "border-amber-200 bg-amber-50 text-amber-800";
   if (status === "anulado" || status === "rechazado" || status === "finiquitado") return "border-rose-200 bg-rose-50 text-rose-800";
   return "border-[#dfe4dd] bg-white text-[#4e5a52]";
+}
+
+function normalizeWorkerTab(tab: LegacyWorkerTab): WorkerTab {
+  if (tab === "contract" || tab === "novelties" || tab === "audit") return "personal";
+  if (tab === "payments") return "bank";
+  if (tab === "documents") return "payslips";
+  return tab;
+}
+
+function parseEmployeeSchedule(value: string | null | undefined) {
+  if (!value) return { label: "Sin jornada configurada", preset: "custom", weekdays: [] as number[] };
+  try {
+    const parsed = JSON.parse(value) as { label?: string; workingWeekdays?: unknown };
+    const weekdays = Array.isArray(parsed.workingWeekdays)
+      ? parsed.workingWeekdays.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+      : [];
+    const preset = schedulePresets.find((item) => item.weekdays.length === weekdays.length && item.weekdays.every((day) => weekdays.includes(day)))?.id ?? "custom";
+    return { label: parsed.label || scheduleLabel(weekdays), preset, weekdays };
+  } catch {
+    const normalized = value.toLowerCase();
+    if (normalized.includes("sabado") || normalized.includes("sab")) return { label: "Lunes a sabado", preset: "mon_sat", weekdays: [1, 2, 3, 4, 5, 6] };
+    if (normalized.includes("viernes") || normalized.includes("vie")) return { label: "Lunes a viernes", preset: "mon_fri", weekdays: [1, 2, 3, 4, 5] };
+    return { label: value, preset: "custom", weekdays: [] as number[] };
+  }
+}
+
+function scheduleLabel(weekdays: number[]) {
+  const preset = schedulePresets.find((item) => item.weekdays.length === weekdays.length && item.weekdays.every((day) => weekdays.includes(day)));
+  if (preset && preset.id !== "custom") return preset.label;
+  if (!weekdays.length) return "Personalizada sin dias";
+  return `Personalizada (${weekdayOptions.filter((day) => weekdays.includes(day.id)).map((day) => day.label).join(", ")})`;
+}
+
+function employeeSeniority(hireDate: string | null) {
+  if (!hireDate) return "Sin fecha de ingreso";
+  const start = new Date(`${hireDate}T00:00:00`);
+  if (Number.isNaN(start.getTime())) return "Fecha de ingreso invalida";
+  const now = new Date();
+  let years = now.getFullYear() - start.getFullYear();
+  let months = now.getMonth() - start.getMonth();
+  if (now.getDate() < start.getDate()) months -= 1;
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+  return `${Math.max(years, 0)} anios, ${Math.max(months, 0)} meses`;
+}
+
+function maskAccountNumber(value: string | null | undefined) {
+  const cleaned = (value ?? "").replace(/\s+/g, "");
+  if (!cleaned) return "No registrado";
+  return `****${cleaned.slice(-4)}`;
+}
+
+function bankStatusLabel(employee: HrEmployee) {
+  if (!employee.bankAccount) return "INCOMPLETO";
+  if (employee.paymentAlerts.length) return "REVISAR";
+  return "COMPLETO";
+}
+
+function escapeExcel(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function exportPaymentHistory(employee: HrEmployee, payments: HrPaymentItem[]) {
+  const rows = payments.map((item) => [
+    employee.fullName,
+    employee.rut,
+    item.period,
+    item.scheduledDate ?? "",
+    item.amount,
+    item.bankName ?? "",
+    item.accountType ?? "",
+    item.accountNumber ?? "",
+    item.status,
+    item.sourceId ?? item.payslipId ?? item.sourceType ?? ""
+  ]);
+  const table = [
+    ["Trabajador", "RUT", "Periodo", "Fecha pago", "Monto", "Banco", "Tipo cuenta", "Cuenta utilizada", "Estado", "Referencia"],
+    ...rows
+  ].map((row) => `<tr>${row.map((cell) => `<td>${escapeExcel(cell)}</td>`).join("")}</tr>`).join("");
+  const html = `<html><head><meta charset="utf-8" /></head><body><table>${table}</table></body></html>`;
+  download(new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" }), `historial-pagos-${employee.rut}.xls`);
 }
 
 function hrErrorMessage(error?: string) {
@@ -308,9 +406,9 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
     })
     .sort((a, b) => a.fullName.localeCompare(b.fullName)), [employees, paymentAreaFilter, paymentBankFilter, paymentPositionFilter, paymentStatusFilter, payrollSearch]);
 
-  function openProfile(employee: HrEmployee, tab: WorkerTab = "personal") {
+  function openProfile(employee: HrEmployee, tab: LegacyWorkerTab = "personal") {
     setSelectedEmployeeId(employee.id);
-    setWorkerTab(tab);
+    setWorkerTab(normalizeWorkerTab(tab));
     setProfileOpen(true);
   }
 
@@ -324,10 +422,6 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
 
   function vacationsFor(employeeId: string) {
     return data.vacations.filter((item) => item.employeeId === employeeId);
-  }
-
-  function noveltiesFor(employeeId: string) {
-    return data.monthlyNovelties.filter((item) => item.employeeId === employeeId);
   }
 
   async function submitJson(event: FormEvent<HTMLFormElement>, endpoint: string, success: string) {
@@ -355,11 +449,13 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
   async function updateEmployee(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedEmployee) return;
-    const body = Object.fromEntries(new FormData(event.currentTarget).entries());
-    const payload: Record<string, FormDataEntryValue | boolean> = { ...body };
+    const formData = new FormData(event.currentTarget);
+    const body = Object.fromEntries(formData.entries());
+    const payload: Record<string, FormDataEntryValue | boolean | FormDataEntryValue[]> = { ...body };
     if ("paymentEnabled" in body) {
       payload.paymentEnabled = body.paymentEnabled === "on";
     }
+    payload.workScheduleDays = formData.getAll("workScheduleDays");
     const response = await fetch(`/api/hr/employees/${selectedEmployee.id}`, {
       body: JSON.stringify(payload),
       headers: { "content-type": "application/json" },
@@ -379,7 +475,8 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
         fullName: typeof body.fullName === "string" ? body.fullName : employee.fullName,
         paymentEnabled: "paymentEnabled" in body ? body.paymentEnabled === "on" : employee.paymentEnabled,
         position: typeof body.position === "string" ? body.position : employee.position,
-        status: typeof body.status === "string" ? body.status : employee.status
+        status: typeof body.status === "string" ? body.status : employee.status,
+        workSchedule: typeof result?.employee?.work_schedule === "string" ? result.employee.work_schedule : employee.workSchedule
       };
     }));
   }
@@ -460,24 +557,6 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
     setMessage(commit
       ? `Periodos vacaciones creados: ${payload.created ?? 0}. Conflictos: ${payload.summary?.conflicts ?? 0}.`
       : `Backfill vacaciones: ${payload.summary?.missing ?? 0} periodo(s) faltante(s), ${payload.summary?.conflicts ?? 0} conflicto(s), ${payload.summary?.employees ?? 0} trabajador(es).`);
-  }
-
-  async function saveNovelty(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const body = Object.fromEntries(new FormData(form).entries());
-    const response = await fetch("/api/hr/monthly-novelties", {
-      body: JSON.stringify(body),
-      headers: { "content-type": "application/json" },
-      method: "POST"
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      setMessage(payload?.error ?? "No se pudo guardar novedad mensual.");
-      return;
-    }
-    setMessage("Novedad mensual guardada sin duplicar trabajador + periodo + tipo.");
-    form.reset();
   }
 
   async function saveAccountantRow(event: FormEvent<HTMLFormElement>) {
@@ -746,12 +825,10 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
           cancelVacationRequest={cancelVacationRequest}
           data={data}
           employee={selectedEmployee}
-          novelties={noveltiesFor(selectedEmployee.id)}
           onClose={() => setProfileOpen(false)}
           onSubmit={updateEmployee}
           payslips={payslipsFor(selectedEmployee.id)}
           payments={paymentsFor(selectedEmployee.id)}
-          saveNovelty={saveNovelty}
           selectedTab={workerTab}
           setSelectedTab={setWorkerTab}
           submitJson={submitJson}
@@ -794,7 +871,7 @@ function WorkersSection({
   columnSort: { column: WorkerColumn; direction: "asc" | "desc" };
   employees: HrEmployee[];
   onCreate: (event: FormEvent<HTMLFormElement>) => void;
-  onOpen: (employee: HrEmployee, tab?: WorkerTab) => void;
+  onOpen: (employee: HrEmployee, tab?: LegacyWorkerTab) => void;
   paymentsFor: (employeeId: string) => HrDashboardData["paymentItems"];
   payslipsFor: (employeeId: string) => HrDashboardData["payslips"];
   search: string;
@@ -922,7 +999,7 @@ function WorkersSection({
                       <div className="flex flex-wrap gap-2">
                         <button className="inline-flex items-center gap-1 rounded-md border border-brand-700 px-2 py-1 text-xs font-semibold text-brand-700" onClick={() => onOpen(employee)} type="button"><Eye className="h-3.5 w-3.5" /> Ficha</button>
                         <button className="rounded-md border border-[#dfe4dd] px-2 py-1 text-xs font-semibold text-[#4e5a52]" onClick={() => onOpen(employee, "bank")} type="button">Banco</button>
-                        <button className="rounded-md border border-[#dfe4dd] px-2 py-1 text-xs font-semibold text-[#4e5a52]" onClick={() => onOpen(employee, "novelties")} type="button">Novedad</button>
+                        <button className="rounded-md border border-[#dfe4dd] px-2 py-1 text-xs font-semibold text-[#4e5a52]" onClick={() => onOpen(employee, "payslips")} type="button">Liquidaciones</button>
                       </div>
                     </td>
                   </tr>
@@ -972,12 +1049,10 @@ function WorkerProfilePanel({
   cancelVacationRequest,
   data,
   employee,
-  novelties,
   onClose,
   onSubmit,
   payslips,
   payments,
-  saveNovelty,
   selectedTab,
   sendPayslips,
   setSelectedTab,
@@ -988,12 +1063,10 @@ function WorkerProfilePanel({
   cancelVacationRequest: (id: string) => void;
   data: HrDashboardData;
   employee: HrEmployee;
-  novelties: HrDashboardData["monthlyNovelties"];
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   payslips: HrDashboardData["payslips"];
   payments: HrDashboardData["paymentItems"];
-  saveNovelty: (event: FormEvent<HTMLFormElement>) => void;
   selectedTab: WorkerTab;
   sendPayslips: (payslipIds: string[], resend?: boolean) => void;
   setSelectedTab: (value: WorkerTab) => void;
@@ -1027,14 +1100,9 @@ function WorkerProfilePanel({
         <div className="min-h-0 flex-1 overflow-auto p-5">
           <EmployeeSummary data={data} employee={employee} />
           {selectedTab === "personal" ? <EmployeePersonalTab employee={employee} onSubmit={onSubmit} /> : null}
-          {selectedTab === "contract" ? <EmployeeContractTab employee={employee} onSubmit={onSubmit} /> : null}
-          {selectedTab === "bank" ? <EmployeeBankTab employee={employee} onSubmit={onSubmit} /> : null}
-          {selectedTab === "novelties" ? <EmployeeNoveltiesTab data={data} employee={employee} novelties={novelties} saveNovelty={saveNovelty} /> : null}
+          {selectedTab === "bank" ? <EmployeeBankTab employee={employee} onSubmit={onSubmit} payments={payments} /> : null}
           {selectedTab === "vacations" ? <EmployeeVacationsTab cancelVacationRequest={cancelVacationRequest} data={data} employee={employee} submitJson={submitJson} vacations={vacations} /> : null}
           {selectedTab === "payslips" ? <EmployeePayslipsTab data={data} employee={employee} payslips={payslips} sendPayslips={sendPayslips} uploadPayslip={uploadPayslip} /> : null}
-          {selectedTab === "payments" ? <EmployeePaymentsTab data={data} employee={employee} payments={payments} submitJson={submitJson} /> : null}
-          {selectedTab === "documents" ? <EmployeeDocumentsTab employee={employee} payslips={payslips} /> : null}
-          {selectedTab === "audit" ? <EmployeeAuditTab employee={employee} /> : null}
         </div>
       </aside>
     </div>
@@ -1042,47 +1110,125 @@ function WorkerProfilePanel({
 }
 
 function EmployeePersonalTab({ employee, onSubmit }: { employee: HrEmployee; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+  const schedule = parseEmployeeSchedule(employee.workSchedule);
+  const missingSchedule = !schedule.weekdays.length;
   return (
     <SectionCard className="p-5">
-      <h3 className="font-semibold text-brand-900">Datos personales</h3>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="font-semibold text-brand-900">Datos personales</h3>
+          <p className="mt-1 text-sm text-[#667068]">Identificacion, contacto e informacion laboral en una sola vista.</p>
+        </div>
+        <Pill className={statusClass(employee.status)}>{employee.status}</Pill>
+      </div>
+      {missingSchedule ? (
+        <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+          Falta configurar jornada laboral.
+        </div>
+      ) : null}
       <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={onSubmit}>
-        <input className="rounded-md border px-3 py-2 text-sm md:col-span-2" defaultValue={employee.fullName} name="fullName" placeholder="Nombre" />
-        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.phone ?? ""} name="phone" placeholder="Telefono" />
-        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.personalEmail ?? ""} name="personalEmail" placeholder="Email personal" type="email" />
-        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.workEmail ?? ""} name="workEmail" placeholder="Email laboral" type="email" />
-        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.commune ?? ""} name="commune" placeholder="Comuna / ciudad" />
-        <input className="rounded-md border px-3 py-2 text-sm md:col-span-2" defaultValue={employee.address ?? ""} name="address" placeholder="Direccion" />
-        <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white md:col-span-2" type="submit">Guardar datos personales</button>
-      </form>
-    </SectionCard>
-  );
-}
-
-function EmployeeContractTab({ employee, onSubmit }: { employee: HrEmployee; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  return (
-    <SectionCard className="p-5">
-      <h3 className="font-semibold text-brand-900">Contrato</h3>
-      <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={onSubmit}>
-        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.position ?? ""} name="position" placeholder="Cargo" />
-        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.area ?? ""} name="area" placeholder="Area" />
-        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.costCenter ?? ""} name="costCenter" placeholder="Centro costo" />
-        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.baseSalary} name="salary" placeholder="Sueldo base" type="number" />
-        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.hireDate ?? ""} name="hireDate" type="date" />
-        <select className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.status} name="status"><option value="activo">Activo</option><option value="inactivo">Inactivo</option><option value="finiquitado">Finiquitado</option><option value="suspendido">Suspendido</option></select>
+        <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068] md:col-span-2">
+          Nombre completo
+          <input className="rounded-md border px-3 py-2 text-sm font-normal normal-case text-brand-900" defaultValue={employee.fullName} name="fullName" placeholder="Nombre" />
+        </label>
+        <div className="rounded-md border border-[#dfe4dd] bg-white px-3 py-2 text-sm">
+          <p className="text-xs font-semibold uppercase text-[#667068]">RUT</p>
+          <p className="mt-1 font-semibold text-brand-900">{employee.rut}</p>
+        </div>
+        <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">
+          Fecha ingreso
+          <input className="rounded-md border px-3 py-2 text-sm font-normal normal-case text-brand-900" defaultValue={employee.hireDate ?? ""} name="hireDate" type="date" />
+          <span className="text-xs normal-case text-[#667068]">Antiguedad: {employeeSeniority(employee.hireDate)}</span>
+        </label>
+        <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">
+          Telefono
+          <input className="rounded-md border px-3 py-2 text-sm font-normal normal-case text-brand-900" defaultValue={employee.phone ?? ""} name="phone" placeholder="Telefono" />
+        </label>
+        <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">
+          Email personal
+          <input className="rounded-md border px-3 py-2 text-sm font-normal normal-case text-brand-900" defaultValue={employee.personalEmail ?? ""} name="personalEmail" placeholder="Email personal" type="email" />
+        </label>
+        <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">
+          Email laboral
+          <input className="rounded-md border px-3 py-2 text-sm font-normal normal-case text-brand-900" defaultValue={employee.workEmail ?? ""} name="workEmail" placeholder="Email laboral" type="email" />
+        </label>
+        <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">
+          Comuna / ciudad
+          <input className="rounded-md border px-3 py-2 text-sm font-normal normal-case text-brand-900" defaultValue={employee.commune ?? ""} name="commune" placeholder="Comuna / ciudad" />
+        </label>
+        <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068] md:col-span-2">
+          Direccion
+          <input className="rounded-md border px-3 py-2 text-sm font-normal normal-case text-brand-900" defaultValue={employee.address ?? ""} name="address" placeholder="Direccion" />
+        </label>
+        <div className="mt-3 border-t border-[#dfe4dd] pt-4 md:col-span-2">
+          <h4 className="font-semibold text-brand-900">Informacion laboral</h4>
+          <p className="mt-1 text-sm text-[#667068]">Contrato, cargo, area, jornada y estado laboral sin crear una pestana adicional.</p>
+        </div>
+        <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">
+          Cargo
+          <input className="rounded-md border px-3 py-2 text-sm font-normal normal-case text-brand-900" defaultValue={employee.position ?? ""} name="position" placeholder="Cargo" />
+        </label>
+        <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">
+          Area
+          <input className="rounded-md border px-3 py-2 text-sm font-normal normal-case text-brand-900" defaultValue={employee.area ?? ""} name="area" placeholder="Area" />
+        </label>
+        <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">
+          Sucursal / centro costo
+          <input className="rounded-md border px-3 py-2 text-sm font-normal normal-case text-brand-900" defaultValue={employee.costCenter ?? ""} name="costCenter" placeholder="Centro costo" />
+        </label>
+        <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">
+          Sueldo base
+          <input className="rounded-md border px-3 py-2 text-sm font-normal normal-case text-brand-900" defaultValue={employee.baseSalary} name="salary" placeholder="Sueldo base" type="number" />
+        </label>
+        <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">
+          Estado laboral
+          <select className="rounded-md border px-3 py-2 text-sm font-normal normal-case text-brand-900" defaultValue={employee.status} name="status"><option value="activo">Activo</option><option value="inactivo">Inactivo</option><option value="finiquitado">Finiquitado</option><option value="suspendido">Suspendido</option></select>
+        </label>
+        <div className="rounded-md border border-[#dfe4dd] bg-white px-3 py-2 text-sm">
+          <p className="text-xs font-semibold uppercase text-[#667068]">Jornada actual</p>
+          <p className="mt-1 font-semibold text-brand-900">{schedule.label}</p>
+        </div>
+        <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">
+          Jornada laboral
+          <select className="rounded-md border px-3 py-2 text-sm font-normal normal-case text-brand-900" defaultValue={schedule.preset} name="workSchedulePreset">
+            {schedulePresets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+          </select>
+        </label>
+        <div className="rounded-md border border-[#dfe4dd] bg-white p-3 md:col-span-2">
+          <p className="text-xs font-semibold uppercase text-[#667068]">Dias personalizados</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {weekdayOptions.map((day) => (
+              <label className="inline-flex items-center gap-1 rounded-md border border-[#dfe4dd] px-2 py-1 text-sm" key={day.id}>
+                <input defaultChecked={schedule.weekdays.includes(day.id)} name="workScheduleDays" type="checkbox" value={day.id} />
+                {day.label}
+              </label>
+            ))}
+          </div>
+        </div>
         <label className="flex items-center gap-2 text-sm"><input defaultChecked={employee.paymentEnabled} name="paymentEnabled" type="checkbox" /> Habilitar pagos</label>
         <input className="rounded-md border px-3 py-2 text-sm" name="reason" placeholder="Motivo cambio habilitacion" />
-        <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white md:col-span-2" type="submit">Guardar contrato</button>
+        <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white md:col-span-2" type="submit">Guardar ficha</button>
       </form>
     </SectionCard>
   );
 }
 
-function EmployeeBankTab({ employee, onSubmit }: { employee: HrEmployee; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+function EmployeeBankTab({ employee, onSubmit, payments }: { employee: HrEmployee; onSubmit: (event: FormEvent<HTMLFormElement>) => void; payments: HrDashboardData["paymentItems"] }) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const filteredPayments = payments.filter((item) => (!from || (item.scheduledDate ?? item.period) >= from) && (!to || (item.scheduledDate ?? item.period) <= to));
+  const status = bankStatusLabel(employee);
   return (
-    <SectionCard className="p-5">
-      <h3 className="font-semibold text-brand-900">Banco</h3>
-      <p className="mt-1 text-sm text-[#667068]">{employee.paymentAlerts.length ? `Faltan datos: ${employee.paymentAlerts.join(", ")}` : "Datos bancarios completos para pago."}</p>
-      <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={onSubmit}>
+    <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+      <SectionCard className="p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-brand-900">Datos bancarios</h3>
+            <p className="mt-1 text-sm text-[#667068]">{employee.paymentAlerts.length ? `Datos por revisar: ${employee.paymentAlerts.join(", ")}` : "Datos bancarios completos para pago."}</p>
+          </div>
+          <Pill className={status === "COMPLETO" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : status === "REVISAR" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-rose-200 bg-rose-50 text-rose-800"}>{status}</Pill>
+        </div>
+        <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={onSubmit}>
         <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.bankName ?? ""} name="bankName" placeholder="Banco" />
         <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.bankCode ?? ""} name="bankCode" placeholder="Codigo banco" />
         <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.accountType ?? ""} name="tipoCuenta" placeholder="Tipo cuenta" />
@@ -1092,23 +1238,30 @@ function EmployeeBankTab({ employee, onSubmit }: { employee: HrEmployee; onSubmi
         <input className="rounded-md border px-3 py-2 text-sm md:col-span-2" defaultValue={employee.bankAccount?.paymentEmail ?? employee.workEmail ?? employee.personalEmail ?? ""} name="emailPayment" placeholder="Email pago" type="email" />
         <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white md:col-span-2" type="submit">Guardar banco</button>
       </form>
-    </SectionCard>
-  );
-}
-
-function EmployeeNoveltiesTab({ data, employee, novelties, saveNovelty }: { data: HrDashboardData; employee: HrEmployee; novelties: HrDashboardData["monthlyNovelties"]; saveNovelty: (event: FormEvent<HTMLFormElement>) => void }) {
-  return (
-    <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
-      <SectionCard className="p-5">
-        <h3 className="font-semibold text-brand-900">Novedades mensuales</h3>
-        <NoveltyForm data={data} employeeId={employee.id} onSubmit={saveNovelty} />
       </SectionCard>
       <SectionCard className="overflow-hidden">
-        <TableHeader title="Novedades del trabajador" />
-        <SimpleTable headers={["Periodo", "Tipo", "Cantidad", "Horas", "Monto", "Estado"]}>
-          {novelties.map((item) => (
-            <tr className="border-t" key={item.id}><td className="px-4 py-3">{item.period}</td><td className="px-4 py-3">{item.type}</td><td className="px-4 py-3">{item.quantity}</td><td className="px-4 py-3">{item.hours}</td><td className="px-4 py-3">{formatClp(item.amount)}</td><td className="px-4 py-3">{item.status}</td></tr>
+        <TableHeader
+          action={<button className="rounded-md border border-brand-700 px-3 py-1.5 text-xs font-semibold text-brand-700" onClick={() => exportPaymentHistory(employee, filteredPayments)} type="button">Exportar historial Excel</button>}
+          title="Historial de pagos"
+        />
+        <div className="grid gap-3 border-b border-[#dfe4dd] bg-white p-4 md:grid-cols-2">
+          <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">Desde<input className="rounded-md border px-3 py-2 text-sm font-normal normal-case" onChange={(event) => setFrom(event.target.value)} type="date" value={from} /></label>
+          <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">Hasta<input className="rounded-md border px-3 py-2 text-sm font-normal normal-case" onChange={(event) => setTo(event.target.value)} type="date" value={to} /></label>
+        </div>
+        <SimpleTable headers={["Fecha", "Periodo", "Monto", "Banco", "Tipo cuenta", "Cuenta utilizada", "Estado", "Lote / referencia"]}>
+          {filteredPayments.map((item) => (
+            <tr className="border-t" key={item.id}>
+              <td className="px-4 py-3">{item.scheduledDate ?? "Sin fecha"}</td>
+              <td className="px-4 py-3">{item.period}</td>
+              <td className="px-4 py-3">{formatClp(item.amount)}</td>
+              <td className="px-4 py-3">{item.bankName ?? "No registrado"}</td>
+              <td className="px-4 py-3">{item.accountType ?? "No registrado"}</td>
+              <td className="px-4 py-3">{maskAccountNumber(item.accountNumber)}</td>
+              <td className="px-4 py-3"><Pill className={statusClass(item.status)}>{item.status}</Pill></td>
+              <td className="px-4 py-3">{item.sourceId ?? item.payslipId ?? item.sourceType ?? "Sin referencia"}</td>
+            </tr>
           ))}
+          {!filteredPayments.length ? <tr><td className="px-4 py-6 text-center text-sm text-[#667068]" colSpan={8}>Sin pagos registrados para los filtros seleccionados.</td></tr> : null}
         </SimpleTable>
       </SectionCard>
     </div>
@@ -1119,6 +1272,7 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
   const ledger = data.vacationLedger.filter((item) => item.employeeId === employee.id);
   const periods = data.vacationPeriods.filter((item) => item.employeeId === employee.id);
   const movements = data.vacationMovements.filter((item) => item.employeeId === employee.id);
+  const schedule = parseEmployeeSchedule(employee.workSchedule);
   async function action(id: string, endpoint: string, body: Record<string, unknown> = {}) {
     const response = await fetch(`/api/hr/vacations/${id}/${endpoint}`, {
       body: JSON.stringify(body),
@@ -1132,6 +1286,13 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
     <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
       <SectionCard className="p-5">
         <h3 className="font-semibold text-brand-900">Vacaciones</h3>
+        {!schedule.weekdays.length ? (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+            Configure la jornada laboral en Datos personales.
+          </div>
+        ) : (
+          <p className="mt-2 text-sm text-[#667068]">Jornada aplicada automaticamente: {schedule.label}.</p>
+        )}
         <VacationSummary employee={employee} periods={periods} />
         <VacationRequestForm employeeId={employee.id} submitJson={submitJson} />
         <VacationRecentRequests vacations={vacations} />
@@ -1196,62 +1357,35 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
 }
 
 function EmployeePayslipsTab({ data, employee, payslips, sendPayslips, uploadPayslip }: { data: HrDashboardData; employee: HrEmployee; payslips: HrDashboardData["payslips"]; sendPayslips: (payslipIds: string[], resend?: boolean) => void; uploadPayslip: (event: FormEvent<HTMLFormElement>) => void }) {
+  const paymentsByPayslip = new Map(data.paymentItems.filter((item) => item.employeeId === employee.id && item.payslipId).map((item) => [item.payslipId, item]));
   return (
-    <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
-      <SectionCard className="p-5">
-        <h3 className="font-semibold text-brand-900">Cargar liquidacion</h3>
-        <PayslipUploadForm data={data} employeeId={employee.id} onSubmit={uploadPayslip} />
-      </SectionCard>
-      <PayslipsTable payslips={payslips} sendPayslips={sendPayslips} />
-    </div>
-  );
-}
-
-function EmployeePaymentsTab({ data, employee, payments, submitJson }: { data: HrDashboardData; employee: HrEmployee; payments: HrDashboardData["paymentItems"]; submitJson: (event: FormEvent<HTMLFormElement>, endpoint: string, success: string) => void }) {
-  return (
-    <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
-      <SectionCard className="p-5">
-        <h3 className="font-semibold text-brand-900">Crear pago</h3>
-        <PaymentCreateForm data={data} employeeId={employee.id} submitJson={submitJson} />
-      </SectionCard>
-      <PaymentsMiniTable payments={payments} />
-    </div>
-  );
-}
-
-function EmployeeDocumentsTab({ employee, payslips }: { employee: HrEmployee; payslips: HrDashboardData["payslips"] }) {
-  return (
-    <SectionCard className="p-5">
-      <h3 className="font-semibold text-brand-900">Documentos</h3>
-      <p className="mt-2 text-sm text-[#667068]">Liquidaciones asociadas automaticamente a la ficha de {employee.fullName}. Los archivos permanecen en el bucket privado configurado.</p>
-      <div className="mt-4 space-y-2">
-        {payslips.map((payslip) => (
-          <div className="flex flex-col gap-2 rounded-md border border-[#dfe4dd] bg-white p-3 text-sm md:flex-row md:items-center md:justify-between" key={payslip.id}>
-            <div>
-              <p className="font-semibold text-brand-900">{payslip.period} / {payslip.originalFilename}</p>
-              <p className="text-xs text-[#667068]">Estado {payslip.status} / envio {payslip.sendStatus} / match {payslip.matchLevel ?? "manual"}</p>
-            </div>
-            <Pill className={statusClass(payslip.status)}>{formatClp(payslip.netAmount)}</Pill>
-          </div>
-        ))}
-        {!payslips.length ? <p className="rounded-md border border-dashed border-[#dfe4dd] p-4 text-sm text-[#667068]">Sin liquidaciones asociadas a esta ficha.</p> : null}
-      </div>
-    </SectionCard>
-  );
-}
-
-function EmployeeAuditTab({ employee }: { employee: HrEmployee }) {
-  return (
-    <SectionCard className="p-5">
-      <h3 className="font-semibold text-brand-900">Auditoria</h3>
-      <div className="mt-4 space-y-3 text-sm">
-        {["Ficha trabajador disponible", "Pagos y liquidaciones auditados por endpoints RRHH", "Vacaciones y novedades registran eventos"].map((item) => (
-          <div className="rounded-md border border-[#dfe4dd] bg-white px-3 py-2" key={item}>
-            <p className="font-semibold text-brand-900">{item}</p>
-            <p className="text-xs text-[#667068]">{employee.fullName}</p>
-          </div>
-        ))}
-      </div>
+    <SectionCard className="overflow-hidden">
+      <TableHeader title="Liquidaciones del trabajador" />
+      <p className="border-b border-[#dfe4dd] bg-white px-4 py-3 text-sm text-[#667068]">
+        Liquidaciones asociadas automaticamente. Una fila por mes y solo PDF individuales asociados a {employee.fullName}.
+      </p>
+      <SimpleTable headers={["Periodo", "Liquido a pagar", "Estado", "PDF", "Email", "Pago"]}>
+        {payslips.map((payslip) => {
+          const payment = paymentsByPayslip.get(payslip.id);
+          return (
+            <tr className="border-t" key={payslip.id}>
+              <td className="px-4 py-3 font-semibold text-brand-900">{payslip.period}</td>
+              <td className="px-4 py-3">{formatClp(payslip.netAmount)}</td>
+              <td className="px-4 py-3"><Pill className={statusClass(payslip.status)}>{payslip.status}</Pill></td>
+              <td className="px-4 py-3"><a className="rounded-md border px-2 py-1 text-xs font-semibold text-brand-700" href={`/api/hr/payslips/${payslip.id}/download`}>Ver PDF</a></td>
+              <td className="px-4 py-3"><button className="rounded-md border px-2 py-1 text-xs font-semibold text-brand-700" onClick={() => sendPayslips([payslip.id])} type="button">Enviar liquidacion</button></td>
+              <td className="px-4 py-3">{payment ? <Pill className={statusClass(payment.status)}>{payment.status}</Pill> : "Pendiente"}</td>
+            </tr>
+          );
+        })}
+        {!payslips.length ? <tr><td className="px-4 py-6 text-center text-sm text-[#667068]" colSpan={6}>Sin liquidaciones asociadas a esta ficha.</td></tr> : null}
+      </SimpleTable>
+      <details className="border-t border-[#dfe4dd] bg-white p-4">
+        <summary className="cursor-pointer text-sm font-semibold text-brand-900">Cargar liquidacion individual</summary>
+        <div className="mt-4 rounded-md border border-[#dfe4dd] bg-brand-50 p-4">
+          <PayslipUploadForm data={data} employeeId={employee.id} onSubmit={uploadPayslip} />
+        </div>
+      </details>
     </SectionCard>
   );
 }
@@ -1791,24 +1925,6 @@ function ImportStep({ children, number, title }: { children: React.ReactNode; nu
   );
 }
 
-function NoveltyForm({ data, employeeId, onSubmit }: { data: HrDashboardData; employeeId?: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  return (
-    <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={onSubmit}>
-      {employeeId ? <input name="employeeId" type="hidden" value={employeeId} /> : <select className="rounded-md border px-3 py-2 text-sm md:col-span-2" name="employeeId">{data.employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.fullName}</option>)}</select>}
-      <input className="rounded-md border px-3 py-2 text-sm" defaultValue={data.period} name="period" type="month" />
-      <select className="rounded-md border px-3 py-2 text-sm" name="type">
-        <option value="inasistencia">Inasistencia</option><option value="licencia">Licencia</option><option value="horas_extras">Horas extras</option><option value="recargo_domingo">Recargo domingo</option><option value="bono_compensatorio">Bono compensatorio</option><option value="bono_produccion">Bono produccion</option><option value="bono_responsabilidad">Bono responsabilidad</option><option value="aguinaldo">Aguinaldo</option><option value="anticipo">Anticipo</option><option value="prestamo_empresa">Prestamo empresa</option><option value="prestamo_ccaf">Prestamo caja / CCAF</option><option value="honorarios">Honorarios</option><option value="finiquito">Finiquito</option><option value="descuento">Descuento</option><option value="observacion">Observacion</option>
-      </select>
-      <input className="rounded-md border px-3 py-2 text-sm" name="quantity" placeholder="Cantidad" type="number" step="0.01" />
-      <input className="rounded-md border px-3 py-2 text-sm" name="hours" placeholder="Horas" type="number" step="0.01" />
-      <input className="rounded-md border px-3 py-2 text-sm" name="amount" placeholder="Monto" type="number" />
-      <select className="rounded-md border px-3 py-2 text-sm" name="status"><option value="confirmada">Confirmada</option><option value="borrador">Borrador</option><option value="anulada">Anulada</option></select>
-      <input className="rounded-md border px-3 py-2 text-sm md:col-span-2" name="notes" placeholder="Observaciones" />
-      <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white md:col-span-2" type="submit">Guardar novedad</button>
-    </form>
-  );
-}
-
 function AccountantRowForm({ data, onSubmit }: { data: HrDashboardData; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
   return (
     <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={onSubmit}>
@@ -1914,17 +2030,6 @@ function PayslipsTable({ payslips, sendPayslips }: { payslips: HrDashboardData["
             <td className="px-4 py-3"><div className="flex flex-wrap gap-2"><a className="rounded-md border px-2 py-1 text-xs font-semibold text-brand-700" href={`/api/hr/payslips/${payslip.id}/download`}>Descargar</a><button className="rounded-md border px-2 py-1 text-xs font-semibold text-brand-700" onClick={() => sendPayslips([payslip.id])} type="button">Enviar</button><button className="rounded-md border px-2 py-1 text-xs font-semibold text-brand-700" onClick={() => sendPayslips([payslip.id], true)} type="button">Reenviar</button></div></td>
           </tr>
         ))}
-      </SimpleTable>
-    </SectionCard>
-  );
-}
-
-function PaymentsMiniTable({ payments }: { payments: HrDashboardData["paymentItems"] }) {
-  return (
-    <SectionCard className="overflow-hidden">
-      <TableHeader title="Pagos del trabajador" />
-      <SimpleTable headers={["Periodo", "Tipo", "Monto", "Estado", "Glosa"]}>
-        {payments.map((item) => <tr className="border-t" key={item.id}><td className="px-4 py-3">{item.period}</td><td className="px-4 py-3">{item.paymentType}</td><td className="px-4 py-3">{formatClp(item.amount)}</td><td className="px-4 py-3"><Pill className={statusClass(item.status)}>{item.status}</Pill></td><td className="px-4 py-3">{item.glosa}</td></tr>)}
       </SimpleTable>
     </SectionCard>
   );

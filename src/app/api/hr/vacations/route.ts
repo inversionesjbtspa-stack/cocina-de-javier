@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
-import { calculateVacationPreview, yearsInRange, type HolidayCalendarStatus } from "@/lib/hr/vacation-domain";
+import { calculateVacationPreview, yearsInRange, type Holiday, type HolidayCalendarStatus } from "@/lib/hr/vacation-domain";
 import { assertEmployeeInTenant, buildFallbackPeriods, buildVacationSnapshot, ensureVacationPeriodsForEmployee, mapPeriodRow, parseVacationWorkSchedule, persistVacationReceiptForRequest, safeVacationHolidays, type VacationReceiptPersistenceClient } from "@/lib/hr/vacation-server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -16,6 +16,10 @@ const vacationSchema = z.object({
   endDate: z.string().date().optional().or(z.literal("")).default(""),
   fractionationAgreement: z.coerce.boolean().optional().default(false),
   fractionalVacation: z.coerce.boolean().optional().default(false),
+  manualNonWorkingDays: z.array(z.object({
+    date: z.string().date(),
+    reason: z.string().trim().max(160).optional().default("Feriado / dia inhabil manual")
+  })).optional().default([]),
   note: z.string().trim().max(1000).optional().default(""),
   observation: z.string().trim().max(800).optional().default(""),
   requestedBusinessDays: z.coerce.number().positive().optional(),
@@ -25,6 +29,20 @@ const vacationSchema = z.object({
 
 function legacyStatus(status: string) {
   return status === "pendiente" ? "solicitada" : status;
+}
+
+function mergeManualNonWorkingDays(holidays: Holiday[], manualDays: Array<{ date: string; reason: string }>, startDate: string, endDate: string) {
+  const existing = new Set(holidays.map((item) => item.date));
+  const manual: Holiday[] = [];
+  for (const day of manualDays) {
+    if (day.date < startDate || day.date > endDate) {
+      return { error: "manual_non_working_day_out_of_range", holidays, manual };
+    }
+    if (existing.has(day.date)) continue;
+    existing.add(day.date);
+    manual.push({ date: day.date, mandatory: false, name: day.reason, scope: "tenant", status: "active" });
+  }
+  return { holidays: [...holidays, ...manual], manual };
 }
 
 export async function GET() {
@@ -61,6 +79,8 @@ export async function POST(request: Request) {
   if (!employeeRow.hire_date) return NextResponse.json({ ok: false, error: "employee_hire_date_required" }, { status: 422 });
 
   const holidays = safeVacationHolidays(holidayRows as Array<Record<string, unknown>> | null);
+  const mergedHolidays = mergeManualNonWorkingDays(holidays, body.manualNonWorkingDays, body.startDate, previewEnd);
+  if (mergedHolidays.error) return NextResponse.json({ ok: false, error: "manual_non_working_day_out_of_range" }, { status: 422 });
   const calendarStatusByYear = Object.fromEntries((calendarRows ?? []).map((row) => [String(row.calendar_year), String(row.verification_status) as HolidayCalendarStatus]));
   const ensured = periodRows?.length
     ? { periods: periodRows.map((row) => mapPeriodRow(row as Record<string, unknown>)), usedFallback: false }
@@ -72,12 +92,16 @@ export async function POST(request: Request) {
     calendarStatusByYear,
     endDate: body.endDate || null,
     hireDate: employeeRow.hire_date,
-    holidays,
+    holidays: mergedHolidays.holidays,
     periods,
     requestedBusinessDays: body.requestedBusinessDays ?? null,
     schedule: parseVacationWorkSchedule(employeeRow.work_schedule),
     startDate: body.startDate
   });
+  const observationText = [
+    body.observation,
+    ...mergedHolidays.manual.map((day) => `Dia inhabil manual: ${day.date} - ${day.name}`)
+  ].filter(Boolean).join("\n");
   if (!preview.valid && body.status !== "borrador") {
     return NextResponse.json({ ok: false, error: "vacation_preview_invalid", preview }, { status: 422 });
   }
@@ -85,9 +109,9 @@ export async function POST(request: Request) {
   const snapshot = buildVacationSnapshot({
     companyRow: company,
     employee: employeeRow,
-    holidays,
+    holidays: mergedHolidays.holidays,
     note: body.note,
-    observation: body.observation,
+    observation: observationText,
     periods,
     preview
   });
@@ -102,7 +126,7 @@ export async function POST(request: Request) {
     fractionation_agreement: body.fractionationAgreement,
     is_fractioned: preview.businessDays < 10,
     last_counted_vacation_date: preview.lastCountedVacationDate,
-    observation: body.observation || null,
+    observation: observationText || null,
     previous_balance: preview.totalAvailable,
     projected_business_days: preview.projectedProportional,
     requested_business_days: preview.businessDays,
