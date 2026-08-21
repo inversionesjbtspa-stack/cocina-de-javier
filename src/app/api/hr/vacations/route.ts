@@ -5,6 +5,7 @@ import { calculateVacationPreview, holidayForDate, localWeekday, yearsInRange, t
 import { resolveEmployeeWorkingCalendar } from "@/lib/hr/vacation-calendar-server";
 import { assertEmployeeInTenant, buildFallbackPeriods, buildVacationSnapshot, ensureVacationPeriodsForEmployee, mapPeriodRow, mapProgressiveRecord, persistVacationReceiptForRequest, safeVacationHolidays, type VacationReceiptPersistenceClient } from "@/lib/hr/vacation-server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
@@ -68,6 +69,7 @@ export async function POST(request: Request) {
   const parsed = vacationSchema.safeParse(await request.json());
   if (!parsed.success) return NextResponse.json({ ok: false, error: "vacation_validation_failed", fields: parsed.error.flatten().fieldErrors }, { status: 422 });
   const body = parsed.data;
+  const authSupabase = await createClient();
   const supabase = createAdminClient();
   const previewEnd = body.endDate || body.startDate;
   const calendarYears = yearsInRange(body.startDate, previewEnd);
@@ -153,24 +155,32 @@ export async function POST(request: Request) {
     return_to_work_date: preview.returnToWorkDate,
     schedule_source: preview.scheduleSource,
     start_date: body.startDate,
-    status: legacyStatus(body.status),
+    status: body.status === "aprobada" ? "solicitada" : legacyStatus(body.status),
     tenant_id: ctx.membership.tenant_id
   };
 
-  const rpc = await supabase.rpc("hr_create_vacation_request", {
+  const rpc = await authSupabase.rpc("hr_create_vacation_request", {
     p_payload: { ...payload, snapshot }
   });
   if (rpc.error) {
-    return NextResponse.json({ ok: false, error: rpc.error.message }, { status: 422 });
+    const status = rpc.error.message === "unauthorized" ? 401 : rpc.error.message === "hr_forbidden" ? 403 : 422;
+    return NextResponse.json({ ok: false, error: rpc.error.message }, { status });
   }
 
   const requestId = String(rpc.data);
   if (body.status === "aprobada") {
-    const approved = await supabase.rpc("hr_approve_vacation_request", {
+    const calendarOverrideReason = preview.calendarStatus === "incomplete"
+      ? "Calendario de feriados incompleto validado por preview RRHH"
+      : null;
+    const approved = await authSupabase.rpc("hr_approve_vacation_request", {
       p_request_id: requestId,
-      p_expected_version: 1
+      p_expected_version: 1,
+      p_calendar_override_reason: calendarOverrideReason
     });
-    if (approved.error) return NextResponse.json({ ok: false, error: approved.error.message, requestId }, { status: 422 });
+    if (approved.error) {
+      const status = approved.error.message === "unauthorized" ? 401 : approved.error.message === "hr_forbidden" ? 403 : 422;
+      return NextResponse.json({ ok: false, error: approved.error.message, requestId }, { status });
+    }
     const receipt = await persistVacationReceiptForRequest({
       companyId: ctx.membership.company_id,
       requestId,

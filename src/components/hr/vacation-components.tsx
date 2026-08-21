@@ -193,9 +193,22 @@ function humanVacationPreviewMessage(result: Record<string, unknown> | null) {
   return "No se pudo calcular la solicitud. Intenta nuevamente.";
 }
 
+function humanVacationConfirmMessage(result: Record<string, unknown> | null, status: number) {
+  const code = String(result?.error ?? result?.code ?? "");
+  if (status === 401 || code === "unauthorized") return "Tu sesion expiro. Vuelve a iniciar sesion antes de confirmar las vacaciones.";
+  if (status === 403 || code === "hr_forbidden" || code === "forbidden") return "No tienes permisos para confirmar vacaciones.";
+  if (code === "vacation_overlap") return "Existe una solicitud de vacaciones superpuesta. No se realizaron cambios.";
+  if (code === "vacation_preview_invalid") return "La vista previa ya no es valida. Recalcula antes de confirmar.";
+  if (code === "insufficient_vacation_balance") return "El saldo disponible no cubre los dias solicitados. No se realizaron cambios.";
+  if (code === "vacation_calendar_not_verified") return "Falta verificar el calendario de feriados antes de confirmar.";
+  return "No se pudo confirmar la solicitud. No se realizaron cambios.";
+}
+
 export function VacationRequestForm({ employeeId, submitJson }: { employeeId: string; submitJson: (event: FormEvent<HTMLFormElement>, endpoint: string, success: string) => void }) {
   const [advanceAuthorized, setAdvanceAuthorized] = useState(false);
   const [confirmed, setConfirmed] = useState<VacationConfirmationState | null>(null);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [endDate, setEndDate] = useState("");
   const [fractionationAgreement, setFractionationAgreement] = useState(false);
   const [fractionalVacation, setFractionalVacation] = useState(false);
@@ -267,32 +280,42 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
 
   async function confirmVacation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (confirming) return;
+    setConfirmError(null);
     if (!previewValidAndCurrent) {
       await previewVacation();
       return;
     }
-    const response = await fetch("/api/hr/vacations", {
-      body: JSON.stringify({
-        ...payload,
-        documentDate: today(),
-        fractionalVacation,
-        note,
-        observation,
-        status: "aprobada"
-      }),
-      headers: { "Content-Type": "application/json" },
-      method: "POST"
-    });
-    const result = await response.json().catch(() => null);
-    if (!response.ok) {
-      window.alert(result?.error ?? "No se pudo confirmar la solicitud.");
-      return;
+    setConfirming(true);
+    try {
+      const response = await fetch("/api/hr/vacations", {
+        body: JSON.stringify({
+          ...payload,
+          documentDate: today(),
+          fractionalVacation,
+          note,
+          observation,
+          status: "aprobada"
+        }),
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        method: "POST"
+      });
+      const result = await response.json().catch(() => null) as Record<string, unknown> | null;
+      if (!response.ok) {
+        setConfirmError(humanVacationConfirmMessage(result, response.status));
+        return;
+      }
+      setConfirmed({
+        receiptPdfUrl: typeof result?.receiptPdfUrl === "string" ? result.receiptPdfUrl : undefined,
+        receiptPreviewUrl: typeof result?.receiptPreviewUrl === "string" ? result.receiptPreviewUrl : undefined,
+        requestId: typeof result?.requestId === "string" ? result.requestId : undefined
+      });
+    } catch {
+      setConfirmError("No se pudo confirmar la solicitud. No se realizaron cambios.");
+    } finally {
+      setConfirming(false);
     }
-    setConfirmed({
-      receiptPdfUrl: result?.receiptPdfUrl,
-      receiptPreviewUrl: result?.receiptPreviewUrl,
-      requestId: result?.requestId
-    });
   }
 
   const allocationRows = previewAllocations(preview.data);
@@ -384,7 +407,8 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
           </div>
         </div>
       ) : null}
-      <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50" disabled={!previewValidAndCurrent} type="submit">CONFIRMAR VACACIONES</button>
+      {confirmError ? <p className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{confirmError}</p> : null}
+      <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50" disabled={!previewValidAndCurrent || confirming || Boolean(confirmed)} type="submit">{confirming ? "CONFIRMANDO..." : "CONFIRMAR VACACIONES"}</button>
     </form>
   );
 }

@@ -453,7 +453,7 @@ test("HR vacation preview reports domain states without generic preview_failed",
   assert.match(vacationComponents, /humanVacationPreviewMessage/);
   assert.doesNotMatch(vacationComponents, /Vista previa no disponible: \{preview\.error\}/);
   assert.match(vacationComponents, /previewValidAndCurrent/);
-  assert.match(vacationComponents, /disabled=\{!previewValidAndCurrent\}/);
+  assert.match(vacationComponents, /disabled=\{!previewValidAndCurrent \|\| confirming \|\| Boolean\(confirmed\)\}/);
   assert.match(vacationComponents, /setPreview\(\{ data: null, error: null, key: null/);
   assert.match(vacationComponents, /LISTO PARA CONFIRMAR/);
   assert.match(vacationComponents, /humanVacationReviewReason/);
@@ -1031,6 +1031,13 @@ test("HR vacation hardening migration implements transactional FIFO, idempotent 
   assert.match(migration, /grant execute on function public\.hr_approve_vacation_request\(uuid, integer, text\) to authenticated/);
 
   assert.match(createRoute, /hr_create_vacation_request/);
+  assert.match(createRoute, /import \{ createClient \} from "@\/lib\/supabase\/server"/);
+  assert.match(createRoute, /const authSupabase = await createClient\(\)/);
+  assert.match(createRoute, /authSupabase\.rpc\("hr_create_vacation_request"/);
+  assert.match(createRoute, /authSupabase\.rpc\("hr_approve_vacation_request"/);
+  assert.doesNotMatch(createRoute, /const rpc = await supabase\.rpc\("hr_create_vacation_request"/);
+  assert.match(createRoute, /status: body\.status === "aprobada" \? "solicitada" : legacyStatus\(body\.status\)/);
+  assert.match(createRoute, /p_calendar_override_reason: calendarOverrideReason/);
   assert.doesNotMatch(createRoute, /p_actor_role/);
   assert.doesNotMatch(createRoute, /p_tenant_id/);
   assert.doesNotMatch(createRoute, /rpc_not_available_fallback_insert/);
@@ -1042,6 +1049,31 @@ test("HR vacation hardening migration implements transactional FIFO, idempotent 
   assert.match(receiptRoute, /expiresInSeconds: 600/);
   assert.match(accrualRoute, /getEmployeeForHrTenant/);
   assert.match(accrualRoute, /employee_not_active/);
+});
+
+test("HR vacation confirmation uses authenticated session and human UI errors", async () => {
+  const createRoute = await readFile("src/app/api/hr/vacations/route.ts", "utf8");
+  const vacationComponents = await readFile("src/components/hr/vacation-components.tsx", "utf8");
+
+  assert.match(createRoute, /requireHrContext/);
+  assert.match(createRoute, /createAdminClient/);
+  assert.match(createRoute, /createClient/);
+  assert.match(createRoute, /authSupabase\.rpc\("hr_create_vacation_request"/);
+  assert.match(createRoute, /authSupabase\.rpc\("hr_approve_vacation_request"/);
+  assert.match(createRoute, /rpc\.error\.message === "unauthorized" \? 401/);
+  assert.match(createRoute, /approved\.error\.message === "unauthorized" \? 401/);
+  assert.match(createRoute, /calendarStatus === "incomplete"/);
+  assert.match(createRoute, /Calendario de feriados incompleto validado por preview RRHH/);
+
+  assert.match(vacationComponents, /humanVacationConfirmMessage/);
+  assert.match(vacationComponents, /Tu sesion expiro\. Vuelve a iniciar sesion antes de confirmar las vacaciones\./);
+  assert.match(vacationComponents, /No tienes permisos para confirmar vacaciones\./);
+  assert.match(vacationComponents, /No se pudo confirmar la solicitud\. No se realizaron cambios\./);
+  assert.match(vacationComponents, /credentials: "same-origin"/);
+  assert.match(vacationComponents, /const \[confirming, setConfirming\]/);
+  assert.match(vacationComponents, /if \(confirming\) return/);
+  assert.match(vacationComponents, /disabled=\{!previewValidAndCurrent \|\| confirming \|\| Boolean\(confirmed\)\}/);
+  assert.doesNotMatch(vacationComponents, /window\.alert/);
 });
 
 test("HR global vacation calendar policy migration adds tenant policy and monthly Sunday schedule safely", async () => {
