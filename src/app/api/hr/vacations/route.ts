@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
-import { calculateVacationPreview, yearsInRange, type Holiday, type HolidayCalendarStatus } from "@/lib/hr/vacation-domain";
-import { assertEmployeeInTenant, buildFallbackPeriods, buildVacationSnapshot, ensureVacationPeriodsForEmployee, mapPeriodRow, parseVacationWorkSchedule, persistVacationReceiptForRequest, safeVacationHolidays, type VacationReceiptPersistenceClient } from "@/lib/hr/vacation-server";
+import { calculateVacationPreview, yearsInRange, type HolidayCalendarStatus } from "@/lib/hr/vacation-domain";
+import { resolveEmployeeWorkingCalendar } from "@/lib/hr/vacation-calendar-server";
+import { assertEmployeeInTenant, buildFallbackPeriods, buildVacationSnapshot, ensureVacationPeriodsForEmployee, mapPeriodRow, persistVacationReceiptForRequest, safeVacationHolidays, type VacationReceiptPersistenceClient } from "@/lib/hr/vacation-server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -18,7 +19,7 @@ const vacationSchema = z.object({
   fractionalVacation: z.coerce.boolean().optional().default(false),
   manualNonWorkingDays: z.array(z.object({
     date: z.string().date(),
-    reason: z.string().trim().max(160).optional().default("Feriado / dia inhabil manual")
+    reason: z.string().trim().max(160).optional().default("Cierre empresa manual")
   })).optional().default([]),
   note: z.string().trim().max(1000).optional().default(""),
   observation: z.string().trim().max(800).optional().default(""),
@@ -31,18 +32,13 @@ function legacyStatus(status: string) {
   return status === "pendiente" ? "solicitada" : status;
 }
 
-function mergeManualNonWorkingDays(holidays: Holiday[], manualDays: Array<{ date: string; reason: string }>, startDate: string, endDate: string) {
-  const existing = new Set(holidays.map((item) => item.date));
-  const manual: Holiday[] = [];
+function validateManualClosedDays(manualDays: Array<{ date: string; reason: string }>, startDate: string, endDate: string) {
   for (const day of manualDays) {
     if (day.date < startDate || day.date > endDate) {
-      return { error: "manual_non_working_day_out_of_range", holidays, manual };
+      return { error: "manual_non_working_day_out_of_range" };
     }
-    if (existing.has(day.date)) continue;
-    existing.add(day.date);
-    manual.push({ date: day.date, mandatory: false, name: day.reason, scope: "tenant", status: "active" });
   }
-  return { holidays: [...holidays, ...manual], manual };
+  return { error: null };
 }
 
 export async function GET() {
@@ -79,28 +75,38 @@ export async function POST(request: Request) {
   if (!employeeRow.hire_date) return NextResponse.json({ ok: false, error: "employee_hire_date_required" }, { status: 422 });
 
   const holidays = safeVacationHolidays(holidayRows as Array<Record<string, unknown>> | null);
-  const mergedHolidays = mergeManualNonWorkingDays(holidays, body.manualNonWorkingDays, body.startDate, previewEnd);
-  if (mergedHolidays.error) return NextResponse.json({ ok: false, error: "manual_non_working_day_out_of_range" }, { status: 422 });
+  const manualClosed = validateManualClosedDays(body.manualNonWorkingDays, body.startDate, previewEnd);
+  if (manualClosed.error) return NextResponse.json({ ok: false, error: "manual_non_working_day_out_of_range" }, { status: 422 });
   const calendarStatusByYear = Object.fromEntries((calendarRows ?? []).map((row) => [String(row.calendar_year), String(row.verification_status) as HolidayCalendarStatus]));
   const ensured = periodRows?.length
     ? { periods: periodRows.map((row) => mapPeriodRow(row as Record<string, unknown>)), usedFallback: false }
     : await ensureVacationPeriodsForEmployee({ asOf: body.startDate, employee: employeeRow, supabase, userId: ctx.user.id });
   const periods = ensured.periods.length ? ensured.periods : buildFallbackPeriods(employeeRow, body.startDate);
+  const workingCalendar = await resolveEmployeeWorkingCalendar({
+    employeeId: body.employeeId,
+    employeeSchedule: employeeRow.work_schedule,
+    fromDate: body.startDate,
+    holidays,
+    manualClosedDays: body.manualNonWorkingDays,
+    supabase,
+    tenantId: ctx.membership.tenant_id,
+    toDate: previewEnd
+  });
   const preview = calculateVacationPreview({
     advanceAuthorized: body.advanceAuthorized,
     agreementAccepted: body.fractionationAgreement,
     calendarStatusByYear,
     endDate: body.endDate || null,
     hireDate: employeeRow.hire_date,
-    holidays: mergedHolidays.holidays,
+    holidays,
     periods,
     requestedBusinessDays: body.requestedBusinessDays ?? null,
-    schedule: parseVacationWorkSchedule(employeeRow.work_schedule),
+    schedule: workingCalendar.schedule,
     startDate: body.startDate
   });
   const observationText = [
     body.observation,
-    ...mergedHolidays.manual.map((day) => `Dia inhabil manual: ${day.date} - ${day.name}`)
+    ...body.manualNonWorkingDays.map((day) => `Cierre empresa manual: ${day.date} - ${day.reason}`)
   ].filter(Boolean).join("\n");
   if (!preview.valid && body.status !== "borrador") {
     return NextResponse.json({ ok: false, error: "vacation_preview_invalid", preview }, { status: 422 });
@@ -109,7 +115,7 @@ export async function POST(request: Request) {
   const snapshot = buildVacationSnapshot({
     companyRow: company,
     employee: employeeRow,
-    holidays: mergedHolidays.holidays,
+    holidays,
     note: body.note,
     observation: observationText,
     periods,
@@ -126,6 +132,7 @@ export async function POST(request: Request) {
     fractionation_agreement: body.fractionationAgreement,
     is_fractioned: preview.businessDays < 10,
     last_counted_vacation_date: preview.lastCountedVacationDate,
+    non_business_days: Number(preview.nonBusiness.mondayClosed ?? 0) + Number(preview.nonBusiness.scheduledSundayOff ?? 0) + Number(preview.nonBusiness.companyClosed ?? 0),
     observation: observationText || null,
     previous_balance: preview.totalAvailable,
     projected_business_days: preview.projectedProportional,

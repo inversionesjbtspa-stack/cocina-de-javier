@@ -160,7 +160,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
     employeeId,
     endDate,
     fractionationAgreement,
-    manualNonWorkingDays: manualHolidayDate ? [{ date: manualHolidayDate, reason: manualHolidayReason || "Feriado / dia inhabil manual" }] : [],
+    manualNonWorkingDays: manualHolidayDate ? [{ date: manualHolidayDate, reason: manualHolidayReason || "Cierre empresa manual" }] : [],
     requestedBusinessDays: manualBusinessDays ? Number(manualBusinessDays) : undefined,
     startDate
   }), [advanceAuthorized, employeeId, endDate, fractionationAgreement, manualBusinessDays, manualHolidayDate, manualHolidayReason, startDate]);
@@ -174,7 +174,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
       employeeId,
       endDate,
       fractionationAgreement,
-      manualNonWorkingDays: manualHolidayDate ? [{ date: manualHolidayDate, reason: manualHolidayReason || "Feriado / dia inhabil manual" }] : [],
+      manualNonWorkingDays: manualHolidayDate ? [{ date: manualHolidayDate, reason: manualHolidayReason || "Cierre empresa manual" }] : [],
       requestedBusinessDays: manualBusinessDays ? Number(manualBusinessDays) : undefined,
       startDate
     };
@@ -249,7 +249,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
     <form className="mt-4 space-y-4" onSubmit={confirmVacation}>
       <div>
         <h4 className="text-sm font-semibold text-brand-900">Solicitar vacaciones</h4>
-        <p className="mt-1 text-xs text-[#667068]">El sistema calcula dias habiles, feriados, saldo y FIFO antes de confirmar.</p>
+        <p className="mt-1 text-xs text-[#667068]">El sistema calcula dias corridos, dias a descontar, calendario empresa, saldo y FIFO antes de confirmar.</p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-xs font-semibold uppercase tracking-wide text-[#667068]">Desde
@@ -265,11 +265,11 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
       <details className="rounded-md border border-[#dfe4dd] bg-white p-3">
         <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-[#667068]">Opciones avanzadas</summary>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <input className="w-full rounded-md border px-3 py-2 text-sm" onChange={(event) => setManualBusinessDays(event.target.value)} placeholder="Dias habiles manuales" step="0.01" type="number" value={manualBusinessDays} />
-          <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">Agregar feriado / dia inhabil
+          <input className="w-full rounded-md border px-3 py-2 text-sm" onChange={(event) => setManualBusinessDays(event.target.value)} placeholder="Dias a descontar manuales" step="0.01" type="number" value={manualBusinessDays} />
+          <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">Agregar cierre empresa
             <input className="w-full rounded-md border px-3 py-2 text-sm font-normal normal-case" max={endDate || undefined} min={startDate || undefined} onChange={(event) => setManualHolidayDate(event.target.value)} type="date" value={manualHolidayDate} />
           </label>
-          <input className="w-full rounded-md border px-3 py-2 text-sm" onChange={(event) => setManualHolidayReason(event.target.value)} placeholder="Motivo feriado manual" value={manualHolidayReason} />
+          <input className="w-full rounded-md border px-3 py-2 text-sm" onChange={(event) => setManualHolidayReason(event.target.value)} placeholder="Motivo cierre empresa" value={manualHolidayReason} />
           <label className="flex items-center gap-2 text-sm"><input checked={fractionalVacation} onChange={(event) => setFractionalVacation(event.target.checked)} type="checkbox" /> Feriado fraccionado</label>
           <label className="flex items-center gap-2 text-sm"><input checked={fractionationAgreement} onChange={(event) => setFractionationAgreement(event.target.checked)} type="checkbox" /> Acuerdo de fraccionamiento</label>
           <label className="flex items-center gap-2 text-sm"><input checked={advanceAuthorized} onChange={(event) => setAdvanceAuthorized(event.target.checked)} type="checkbox" /> Autorizar anticipadas</label>
@@ -287,16 +287,18 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <MiniMetric label="Desde" value={formatDate(startDate)} />
             <MiniMetric label="Hasta" value={formatDate(previewString(preview.data, "effectiveRestEndDate") ?? endDate)} />
-            <MiniMetric label="Dias calendario" value={String(previewNumber(preview.data, "calendarDays") ?? "-")} />
-            <MiniMetric label="Dias habiles" value={String(previewNumber(preview.data, "businessDays") ?? "-")} />
-            <MiniMetric label="Sab./dom. inhabiles" value={String(Number((preview.data.nonBusiness as Record<string, unknown> | undefined)?.saturdays ?? 0) + Number((preview.data.nonBusiness as Record<string, unknown> | undefined)?.sundays ?? 0))} />
-            <MiniMetric label="Feriados" value={String((preview.data.holidaysApplied as unknown[] | undefined)?.length ?? 0)} />
+            <MiniMetric label="Dias corridos" value={String(previewNumber(preview.data, "calendarDays") ?? "-")} />
+            <MiniMetric label="Dias a descontar" value={String(previewNumber(preview.data, "businessDays") ?? "-")} />
+            <MiniMetric label="Lunes / cierres" value={String(Number((preview.data.nonBusiness as Record<string, unknown> | undefined)?.mondayClosed ?? 0))} />
+            <MiniMetric label="Domingos libres" value={String(Number((preview.data.nonBusiness as Record<string, unknown> | undefined)?.scheduledSundayOff ?? 0))} />
+            <MiniMetric label="Feriados trabajados" value={String(Number((preview.data.nonBusiness as Record<string, unknown> | undefined)?.publicHolidaysWorked ?? 0))} />
+            <MiniMetric label="Cierres extraordinarios" value={String(Number((preview.data.nonBusiness as Record<string, unknown> | undefined)?.companyClosed ?? 0))} />
             <MiniMetric label="Progresivas disponibles" value={String(Math.max(0, (previewNumber(preview.data, "annualEntitlement") ?? 15) - 15))} />
             <MiniMetric label="Saldo antes" value={formatDays(previewNumber(preview.data, "totalAvailable"))} />
-            <MiniMetric label="Dias solicitados" value={formatDays(previewNumber(preview.data, "businessDays"))} />
+            <MiniMetric label="Dias a descontar" value={formatDays(previewNumber(preview.data, "businessDays"))} />
             <MiniMetric label="Saldo despues" value={formatDays(previewNumber(preview.data, "totalAfterRequest"))} />
           </div>
-          {preview.data.scheduleReviewRequired ? <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">REVISAR JORNADA CONTRACTUAL: se uso calendario base hasta configurar la jornada del trabajador.</p> : null}
+          {preview.data.scheduleReviewRequired ? <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">No hay politica empresa ni override individual valido para calcular esta solicitud.</p> : null}
           {allocationRows.length ? (
             <div className="mt-3 rounded-md border border-[#dfe4dd] bg-white p-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-[#667068]">Periodo contractual utilizado</p>

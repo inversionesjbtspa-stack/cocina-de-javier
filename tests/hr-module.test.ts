@@ -158,9 +158,12 @@ test("HR employee profile is simplified to four visible tabs and reuses existing
   assert.match(client, /if \(tab === "documents"\) return "payslips"/);
   assert.match(client, /Informacion laboral/);
   assert.match(client, /Jornada laboral/);
-  assert.match(client, /Falta configurar jornada laboral/);
-  assert.match(client, /Configure la jornada laboral en Datos personales/);
+  assert.doesNotMatch(client, /Falta configurar jornada laboral/);
+  assert.doesNotMatch(client, /Configure la jornada laboral en Datos personales/);
+  assert.match(client, /Override individual de jornada/);
+  assert.match(client, /Politica empresa/);
   assert.match(employeeRoute, /workSchedulePreset/);
+  assert.match(employeeRoute, /workScheduleOverrideEnabled/);
   assert.match(employeeRoute, /work_schedule = JSON\.stringify\(workSchedule\)/);
   assert.match(hrData, /bank_name,bank_code,account_type,account_number,payment_email/);
   assert.match(client, /maskAccountNumber/);
@@ -196,6 +199,72 @@ test("HR vacation work calendar classifies holidays and employee schedules", () 
   assert.equal(classifyWorkCalendarDay("2026-07-18", CHILE_HOLIDAYS_FIXTURE, "RM", null, { source: "employee", workingWeekdays: [1, 2, 3, 4, 5, 6] }).type, "WORKING_DAY");
   assert.equal(calculateVacationBusinessDays("2026-07-13", "2026-07-18", CHILE_HOLIDAYS_FIXTURE, "RM", null, { source: "employee", workingWeekdays: [1, 2, 3, 4, 5, 6] }), 5);
   assert.equal(calculateVacationBusinessDays("2026-07-13", "2026-07-18", CHILE_HOLIDAYS_FIXTURE, "RM", null, { source: "employee", workingWeekdays: [1, 2, 3, 4, 5] }), 4);
+});
+
+test("HR vacation global company policy treats Monday as closed and holidays/Sundays as working", () => {
+  const companySchedule = {
+    dateOverrides: {
+      "2026-08-17": { reason: "MONDAY_CLOSED", source: "company_policy", working: false },
+      "2026-08-23": { reason: "SCHEDULED_SUNDAY_OFF", source: "employee_monthly_schedule", working: false }
+    },
+    holidaysAreWorking: true,
+    source: "company_policy" as const,
+    workingWeekdays: [0, 2, 3, 4, 5, 6]
+  };
+  assert.equal(classifyWorkCalendarDay("2026-08-17", CHILE_HOLIDAYS_FIXTURE, "RM", null, companySchedule).type, "OTHER_NON_WORKING_DAY");
+  assert.equal(classifyWorkCalendarDay("2026-08-17", CHILE_HOLIDAYS_FIXTURE, "RM", null, companySchedule).reason, "MONDAY_CLOSED");
+  assert.equal(classifyWorkCalendarDay("2026-08-18", CHILE_HOLIDAYS_FIXTURE, "RM", null, companySchedule).type, "WORKING_DAY");
+  assert.equal(classifyWorkCalendarDay("2026-08-22", CHILE_HOLIDAYS_FIXTURE, "RM", null, companySchedule).type, "WORKING_DAY");
+  assert.equal(classifyWorkCalendarDay("2026-08-16", CHILE_HOLIDAYS_FIXTURE, "RM", null, companySchedule).type, "WORKING_DAY");
+  assert.equal(classifyWorkCalendarDay("2026-07-16", CHILE_HOLIDAYS_FIXTURE, "RM", null, companySchedule).reason, "PUBLIC_HOLIDAY_WORKED");
+  assert.equal(classifyWorkCalendarDay("2026-08-23", CHILE_HOLIDAYS_FIXTURE, "RM", null, companySchedule).reason, "SCHEDULED_SUNDAY_OFF");
+});
+
+test("HR vacation global policy previews Monday-to-Sunday ranges with and without Sunday off", () => {
+  const basePeriods = [{ availableBalance: 20, baseDays: 15, continuousBlockRequired: 10, continuousBlockUsed: 10, periodEnd: "2026-07-22", periodStart: "2025-07-23", status: "open" as const }];
+  const schedule = {
+    dateOverrides: {
+      "2026-08-17": { reason: "MONDAY_CLOSED", source: "company_policy", working: false }
+    },
+    holidaysAreWorking: true,
+    source: "company_policy" as const,
+    workingWeekdays: [0, 2, 3, 4, 5, 6]
+  };
+  const withoutSundayOff = calculateVacationPreview({
+    agreementAccepted: true,
+    calendarStatusByYear: { "2026": "verified" },
+    endDate: "2026-08-23",
+    hireDate: "2025-07-23",
+    holidays: CHILE_HOLIDAYS_FIXTURE,
+    periods: basePeriods,
+    schedule,
+    startDate: "2026-08-17"
+  });
+  assert.equal(withoutSundayOff.calendarDays, 7);
+  assert.equal(withoutSundayOff.businessDays, 6);
+  assert.equal(withoutSundayOff.nonBusiness.mondayClosed, 1);
+  assert.equal(withoutSundayOff.scheduleReviewRequired, false);
+
+  const withSundayOff = calculateVacationPreview({
+    agreementAccepted: true,
+    calendarStatusByYear: { "2026": "verified" },
+    endDate: "2026-08-23",
+    hireDate: "2025-07-23",
+    holidays: CHILE_HOLIDAYS_FIXTURE,
+    periods: basePeriods,
+    schedule: {
+      ...schedule,
+      dateOverrides: {
+        ...schedule.dateOverrides,
+        "2026-08-23": { reason: "SCHEDULED_SUNDAY_OFF", source: "employee_monthly_schedule", working: false }
+      }
+    },
+    startDate: "2026-08-17"
+  });
+  assert.equal(withSundayOff.calendarDays, 7);
+  assert.equal(withSundayOff.businessDays, 5);
+  assert.equal(withSundayOff.nonBusiness.scheduledSundayOff, 1);
+  assert.equal(withSundayOff.totalAfterRequest, 15);
 });
 
 test("HR vacation preview supports the reproduced August 2026 inclusive range", () => {
@@ -760,6 +829,33 @@ test("HR vacation hardening migration implements transactional FIFO, idempotent 
   assert.match(receiptRoute, /expiresInSeconds: 600/);
   assert.match(accrualRoute, /getEmployeeForHrTenant/);
   assert.match(accrualRoute, /employee_not_active/);
+});
+
+test("HR global vacation calendar policy migration adds tenant policy and monthly Sunday schedule safely", async () => {
+  const migration = await readFile("supabase/migrations/202608210001_hr_global_vacation_calendar_policy.sql", "utf8");
+  const previewRoute = await readFile("src/app/api/hr/vacations/preview/route.ts", "utf8");
+  const vacationRoute = await readFile("src/app/api/hr/vacations/route.ts", "utf8");
+  const sundayRoute = await readFile("src/app/api/hr/sunday-days-off/route.ts", "utf8");
+  const client = await readFile("src/components/hr/hr-dashboard-client.tsx", "utf8");
+
+  assert.match(migration, /create table if not exists public\.hr_vacation_calendar_policies/);
+  assert.match(migration, /monday_closed boolean not null default true/);
+  assert.match(migration, /public_holidays_working boolean not null default true/);
+  assert.match(migration, /monthly_sundays_off integer not null default 2/);
+  assert.match(migration, /create table if not exists public\.hr_employee_monthly_days_off/);
+  assert.match(migration, /extract\(dow from off_date\) = 0/);
+  assert.match(migration, /create table if not exists public\.hr_company_calendar_exceptions/);
+  assert.match(migration, /enable row level security/);
+  assert.match(migration, /current_user_is_member/);
+  assert.match(migration, /current_user_has_role/);
+  assert.match(migration, /insert into public\.hr_vacation_calendar_policies/);
+  assert.match(migration, /non_business_days/);
+  assert.match(previewRoute, /resolveEmployeeWorkingCalendar/);
+  assert.doesNotMatch(previewRoute, /REVISAR_JORNADA_CONTRACTUAL/);
+  assert.match(vacationRoute, /non_business_days/);
+  assert.match(sundayRoute, /validateMonthlySundayOffDates/);
+  assert.match(client, /Programacion/);
+  assert.match(client, /Domingos libres/);
 });
 
 test("HR vacation hardening documents V1 limitations without pretending native XLSX or final PDF", async () => {

@@ -59,19 +59,19 @@ export function parseVacationWorkSchedule(value: unknown): VacationSchedule {
   if (!value) return { source: "default" };
   if (typeof value === "object" && value !== null && "workingWeekdays" in value) {
     const workingWeekdays = (value as { workingWeekdays?: unknown }).workingWeekdays;
-    return Array.isArray(workingWeekdays) ? { source: "employee", workingWeekdays: workingWeekdays.map(Number) } : { source: "employee" };
+    return Array.isArray(workingWeekdays) ? { source: "employee_override", workingWeekdays: workingWeekdays.map(Number) } : { source: "employee_override" };
   }
   const text = String(value).trim().toLowerCase();
   if (!text) return { source: "default" };
   try {
     const parsed = JSON.parse(text) as { workingWeekdays?: unknown };
-    if (Array.isArray(parsed.workingWeekdays)) return { source: "employee", workingWeekdays: parsed.workingWeekdays.map(Number) };
+    if (Array.isArray(parsed.workingWeekdays)) return { source: "employee_override", workingWeekdays: parsed.workingWeekdays.map(Number) };
   } catch {
     // Plain text schedules are common in legacy HR records.
   }
-  if (/lun(?:es)?\s*[-a]\s*s.{0,2}b|lunes a sab|lun-sab|6x1|seis/.test(text)) return { source: "employee", workingWeekdays: [1, 2, 3, 4, 5, 6] };
-  if (/lun(?:es)?\s*[-a]\s*vie|lunes a vie|lun-vie|5x2|cinco/.test(text)) return { source: "employee", workingWeekdays: [1, 2, 3, 4, 5] };
-  return { source: "employee" };
+  if (/lun(?:es)?\s*[-a]\s*s.{0,2}b|lunes a sab|lun-sab|6x1|seis/.test(text)) return { source: "employee_override", workingWeekdays: [1, 2, 3, 4, 5, 6] };
+  if (/lun(?:es)?\s*[-a]\s*vie|lunes a vie|lun-vie|5x2|cinco/.test(text)) return { source: "employee_override", workingWeekdays: [1, 2, 3, 4, 5] };
+  return { source: "employee_override" };
 }
 
 export function buildFallbackPeriods(employee: { hire_date?: string | null; id: string; tenant_id?: string | null }, asOf: string) {

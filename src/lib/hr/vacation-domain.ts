@@ -6,8 +6,10 @@ export type VacationStatus = "borrador" | "solicitada" | "pendiente" | "aprobada
 export type VacationPeriodStatus = "open" | "closed" | "future";
 export type VacationAllocationType = "earned" | "reserved" | "advance" | "reversal";
 export type VacationSchedule = {
+  dateOverrides?: Record<string, { holidayName?: string | null; reason?: string; source?: string; working: boolean }>;
+  holidaysAreWorking?: boolean;
   workingWeekdays?: number[];
-  source?: "employee" | "contract" | "default" | "manual";
+  source?: "employee" | "contract" | "default" | "manual" | "company_policy" | "employee_override";
 };
 export type WorkCalendarDayType = "WORKING_DAY" | "WEEKEND" | "HOLIDAY" | "OTHER_NON_WORKING_DAY";
 export type WorkCalendarDay = {
@@ -15,6 +17,8 @@ export type WorkCalendarDay = {
   type: WorkCalendarDayType;
   weekday: number;
   holidayName?: string | null;
+  reason?: string | null;
+  source?: string | null;
 };
 export type Holiday = {
   communeCode?: string | null;
@@ -209,6 +213,8 @@ export function holidayForDate(value: string, holidays: Holiday[] = [], regionCo
 export function normalizeVacationSchedule(schedule: VacationSchedule = {}) {
   const workingWeekdays = schedule.workingWeekdays?.filter((day) => Number.isInteger(day) && day >= 0 && day <= 6);
   return {
+    dateOverrides: schedule.dateOverrides ?? {},
+    holidaysAreWorking: schedule.holidaysAreWorking ?? false,
     source: schedule.source ?? (workingWeekdays?.length ? "employee" : "default"),
     workingWeekdays: workingWeekdays?.length ? Array.from(new Set(workingWeekdays)).sort() : [1, 2, 3, 4, 5]
   };
@@ -217,11 +223,31 @@ export function normalizeVacationSchedule(schedule: VacationSchedule = {}) {
 export function classifyWorkCalendarDay(value: string, holidays: Holiday[] = [], regionCode?: string | null, communeCode?: string | null, schedule: VacationSchedule = {}): WorkCalendarDay {
   const weekday = localWeekday(value);
   const holiday = holidayForDate(value, holidays, regionCode, communeCode);
-  if (holiday) return { date: value, holidayName: holiday.name, type: "HOLIDAY", weekday };
   const normalized = normalizeVacationSchedule(schedule);
-  if (normalized.workingWeekdays.includes(weekday)) return { date: value, type: "WORKING_DAY", weekday };
-  if (weekday === 0 || weekday === 6) return { date: value, type: "WEEKEND", weekday };
-  return { date: value, type: "OTHER_NON_WORKING_DAY", weekday };
+  const override = normalized.dateOverrides[value];
+  if (override) {
+    return {
+      date: value,
+      holidayName: override.holidayName ?? holiday?.name ?? null,
+      reason: override.reason ?? null,
+      source: override.source ?? null,
+      type: override.working ? "WORKING_DAY" : "OTHER_NON_WORKING_DAY",
+      weekday
+    };
+  }
+  if (holiday && !normalized.holidaysAreWorking) return { date: value, holidayName: holiday.name, reason: "PUBLIC_HOLIDAY", source: "holiday_calendar", type: "HOLIDAY", weekday };
+  if (normalized.workingWeekdays.includes(weekday)) {
+    return {
+      date: value,
+      holidayName: holiday?.name ?? null,
+      reason: holiday && normalized.holidaysAreWorking ? "PUBLIC_HOLIDAY_WORKED" : "NORMAL_WORKING_DAY",
+      source: normalized.source,
+      type: "WORKING_DAY",
+      weekday
+    };
+  }
+  if (weekday === 0 || weekday === 6) return { date: value, reason: "WEEKEND", source: normalized.source, type: "WEEKEND", weekday };
+  return { date: value, reason: "NON_WORKING_WEEKDAY", source: normalized.source, type: "OTHER_NON_WORKING_DAY", weekday };
 }
 
 export function isVacationBusinessDay(value: string, holidays: Holiday[] = [], regionCode?: string | null, communeCode?: string | null, schedule: VacationSchedule = {}) {
@@ -242,7 +268,12 @@ export function countNonBusinessBreakdown(startDate: string, endDate: string, ho
   const workCalendar: WorkCalendarDay[] = [];
   let saturdays = 0;
   let sundays = 0;
+  let companyClosed = 0;
+  let mondayClosed = 0;
   let otherNonWorkingDays = 0;
+  let publicHolidaysWorked = 0;
+  let scheduledSundayOff = 0;
+  const workedHolidayDates = new Set<string>();
   for (let cursor = startDate; compareIsoDate(cursor, endDate) <= 0; cursor = addLocalDays(cursor, 1)) {
     const day = classifyWorkCalendarDay(cursor, holidays, regionCode, communeCode, schedule);
     const weekday = day.weekday;
@@ -250,9 +281,26 @@ export function countNonBusinessBreakdown(startDate: string, endDate: string, ho
     if (weekday === 6) saturdays += 1;
     if (weekday === 0) sundays += 1;
     if (day.type === "HOLIDAY") holidayDates.add(cursor);
+    if (day.reason === "PUBLIC_HOLIDAY_WORKED") workedHolidayDates.add(cursor);
+    if (day.reason === "MONDAY_CLOSED") mondayClosed += 1;
+    if (day.reason === "SCHEDULED_SUNDAY_OFF") scheduledSundayOff += 1;
+    if (day.reason === "COMPANY_CLOSED") companyClosed += 1;
+    if (day.reason === "PUBLIC_HOLIDAY_WORKED") publicHolidaysWorked += 1;
     if (day.type === "OTHER_NON_WORKING_DAY") otherNonWorkingDays += 1;
   }
-  return { holidays: holidayDates.size, holidayDates: Array.from(holidayDates), otherNonWorkingDays, saturdays, sundays, workCalendar };
+  return {
+    companyClosed,
+    holidays: holidayDates.size,
+    holidayDates: Array.from(holidayDates),
+    mondayClosed,
+    otherNonWorkingDays,
+    publicHolidaysWorked,
+    saturdays,
+    scheduledSundayOff,
+    sundays,
+    workedHolidayDates: Array.from(workedHolidayDates),
+    workCalendar
+  };
 }
 
 export function yearsInRange(startDate: string, endDate: string) {
@@ -292,10 +340,9 @@ export function calculateEffectiveRestEnd(startDate: string, lastCountedVacation
 }
 
 export function calculateReturnToWorkDate(lastRestDate: string, schedule: VacationSchedule = {}) {
-  const workingWeekdays = schedule.workingWeekdays?.length ? schedule.workingWeekdays : [1, 2, 3, 4, 5];
   let cursor = addLocalDays(lastRestDate, 1);
   for (let guard = 0; guard < 14; guard += 1) {
-    if (workingWeekdays.includes(localWeekday(cursor))) {
+    if (classifyWorkCalendarDay(cursor, [], null, null, schedule).type === "WORKING_DAY") {
       return {
         returnDate: cursor,
         returnDateManuallyConfirmed: Boolean(schedule.workingWeekdays?.length),
@@ -439,7 +486,7 @@ export function calculateVacationPreview(input: VacationPreviewInput) {
     returnDateManuallyConfirmed: returnInfo.returnDateManuallyConfirmed,
     returnToWorkDate: returnInfo.returnDate,
     scheduleSource: returnInfo.scheduleSource,
-    scheduleReviewRequired: !input.schedule?.workingWeekdays?.length,
+    scheduleReviewRequired: !input.schedule?.workingWeekdays?.length && input.schedule?.source !== "company_policy",
     totalAvailable,
     totalAfterRequest: Math.round((totalAvailable - businessDays) * 1000000) / 1000000,
     valid: fifo.remainingDays === 0 && advanceValidation.ok && fractionation.ok

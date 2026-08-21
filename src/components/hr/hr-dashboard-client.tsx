@@ -33,7 +33,7 @@ import {
   VacationSummary
 } from "@/components/hr/vacation-components";
 
-type HrSection = "workers" | "payroll" | "salary" | "payslips" | "imports" | "dashboard";
+type HrSection = "workers" | "payroll" | "salary" | "payslips" | "schedules" | "imports" | "dashboard";
 type WorkerTab = "personal" | "bank" | "vacations" | "payslips";
 type LegacyWorkerTab = WorkerTab | "contract" | "novelties" | "payments" | "documents" | "audit";
 type WorkerSort = "name" | "status" | "area" | "vacations" | "payments";
@@ -65,6 +65,7 @@ const sections: Array<{ icon: typeof Users; id: HrSection; label: string }> = [
   { icon: WalletCards, id: "payroll", label: "Nominas" },
   { icon: TableProperties, id: "salary", label: "Datos Sueldos" },
   { icon: FileText, id: "payslips", label: "Liquidaciones" },
+  { icon: CalendarDays, id: "schedules", label: "Programacion" },
   { icon: Upload, id: "imports", label: "Importaciones" },
   { icon: LayoutDashboard, id: "dashboard", label: "Dashboard" }
 ];
@@ -124,19 +125,19 @@ function normalizeWorkerTab(tab: LegacyWorkerTab): WorkerTab {
 }
 
 function parseEmployeeSchedule(value: string | null | undefined) {
-  if (!value) return { label: "Sin jornada configurada", preset: "custom", weekdays: [] as number[] };
+  if (!value) return { label: "Politica empresa", overrideEnabled: false, preset: "custom", weekdays: [] as number[] };
   try {
-    const parsed = JSON.parse(value) as { label?: string; workingWeekdays?: unknown };
+    const parsed = JSON.parse(value) as { label?: string; overrideEnabled?: boolean; workingWeekdays?: unknown };
     const weekdays = Array.isArray(parsed.workingWeekdays)
       ? parsed.workingWeekdays.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
       : [];
     const preset = schedulePresets.find((item) => item.weekdays.length === weekdays.length && item.weekdays.every((day) => weekdays.includes(day)))?.id ?? "custom";
-    return { label: parsed.label || scheduleLabel(weekdays), preset, weekdays };
+    return { label: parsed.overrideEnabled ? parsed.label || scheduleLabel(weekdays) : "Politica empresa", overrideEnabled: Boolean(parsed.overrideEnabled), preset, weekdays };
   } catch {
     const normalized = value.toLowerCase();
-    if (normalized.includes("sabado") || normalized.includes("sab")) return { label: "Lunes a sabado", preset: "mon_sat", weekdays: [1, 2, 3, 4, 5, 6] };
-    if (normalized.includes("viernes") || normalized.includes("vie")) return { label: "Lunes a viernes", preset: "mon_fri", weekdays: [1, 2, 3, 4, 5] };
-    return { label: value, preset: "custom", weekdays: [] as number[] };
+    if (normalized.includes("sabado") || normalized.includes("sab")) return { label: "Lunes a sabado", overrideEnabled: false, preset: "mon_sat", weekdays: [1, 2, 3, 4, 5, 6] };
+    if (normalized.includes("viernes") || normalized.includes("vie")) return { label: "Lunes a viernes", overrideEnabled: false, preset: "mon_fri", weekdays: [1, 2, 3, 4, 5] };
+    return { label: value, overrideEnabled: false, preset: "custom", weekdays: [] as number[] };
   }
 }
 
@@ -456,6 +457,7 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
       payload.paymentEnabled = body.paymentEnabled === "on";
     }
     payload.workScheduleDays = formData.getAll("workScheduleDays");
+    payload.workScheduleOverrideEnabled = body.workScheduleOverrideEnabled === "on";
     const response = await fetch(`/api/hr/employees/${selectedEmployee.id}`, {
       body: JSON.stringify(payload),
       headers: { "content-type": "application/json" },
@@ -808,6 +810,7 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
 
       {activeSection === "salary" ? <SalaryDataSection data={data} onSave={saveAccountantRow} setMessage={setMessage} /> : null}
       {activeSection === "payslips" ? <PayslipsSection bulkPayslipAssignments={bulkPayslipAssignments} bulkPayslipPreview={bulkPayslipPreview} bulkPayslipSummary={bulkPayslipSummary} data={data} employees={employees} previewBulkPayslips={previewBulkPayslips} sendPayslips={sendPayslips} setBulkPayslipAssignments={setBulkPayslipAssignments} uploadPayslip={uploadPayslip} /> : null}
+      {activeSection === "schedules" ? <SundayScheduleSection data={data} setMessage={setMessage} /> : null}
       {activeSection === "imports" ? (
         <ImportsSection
           backfillVacationPeriods={backfillVacationPeriods}
@@ -1111,7 +1114,6 @@ function WorkerProfilePanel({
 
 function EmployeePersonalTab({ employee, onSubmit }: { employee: HrEmployee; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
   const schedule = parseEmployeeSchedule(employee.workSchedule);
-  const missingSchedule = !schedule.weekdays.length;
   return (
     <SectionCard className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1121,11 +1123,9 @@ function EmployeePersonalTab({ employee, onSubmit }: { employee: HrEmployee; onS
         </div>
         <Pill className={statusClass(employee.status)}>{employee.status}</Pill>
       </div>
-      {missingSchedule ? (
-        <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
-          Falta configurar jornada laboral.
-        </div>
-      ) : null}
+      <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+        Vacaciones usa la politica empresa: lunes cerrado, martes a domingo laborables, feriados laborables y domingos libres programados por mes.
+      </div>
       <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={onSubmit}>
         <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068] md:col-span-2">
           Nombre completo
@@ -1185,26 +1185,32 @@ function EmployeePersonalTab({ employee, onSubmit }: { employee: HrEmployee; onS
           <select className="rounded-md border px-3 py-2 text-sm font-normal normal-case text-brand-900" defaultValue={employee.status} name="status"><option value="activo">Activo</option><option value="inactivo">Inactivo</option><option value="finiquitado">Finiquitado</option><option value="suspendido">Suspendido</option></select>
         </label>
         <div className="rounded-md border border-[#dfe4dd] bg-white px-3 py-2 text-sm">
-          <p className="text-xs font-semibold uppercase text-[#667068]">Jornada actual</p>
+          <p className="text-xs font-semibold uppercase text-[#667068]">Calendario vacaciones</p>
           <p className="mt-1 font-semibold text-brand-900">{schedule.label}</p>
         </div>
-        <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">
-          Jornada laboral
-          <select className="rounded-md border px-3 py-2 text-sm font-normal normal-case text-brand-900" defaultValue={schedule.preset} name="workSchedulePreset">
-            {schedulePresets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-          </select>
-        </label>
-        <div className="rounded-md border border-[#dfe4dd] bg-white p-3 md:col-span-2">
-          <p className="text-xs font-semibold uppercase text-[#667068]">Dias personalizados</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {weekdayOptions.map((day) => (
-              <label className="inline-flex items-center gap-1 rounded-md border border-[#dfe4dd] px-2 py-1 text-sm" key={day.id}>
-                <input defaultChecked={schedule.weekdays.includes(day.id)} name="workScheduleDays" type="checkbox" value={day.id} />
-                {day.label}
-              </label>
-            ))}
+        <details className="rounded-md border border-[#dfe4dd] bg-white p-3 md:col-span-2">
+          <summary className="cursor-pointer text-xs font-semibold uppercase text-[#667068]">Override individual de jornada</summary>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <label className="flex items-center gap-2 text-sm md:col-span-2"><input defaultChecked={schedule.overrideEnabled} name="workScheduleOverrideEnabled" type="checkbox" /> Usar esta jornada como excepcion administrativa</label>
+            <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">
+              Jornada laboral
+              <select className="rounded-md border px-3 py-2 text-sm font-normal normal-case text-brand-900" defaultValue={schedule.preset} name="workSchedulePreset">
+                {schedulePresets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+              </select>
+            </label>
+            <div className="rounded-md border border-[#dfe4dd] bg-white p-3">
+              <p className="text-xs font-semibold uppercase text-[#667068]">Dias personalizados</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {weekdayOptions.map((day) => (
+                  <label className="inline-flex items-center gap-1 rounded-md border border-[#dfe4dd] px-2 py-1 text-sm" key={day.id}>
+                    <input defaultChecked={schedule.weekdays.includes(day.id)} name="workScheduleDays" type="checkbox" value={day.id} />
+                    {day.label}
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
-        </div>
+        </details>
         <label className="flex items-center gap-2 text-sm"><input defaultChecked={employee.paymentEnabled} name="paymentEnabled" type="checkbox" /> Habilitar pagos</label>
         <input className="rounded-md border px-3 py-2 text-sm" name="reason" placeholder="Motivo cambio habilitacion" />
         <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white md:col-span-2" type="submit">Guardar ficha</button>
@@ -1272,7 +1278,6 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
   const ledger = data.vacationLedger.filter((item) => item.employeeId === employee.id);
   const periods = data.vacationPeriods.filter((item) => item.employeeId === employee.id);
   const movements = data.vacationMovements.filter((item) => item.employeeId === employee.id);
-  const schedule = parseEmployeeSchedule(employee.workSchedule);
   async function action(id: string, endpoint: string, body: Record<string, unknown> = {}) {
     const response = await fetch(`/api/hr/vacations/${id}/${endpoint}`, {
       body: JSON.stringify(body),
@@ -1286,13 +1291,7 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
     <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
       <SectionCard className="p-5">
         <h3 className="font-semibold text-brand-900">Vacaciones</h3>
-        {!schedule.weekdays.length ? (
-          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
-            Configure la jornada laboral en Datos personales.
-          </div>
-        ) : (
-          <p className="mt-2 text-sm text-[#667068]">Jornada aplicada automaticamente: {schedule.label}.</p>
-        )}
+        <p className="mt-2 text-sm text-[#667068]">Politica empresa activa: lunes cerrado; martes a domingo y feriados se consideran laborables salvo domingo libre programado o cierre excepcional.</p>
         <VacationSummary employee={employee} periods={periods} />
         <VacationRequestForm employeeId={employee.id} submitJson={submitJson} />
         <VacationRecentRequests vacations={vacations} />
@@ -1812,6 +1811,84 @@ function PayslipsSection({
         <PayslipsTable payslips={data.payslips} sendPayslips={sendPayslips} />
       </div>
     </div>
+  );
+}
+
+function SundayScheduleSection({ data, setMessage }: { data: HrDashboardData; setMessage: (value: string | null) => void }) {
+  const [month, setMonth] = useState(data.period);
+  const activeEmployees = data.employees.filter((employee) => employee.status === "activo");
+  const daysByEmployee = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const day of data.employeeMonthlyDaysOff.filter((item) => item.date.startsWith(month) && item.type === "SUNDAY_OFF")) {
+      const current = map.get(day.employeeId) ?? [];
+      current.push(day.date);
+      map.set(day.employeeId, current.sort());
+    }
+    return map;
+  }, [data.employeeMonthlyDaysOff, month]);
+
+  async function saveSundaySchedule(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const employeeId = String(formData.get("employeeId") ?? "");
+    const sundayOffDates = [String(formData.get("sundayOff1") ?? ""), String(formData.get("sundayOff2") ?? "")].filter(Boolean);
+    const response = await fetch("/api/hr/sunday-days-off", {
+      body: JSON.stringify({ employeeId, month, sundayOffDates }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+    const payload = await response.json().catch(() => null);
+    setMessage(response.ok ? "Domingos libres guardados. Recarga para ver la programacion actualizada." : payload?.error ?? "No se pudo guardar la programacion.");
+  }
+  function changeMonth(value: string) {
+    setMonth(value);
+    const params = new URLSearchParams(window.location.search);
+    params.set("period", value);
+    params.set("section", "schedules");
+    window.location.assign(`${window.location.pathname}?${params.toString()}`);
+  }
+
+  return (
+    <SectionCard className="overflow-hidden">
+      <TableHeader title="Programacion mensual / Domingos libres" />
+      <div className="border-b border-[#dfe4dd] bg-brand-50 p-4">
+        <div className="grid gap-3 md:grid-cols-[220px_1fr]">
+          <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">Mes
+            <input className="rounded-md border px-3 py-2 text-sm font-normal normal-case" onChange={(event) => changeMonth(event.target.value)} type="month" value={month} />
+          </label>
+          <p className="self-end text-sm text-[#667068]">Los domingos son laborables por defecto. Solo se excluyen de vacaciones cuando estan programados aqui para el trabajador y el mes correspondiente.</p>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-[820px] w-full text-left text-sm">
+          <thead className="bg-white text-xs uppercase text-[#667068]">
+            <tr><th className="px-4 py-3">Trabajador</th><th className="px-4 py-3">Domingo libre 1</th><th className="px-4 py-3">Domingo libre 2</th><th className="px-4 py-3">Accion</th></tr>
+          </thead>
+          <tbody>
+            {activeEmployees.map((employee) => {
+              const current = daysByEmployee.get(employee.id) ?? [];
+              return (
+                <tr className="border-t" key={employee.id}>
+                  <td className="px-4 py-3">
+                    <p className="font-semibold text-brand-900">{employee.fullName}</p>
+                    <p className="text-xs text-[#667068]">{employee.rut}</p>
+                  </td>
+                  <td className="px-4 py-3" colSpan={3}>
+                    <form className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]" onSubmit={saveSundaySchedule}>
+                      <input name="employeeId" type="hidden" value={employee.id} />
+                      <input className="rounded-md border px-3 py-2 text-sm" defaultValue={current[0] ?? ""} name="sundayOff1" type="date" />
+                      <input className="rounded-md border px-3 py-2 text-sm" defaultValue={current[1] ?? ""} name="sundayOff2" type="date" />
+                      <button className="rounded-md bg-brand-700 px-3 py-2 text-xs font-semibold text-white" type="submit">Guardar</button>
+                    </form>
+                  </td>
+                </tr>
+              );
+            })}
+            {!activeEmployees.length ? <tr><td className="px-4 py-4 text-sm text-[#667068]" colSpan={4}>Sin trabajadores activos para programar.</td></tr> : null}
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
   );
 }
 

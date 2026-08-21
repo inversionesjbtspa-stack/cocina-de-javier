@@ -167,6 +167,12 @@ export type HrVacationPeriod = {
   status: string;
 };
 
+export type HrEmployeeMonthlyDayOff = {
+  employeeId: string;
+  date: string;
+  type: string;
+};
+
 export type HrPaymentBatch = {
   id: string;
   period: string;
@@ -229,6 +235,7 @@ export type HrDashboardData = {
   honorarios: HrHonorario[];
   vacationLedger: HrVacationLedger[];
   vacationMovements: HrVacationMovement[];
+  employeeMonthlyDaysOff: HrEmployeeMonthlyDayOff[];
   vacationPeriods: HrVacationPeriod[];
   kpis: {
     activeEmployees: number;
@@ -373,6 +380,7 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
       finiquitos: [],
       honorarios: [],
       vacationLedger: [],
+      employeeMonthlyDaysOff: [],
       vacationMovements: [],
       vacationPeriods: []
     };
@@ -382,7 +390,9 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
   const supabase = createAdminClient();
   // Admin client is required for server-side aggregation across HR tables; access is scoped
   // by the authenticated HR membership above and every tenant-owned table below.
-  const [{ data: employeeRows }, { data: payslipRows }, { data: vacationRows }, { data: paymentRows }, { data: batchRows }, { data: accountantRows }, { data: noveltyRows }, { data: finiquitoRows }, { data: honorarioRows }, { data: vacationLedgerRows }, { data: vacationPeriodRows }, { data: vacationMovementRows }] = await Promise.all([
+  const periodStart = `${period}-01`;
+  const periodEnd = new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0)).toISOString().slice(0, 10);
+  const [{ data: employeeRows }, { data: payslipRows }, { data: vacationRows }, { data: paymentRows }, { data: batchRows }, { data: accountantRows }, { data: noveltyRows }, { data: finiquitoRows }, { data: honorarioRows }, { data: vacationLedgerRows }, { data: vacationPeriodRows }, { data: vacationMovementRows }, { data: monthlyDaysOffRows }] = await Promise.all([
     supabase
       .from("hr_employees")
       .select("*,hr_employee_bank_accounts(id,bank_name,bank_code,account_type,account_number,payment_email,account_holder_name,account_holder_rut,validation_status)")
@@ -459,6 +469,13 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
       .eq("tenant_id", ctx.tenantId)
       .order("created_at", { ascending: false })
       .limit(120)
+    ,
+    supabase
+      .from("hr_employee_monthly_days_off")
+      .select("employee_id,off_date,day_type")
+      .eq("tenant_id", ctx.tenantId)
+      .gte("off_date", periodStart)
+      .lte("off_date", periodEnd)
   ]);
 
   const employees = ((employeeRows ?? []) as RawEmployee[]).map(mapEmployee);
@@ -623,6 +640,11 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
     source: row.source,
     sourceReference: row.source_reference
   }));
+  const employeeMonthlyDaysOff = (monthlyDaysOffRows ?? []).map((row) => ({
+    date: row.off_date,
+    employeeId: row.employee_id,
+    type: row.day_type
+  }));
   const payslipEmployeeIds = new Set(payslips.map((payslip) => payslip.employeeId).filter(Boolean));
   const monthPaymentAmount = paymentItems
     .filter((item) => ["pendiente_pago", "aprobado", "incluido_en_nomina", "en_nomina", "pagado"].includes(item.status))
@@ -650,6 +672,7 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
     finiquitos,
     honorarios,
     vacationLedger,
+    employeeMonthlyDaysOff,
     vacationMovements,
     vacationPeriods,
     payslips,
