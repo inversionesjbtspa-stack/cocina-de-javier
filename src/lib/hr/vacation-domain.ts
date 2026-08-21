@@ -612,7 +612,7 @@ export function calculateVacationPreview(input: VacationPreviewInput) {
   const affectedPeriods = periods.filter((period) => fifo.allocations.some((allocation) => allocation.periodStart === period.periodStart));
   const fractionation = validateFractionation({ agreementAccepted: input.agreementAccepted, periods: affectedPeriods, requestedDays: businessDays });
   const periodReviewReasons = findVacationPeriodReviewReasons(periods);
-  const calendarBlockingReasons = input.calendarStatusByYear && calendar.calendarStatus !== "verified"
+  const calendarBlockingReasons = input.calendarStatusByYear && calendar.calendarStatus === "missing"
     ? [`holiday_calendar_${calendar.calendarStatus}`]
     : [];
   const reviewReasons = uniqueReasons([
