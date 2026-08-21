@@ -160,6 +160,28 @@ function previewAllocations(preview: Record<string, unknown> | null) {
   return Array.isArray(value) ? value as Array<Record<string, unknown>> : [];
 }
 
+function previewReviewReasons(preview: Record<string, unknown> | null) {
+  const value = preview?.reviewReasons ?? preview?.blockingWarnings;
+  return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+}
+
+function humanVacationReviewReason(reason: string) {
+  const labels: Record<string, string> = {
+    advance_exceeds_projected_proportional: "Los dias anticipados superan el proporcional proyectado.",
+    advance_vacation_requires_explicit_authorization: "La solicitud requiere vacaciones anticipadas sin autorizacion explicita.",
+    continuous_block_would_be_broken: "La solicitud rompe el bloque continuo minimo protegido del periodo.",
+    fractionation_agreement_required: "La solicitud requiere acuerdo de fraccionamiento.",
+    holiday_calendar_incomplete: "El calendario de feriados esta incompleto para el rango solicitado.",
+    holiday_calendar_missing: "Falta verificar el calendario de feriados para el rango solicitado.",
+    insufficient_vacation_balance: "El saldo disponible no cubre los dias solicitados.",
+    vacation_days_to_deduct_must_be_positive: "La solicitud no descuenta dias habiles legales.",
+    vacation_overlap: "Existe una solicitud de vacaciones superpuesta.",
+    vacation_overlap_check_failed: "No se pudo verificar si existen vacaciones superpuestas.",
+    vacation_period_ambiguous: "Los periodos contractuales tienen solapamientos o ambiguedades."
+  };
+  return labels[reason] ?? reason;
+}
+
 function humanVacationPreviewMessage(result: Record<string, unknown> | null) {
   const message = typeof result?.message === "string" ? result.message : null;
   if (message) return message;
@@ -240,7 +262,8 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
   }, [previewKey, previewVacation, startDate, endDate]);
 
   const previewIsCurrent = preview.key === previewKey;
-  const previewValidAndCurrent = previewIsCurrent && preview.data?.valid === true && !preview.error && !preview.loading;
+  const previewCanConfirm = preview.data?.canConfirm === true || (preview.data?.canConfirm !== false && preview.data?.valid === true);
+  const previewValidAndCurrent = previewIsCurrent && previewCanConfirm && !preview.error && !preview.loading;
 
   async function confirmVacation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -273,6 +296,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
   }
 
   const allocationRows = previewAllocations(preview.data);
+  const reviewReasons = previewReviewReasons(preview.data);
   return (
     <form className="mt-4 space-y-4" onSubmit={confirmVacation}>
       <div>
@@ -309,7 +333,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
         <div className="rounded-lg border border-brand-100 bg-brand-50 p-4 text-sm text-brand-900">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="font-semibold">Resumen de vacaciones</h4>
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${preview.data.valid ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{preview.data.valid ? "VALIDO" : "REVISAR"}</span>
+            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${previewCanConfirm ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{previewCanConfirm ? "LISTO PARA CONFIRMAR" : "REVISAR"}</span>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <MiniMetric label="Desde" value={formatDate(startDate)} />
@@ -326,6 +350,16 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
             <MiniMetric label="Saldo despues" value={formatDays(previewNumber(preview.data, "totalAfterRequest"))} />
           </div>
           {preview.data.scheduleReviewRequired ? <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">No hay politica empresa ni override individual valido para calcular esta solicitud.</p> : null}
+          {!previewCanConfirm ? (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              <p className="font-semibold">Motivo:</p>
+              {reviewReasons.length ? (
+                <ul className="mt-1 list-disc space-y-1 pl-4">
+                  {reviewReasons.map((reason) => <li key={reason}>{humanVacationReviewReason(reason)}</li>)}
+                </ul>
+              ) : <p className="mt-1">No se recibio una causa concreta de revision.</p>}
+            </div>
+          ) : null}
           {allocationRows.length ? (
             <div className="mt-3 rounded-md border border-[#dfe4dd] bg-white p-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-[#667068]">Periodo(s) contractual(es) utilizado(s)</p>

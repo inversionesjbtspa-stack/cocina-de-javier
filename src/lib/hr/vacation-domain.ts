@@ -531,10 +531,10 @@ export function validateContinuousBlock(period: VacationPeriod, requestedDays: n
 
 export function validateFractionation(input: FractionationInput) {
   if (input.requestedDays >= CONTINUOUS_BLOCK_MINIMUM_DAYS) return { ok: true, reason: null };
-  if (!input.agreementAccepted) return { ok: false, reason: "fractionation_agreement_required" };
   const invalid = input.periods
     .map((period) => validateContinuousBlock(period, input.requestedDays))
     .find((result) => !result.ok);
+  if (invalid) return invalid;
   return invalid ?? { ok: true, reason: null };
 }
 
@@ -554,6 +554,24 @@ export function reverseVacationAllocation(allocations: VacationAllocation[]) {
     previousBalance: allocation.resultingBalance,
     resultingBalance: allocation.previousBalance
   }));
+}
+
+export function findVacationPeriodReviewReasons(periods: VacationPeriod[]) {
+  const reasons: string[] = [];
+  const sorted = [...periods].sort((a, b) => compareIsoDate(a.periodStart, b.periodStart));
+  for (let index = 1; index < sorted.length; index += 1) {
+    const previous = sorted[index - 1];
+    const current = sorted[index];
+    if (compareIsoDate(previous.periodEnd, current.periodStart) >= 0) {
+      reasons.push("vacation_period_ambiguous");
+      break;
+    }
+  }
+  return reasons;
+}
+
+export function uniqueReasons(reasons: Array<string | null | undefined>) {
+  return [...new Set(reasons.filter((reason): reason is string => Boolean(reason)))];
 }
 
 export function calculateVacationPreview(input: VacationPreviewInput) {
@@ -593,6 +611,19 @@ export function calculateVacationPreview(input: VacationPreviewInput) {
   const fifo = allocateVacationFifo(periods, businessDays, { allowAdvance: advanceValidation.ok && advanceValidation.advanceDays > 0 });
   const affectedPeriods = periods.filter((period) => fifo.allocations.some((allocation) => allocation.periodStart === period.periodStart));
   const fractionation = validateFractionation({ agreementAccepted: input.agreementAccepted, periods: affectedPeriods, requestedDays: businessDays });
+  const periodReviewReasons = findVacationPeriodReviewReasons(periods);
+  const calendarBlockingReasons = input.calendarStatusByYear && calendar.calendarStatus !== "verified"
+    ? [`holiday_calendar_${calendar.calendarStatus}`]
+    : [];
+  const reviewReasons = uniqueReasons([
+    businessDays <= 0 ? "vacation_days_to_deduct_must_be_positive" : null,
+    fifo.remainingDays > 0 ? "insufficient_vacation_balance" : null,
+    advanceValidation.ok ? null : advanceValidation.reason,
+    fractionation.ok ? null : fractionation.reason,
+    ...periodReviewReasons,
+    ...calendarBlockingReasons
+  ]);
+  const canConfirm = reviewReasons.length === 0;
 
   return {
     advanceDays: advanceValidation.advanceDays,
@@ -614,11 +645,15 @@ export function calculateVacationPreview(input: VacationPreviewInput) {
     remainingDays: fifo.remainingDays,
     returnDateManuallyConfirmed: returnInfo.returnDateManuallyConfirmed,
     returnToWorkDate: returnInfo.returnDate,
+    blockingWarnings: reviewReasons,
+    canConfirm,
+    requiresReview: !canConfirm,
+    reviewReasons,
     scheduleSource: returnInfo.scheduleSource,
     scheduleReviewRequired: !input.schedule?.workingWeekdays?.length && input.schedule?.source !== "company_policy",
     totalAvailable,
     totalAfterRequest: Math.round((totalAvailable - businessDays) * 1000000) / 1000000,
-    valid: fifo.remainingDays === 0 && advanceValidation.ok && fractionation.ok
+    valid: canConfirm
   };
 }
 

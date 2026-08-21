@@ -319,6 +319,100 @@ test("HR vacation preview reproduces full week as five legal vacation days", () 
   assert.equal(preview.allocations[0].days, 5);
 });
 
+test("HR vacation preview enables confirmation for Betancourt full-week legal preview", () => {
+  const preview = calculateVacationPreview({
+    calendarStatusByYear: { "2026": "verified" },
+    endDate: "2026-08-16",
+    hireDate: "2020-07-28",
+    holidays: [],
+    periods: [
+      { availableBalance: 120, baseDays: 15, continuousBlockRequired: 10, continuousBlockUsed: 10, periodEnd: "2021-07-27", periodStart: "2020-07-28", status: "closed" }
+    ],
+    schedule: { source: "company_policy", workingWeekdays: [0, 2, 3, 4, 5, 6] },
+    startDate: "2026-08-10"
+  });
+
+  assert.equal(preview.calendarDays, 7);
+  assert.equal(preview.businessDays, 5);
+  assert.equal(preview.nonBusiness.saturdays, 1);
+  assert.equal(preview.nonBusiness.sundays, 1);
+  assert.equal(preview.totalAvailable, 120);
+  assert.equal(preview.totalAfterRequest, 115);
+  assert.equal(preview.allocations.length, 1);
+  assert.equal(preview.allocations[0].periodStart, "2020-07-28");
+  assert.equal(preview.allocations[0].periodEnd, "2021-07-27");
+  assert.equal(preview.allocations[0].days, 5);
+  assert.equal(preview.canConfirm, true);
+  assert.equal(preview.requiresReview, false);
+  assert.deepEqual(preview.reviewReasons, []);
+  assert.equal(preview.valid, true);
+});
+
+test("HR vacation preview review flags only block real confirmation issues", () => {
+  const validWithoutIndividualWorkSchedule = calculateVacationPreview({
+    calendarStatusByYear: { "2026": "verified" },
+    endDate: "2026-08-16",
+    hireDate: "2020-07-28",
+    holidays: [],
+    periods: [{ availableBalance: 120, baseDays: 15, continuousBlockRequired: 10, continuousBlockUsed: 10, periodEnd: "2021-07-27", periodStart: "2020-07-28" }],
+    schedule: { source: "company_policy", workingWeekdays: [0, 2, 3, 4, 5, 6] },
+    startDate: "2026-08-10"
+  });
+  assert.equal(validWithoutIndividualWorkSchedule.canConfirm, true);
+  assert.equal(validWithoutIndividualWorkSchedule.reviewReasons.includes("fractionation_agreement_required"), false);
+
+  const zeroProgressive = calculateVacationPreview({
+    calendarStatusByYear: { "2026": "verified" },
+    endDate: "2026-08-16",
+    hireDate: "2020-07-28",
+    holidays: [],
+    periods: [{ availableBalance: 120, baseDays: 15, continuousBlockRequired: 10, continuousBlockUsed: 10, periodEnd: "2021-07-27", periodStart: "2020-07-28", progressiveDays: 0 }],
+    progressiveRecords: [],
+    schedule: { source: "company_policy", workingWeekdays: [0, 2, 3, 4, 5, 6] },
+    startDate: "2026-08-10"
+  });
+  assert.equal(zeroProgressive.canConfirm, true);
+
+  const insufficientBalance = calculateVacationPreview({
+    calendarStatusByYear: { "2026": "verified" },
+    endDate: "2026-08-16",
+    hireDate: "2020-07-28",
+    holidays: [],
+    periods: [{ availableBalance: 2, baseDays: 15, continuousBlockRequired: 10, continuousBlockUsed: 10, periodEnd: "2021-07-27", periodStart: "2020-07-28" }],
+    schedule: { source: "company_policy", workingWeekdays: [1, 2, 3, 4, 5] },
+    startDate: "2026-08-10"
+  });
+  assert.equal(insufficientBalance.canConfirm, false);
+  assert.equal(insufficientBalance.reviewReasons.includes("insufficient_vacation_balance"), true);
+
+  const ambiguousPeriods = calculateVacationPreview({
+    calendarStatusByYear: { "2026": "verified" },
+    endDate: "2026-08-16",
+    hireDate: "2020-07-28",
+    holidays: [],
+    periods: [
+      { availableBalance: 15, baseDays: 15, periodEnd: "2021-07-27", periodStart: "2020-07-28" },
+      { availableBalance: 15, baseDays: 15, periodEnd: "2022-07-27", periodStart: "2021-07-01" }
+    ],
+    schedule: { source: "company_policy", workingWeekdays: [1, 2, 3, 4, 5] },
+    startDate: "2026-08-10"
+  });
+  assert.equal(ambiguousPeriods.canConfirm, false);
+  assert.equal(ambiguousPeriods.reviewReasons.includes("vacation_period_ambiguous"), true);
+
+  const calendarError = calculateVacationPreview({
+    calendarStatusByYear: { "2026": "missing" },
+    endDate: "2026-08-16",
+    hireDate: "2020-07-28",
+    holidays: [],
+    periods: [{ availableBalance: 120, baseDays: 15, continuousBlockRequired: 10, continuousBlockUsed: 10, periodEnd: "2021-07-27", periodStart: "2020-07-28" }],
+    schedule: { source: "company_policy", workingWeekdays: [1, 2, 3, 4, 5] },
+    startDate: "2026-08-10"
+  });
+  assert.equal(calendarError.canConfirm, false);
+  assert.equal(calendarError.reviewReasons.includes("holiday_calendar_missing"), true);
+});
+
 test("HR vacation preview supports the reproduced August 2026 inclusive range", () => {
   const preview = calculateVacationPreview({
     agreementAccepted: true,
@@ -361,6 +455,12 @@ test("HR vacation preview reports domain states without generic preview_failed",
   assert.match(vacationComponents, /previewValidAndCurrent/);
   assert.match(vacationComponents, /disabled=\{!previewValidAndCurrent\}/);
   assert.match(vacationComponents, /setPreview\(\{ data: null, error: null, key: null/);
+  assert.match(vacationComponents, /LISTO PARA CONFIRMAR/);
+  assert.match(vacationComponents, /humanVacationReviewReason/);
+  assert.match(vacationComponents, /previewCanConfirm/);
+  assert.match(vacationComponents, /preview\.key === previewKey/);
+  assert.match(route, /vacation_overlap/);
+  assert.match(route, /blockingWarnings/);
 });
 
 test("Vercel ignore keeps the HR vacation preview API route deployable", async () => {

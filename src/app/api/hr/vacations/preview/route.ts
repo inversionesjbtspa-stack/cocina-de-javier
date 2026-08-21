@@ -104,22 +104,50 @@ export async function POST(request: Request) {
       schedule: workingCalendar.schedule,
       startDate: body.startDate
     });
+    const { data: overlappingRequests, error: overlapError } = await supabase
+      .from("hr_vacation_requests")
+      .select("id")
+      .eq("tenant_id", ctx.membership.tenant_id)
+      .eq("employee_id", body.employeeId)
+      .in("status", ["solicitada", "pendiente", "aprobada", "en_curso"])
+      .lte("start_date", preview.effectiveRestEndDate)
+      .gte("end_date", body.startDate)
+      .limit(1);
+    const routeBlockingWarnings = [
+      ...(preview.blockingWarnings ?? []),
+      overlapError ? "vacation_overlap_check_failed" : null,
+      overlappingRequests?.length ? "vacation_overlap" : null
+    ].filter((warning): warning is string => Boolean(warning));
+    const uniqueBlockingWarnings = [...new Set(routeBlockingWarnings)];
+    const canConfirm = preview.canConfirm && uniqueBlockingWarnings.length === 0;
+    const responsePreview = {
+      ...preview,
+      blockingWarnings: uniqueBlockingWarnings,
+      canConfirm,
+      requiresReview: !canConfirm,
+      reviewReasons: uniqueBlockingWarnings,
+      valid: canConfirm
+    };
     return NextResponse.json({
       ok: true,
-      allocations: preview.allocations,
-      balanceAfter: preview.totalAfterRequest,
-      balanceBefore: preview.totalAvailable,
-      calendarDays: preview.calendarDays,
+      allocations: responsePreview.allocations,
+      balanceAfter: responsePreview.totalAfterRequest,
+      balanceBefore: responsePreview.totalAvailable,
+      blockingWarnings: uniqueBlockingWarnings,
+      calendarDays: responsePreview.calendarDays,
+      canConfirm,
       fromDate: body.startDate,
-      holidays: preview.holidaysApplied,
-      nonWorkingDays: preview.nonBusiness,
+      holidays: responsePreview.holidaysApplied,
+      nonWorkingDays: responsePreview.nonBusiness,
       policy: workingCalendar.policy,
       periodsPersisted: !ensured.usedFallback && periods.length > 0,
-      preview,
-      toDate: preview.effectiveRestEndDate,
-      warnings: preview.calendarWarnings,
+      preview: responsePreview,
+      requiresReview: !canConfirm,
+      reviewReasons: uniqueBlockingWarnings,
+      toDate: responsePreview.effectiveRestEndDate,
+      warnings: uniqueBlockingWarnings,
       workingCalendar: workingCalendar.days,
-      workingDays: preview.businessDays
+      workingDays: responsePreview.businessDays
     });
   } catch (error) {
     console.error("vacation_preview_unexpected_error", error);
