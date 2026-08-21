@@ -19,10 +19,13 @@ import { calculateVacationBalanceAt, previewVacationPeriodBackfill } from "../sr
 import {
   allocateVacationFifo,
   calculateAnnualEntitlement,
+  calculateLegalVacationDays,
+  calculateProgressiveVacationDays,
   calculateProjectedProportional,
   calculateReturnToWorkDate,
   calculateVacationBusinessDays,
   calculateVacationEndDate,
+  calculateVacationOperationalBusinessDays,
   calculateVacationPreview,
   CHILE_HOLIDAYS_FIXTURE,
   classifyWorkCalendarDay,
@@ -197,8 +200,28 @@ test("HR vacation work calendar classifies holidays and employee schedules", () 
   assert.equal(classifyWorkCalendarDay("2026-07-16", CHILE_HOLIDAYS_FIXTURE, "RM").type, "HOLIDAY");
   assert.equal(classifyWorkCalendarDay("2026-07-18", CHILE_HOLIDAYS_FIXTURE, "RM").type, "WEEKEND");
   assert.equal(classifyWorkCalendarDay("2026-07-18", CHILE_HOLIDAYS_FIXTURE, "RM", null, { source: "employee", workingWeekdays: [1, 2, 3, 4, 5, 6] }).type, "WORKING_DAY");
-  assert.equal(calculateVacationBusinessDays("2026-07-13", "2026-07-18", CHILE_HOLIDAYS_FIXTURE, "RM", null, { source: "employee", workingWeekdays: [1, 2, 3, 4, 5, 6] }), 5);
+  assert.equal(calculateVacationOperationalBusinessDays("2026-07-13", "2026-07-18", CHILE_HOLIDAYS_FIXTURE, "RM", null, { source: "employee", workingWeekdays: [1, 2, 3, 4, 5, 6] }), 5);
   assert.equal(calculateVacationBusinessDays("2026-07-13", "2026-07-18", CHILE_HOLIDAYS_FIXTURE, "RM", null, { source: "employee", workingWeekdays: [1, 2, 3, 4, 5] }), 4);
+});
+
+test("HR legal vacation days use inclusive Monday-Friday calendar, not operational schedule", () => {
+  const holidays = [{ date: "2026-08-26", mandatory: true, name: "Feriado test", scope: "national", status: "active" } as const];
+  const mondayToSunday = calculateLegalVacationDays({ endDate: "2026-08-30", legalHolidays: [], startDate: "2026-08-24" });
+  assert.equal(mondayToSunday.calendarDays, 7);
+  assert.equal(mondayToSunday.legalWorkingDays, 5);
+  assert.equal(mondayToSunday.daysToDeduct, 5);
+  assert.equal(mondayToSunday.saturdays, 1);
+  assert.equal(mondayToSunday.sundays, 1);
+
+  assert.equal(calculateLegalVacationDays({ endDate: "2026-08-31", legalHolidays: [], startDate: "2026-08-25" }).daysToDeduct, 5);
+  assert.equal(calculateLegalVacationDays({ endDate: "2026-09-01", legalHolidays: [], startDate: "2026-08-26" }).daysToDeduct, 5);
+  assert.equal(calculateLegalVacationDays({ endDate: "2026-09-02", legalHolidays: [], startDate: "2026-08-27" }).daysToDeduct, 5);
+  assert.equal(calculateLegalVacationDays({ endDate: "2026-09-03", legalHolidays: [], startDate: "2026-08-28" }).daysToDeduct, 5);
+  assert.equal(calculateLegalVacationDays({ endDate: "2026-08-30", legalHolidays: [], startDate: "2026-08-29" }).daysToDeduct, 0);
+  assert.equal(calculateLegalVacationDays({ endDate: "2026-08-30", legalHolidays: holidays, startDate: "2026-08-24" }).daysToDeduct, 4);
+  assert.equal(calculateLegalVacationDays({ endDate: "2026-08-30", legalHolidays: [{ date: "2026-08-29", name: "Sabado feriado", scope: "national", status: "active" }], startDate: "2026-08-24" }).daysToDeduct, 5);
+  assert.equal(calculateLegalVacationDays({ endDate: "2026-08-30", legalHolidays: [], manualNonWorkingDays: [{ date: "2026-08-26", reason: "Fixture" }], startDate: "2026-08-24" }).daysToDeduct, 4);
+  assert.equal(calculateLegalVacationDays({ endDate: "2026-08-30", legalHolidays: holidays, manualNonWorkingDays: [{ date: "2026-08-26", reason: "Fixture" }], startDate: "2026-08-24" }).daysToDeduct, 4);
 });
 
 test("HR vacation global company policy treats Monday as closed and holidays/Sundays as working", () => {
@@ -241,7 +264,7 @@ test("HR vacation global policy previews Monday-to-Sunday ranges with and withou
     startDate: "2026-08-17"
   });
   assert.equal(withoutSundayOff.calendarDays, 7);
-  assert.equal(withoutSundayOff.businessDays, 6);
+  assert.equal(withoutSundayOff.businessDays, 5);
   assert.equal(withoutSundayOff.nonBusiness.mondayClosed, 1);
   assert.equal(withoutSundayOff.scheduleReviewRequired, false);
 
@@ -265,6 +288,35 @@ test("HR vacation global policy previews Monday-to-Sunday ranges with and withou
   assert.equal(withSundayOff.businessDays, 5);
   assert.equal(withSundayOff.nonBusiness.scheduledSundayOff, 1);
   assert.equal(withSundayOff.totalAfterRequest, 15);
+});
+
+test("HR vacation preview reproduces full week as five legal vacation days", () => {
+  const preview = calculateVacationPreview({
+    agreementAccepted: true,
+    calendarStatusByYear: { "2026": "verified" },
+    endDate: "2026-08-30",
+    hireDate: "2025-07-23",
+    holidays: [],
+    periods: [{ availableBalance: 120, baseDays: 15, continuousBlockRequired: 10, continuousBlockUsed: 10, periodEnd: "2026-07-22", periodStart: "2025-07-23", status: "open" }],
+    schedule: {
+      dateOverrides: {
+        "2026-08-24": { reason: "MONDAY_CLOSED", source: "company_policy", working: false }
+      },
+      holidaysAreWorking: true,
+      source: "company_policy",
+      workingWeekdays: [0, 2, 3, 4, 5, 6]
+    },
+    startDate: "2026-08-24"
+  });
+
+  assert.equal(preview.calendarDays, 7);
+  assert.equal(preview.businessDays, 5);
+  assert.equal(preview.nonBusiness.legalWorkingDays, 5);
+  assert.equal(preview.nonBusiness.saturdays, 1);
+  assert.equal(preview.nonBusiness.sundays, 1);
+  assert.equal(preview.totalAvailable, 120);
+  assert.equal(preview.totalAfterRequest, 115);
+  assert.equal(preview.allocations[0].days, 5);
 });
 
 test("HR vacation preview supports the reproduced August 2026 inclusive range", () => {
@@ -372,6 +424,50 @@ test("HR vacation calendar status exposes verified, incomplete and missing years
 test("HR vacation progressive entitlement requires accreditation", () => {
   assert.equal(calculateAnnualEntitlement({ asOf: "2026-07-24", hireDate: "2016-07-23", progressiveRecords: [] }), 15);
   assert.equal(calculateAnnualEntitlement({ asOf: "2026-07-24", hireDate: "2016-07-23", progressiveRecords: [{ effectiveFrom: "2026-01-01", previousEmployerYears: 10, status: "acreditado" }] }), 18);
+  assert.equal(calculateAnnualEntitlement({ asOf: "2026-07-24", hireDate: "2022-07-23", progressiveRecords: [{ effectiveFrom: "2026-01-01", previousEmployerYears: 9, status: "acreditado" }] }), 16);
+});
+
+test("HR vacation progressive entitlement follows Chile Labor Code article 68", () => {
+  assert.equal(calculateProgressiveVacationDays({ currentEmployerServiceYears: 9, recognizedPreviousServiceYears: 0 }).progressiveDays, 0);
+  assert.equal(calculateProgressiveVacationDays({ currentEmployerServiceYears: 10, recognizedPreviousServiceYears: 0 }).progressiveDays, 0);
+  assert.equal(calculateProgressiveVacationDays({ currentEmployerServiceYears: 12, recognizedPreviousServiceYears: 0 }).progressiveDays, 0);
+  assert.equal(calculateProgressiveVacationDays({ currentEmployerServiceYears: 13, recognizedPreviousServiceYears: 0 }).progressiveDays, 1);
+  assert.equal(calculateProgressiveVacationDays({ currentEmployerServiceYears: 15, recognizedPreviousServiceYears: 0 }).progressiveDays, 1);
+  assert.equal(calculateProgressiveVacationDays({ currentEmployerServiceYears: 16, recognizedPreviousServiceYears: 0 }).progressiveDays, 2);
+  assert.equal(calculateProgressiveVacationDays({ currentEmployerServiceYears: 19, recognizedPreviousServiceYears: 0 }).progressiveDays, 3);
+  assert.equal(calculateProgressiveVacationDays({ currentEmployerServiceYears: 4, recognizedPreviousServiceYears: 9 }).progressiveDays, 1);
+  assert.equal(calculateProgressiveVacationDays({ currentEmployerServiceYears: 3, recognizedPreviousServiceYears: 10 }).progressiveDays, 1);
+  assert.throws(() => calculateProgressiveVacationDays({ currentEmployerServiceYears: 1, recognizedPreviousServiceYears: 11 }), /recognized_previous_service_years_must_be_between_0_and_10/);
+
+  assert.equal(calculateAnnualEntitlement({ asOf: "2026-07-22", hireDate: "2016-07-23", progressiveRecords: [{ effectiveFrom: "2026-01-01", previousEmployerYears: 0, status: "acreditado" }] }), 15);
+  assert.equal(calculateAnnualEntitlement({ asOf: "2026-07-23", hireDate: "2016-07-23", progressiveRecords: [{ effectiveFrom: "2026-01-01", previousEmployerYears: 0, status: "acreditado" }] }), 15);
+  assert.equal(calculateAnnualEntitlement({ asOf: "2029-07-23", hireDate: "2016-07-23", progressiveRecords: [{ effectiveFrom: "2026-01-01", previousEmployerYears: 0, status: "acreditado" }] }), 16);
+});
+
+test("HR vacation preview separates base and progressive days without artificial movements", () => {
+  const preview = calculateVacationPreview({
+    agreementAccepted: true,
+    asOf: "2026-07-24",
+    hireDate: "2022-07-23",
+    progressiveRecords: [{ effectiveFrom: "2026-01-01", previousEmployerYears: 9, status: "acreditado" }],
+    requestedBusinessDays: 7,
+    schedule: { source: "employee", workingWeekdays: [1, 2, 3, 4, 5] },
+    startDate: "2026-07-23"
+  });
+  assert.equal(preview.annualEntitlement, 16);
+  assert.equal(preview.periods[0].baseDays, 15);
+  assert.equal(preview.periods[0].progressiveDays, 1);
+  assert.equal(preview.allocations[0].allocationType, "earned");
+  assert.equal(preview.allocations.some((allocation) => allocation.allocationType === "advance"), false);
+});
+
+test("HR vacation FIFO considers progressive days available", () => {
+  const fifo = allocateVacationFifo([
+    { availableBalance: 16, baseDays: 15, progressiveDays: 1, periodEnd: "2034-07-27", periodStart: "2033-07-28", usedDays: 0 }
+  ], 16);
+  assert.equal(fifo.remainingDays, 0);
+  assert.equal(fifo.allocations[0].days, 16);
+  assert.equal(fifo.allocations[0].resultingBalance, 0);
 });
 
 test("HR vacation export workbook contains separated projected proportional columns", () => {
@@ -780,6 +876,23 @@ test("HR vacation receipt renders the definitive feriado model without legacy tr
   assert.match(periodsMigration, /hr_next_document_number/);
   assert.match(periodsMigration, /hr_approve_vacation_request/);
   assert.match(periodsMigration, /hr_accredit_progressive_vacation/);
+
+  const legalWeekModel = buildVacationReceiptModel({
+    businessDays: 5,
+    company: { address: "Av. Demo 123", legalName: "Empresa Demo SPA", phone: "222222222", rut: "76.000.000-0" },
+    documentDate: "2026-08-21",
+    employee: { fullName: "BETANCOURT PAREZ JESUS", rut: "25.289.035-1" },
+    endDate: "2026-08-30",
+    id: "11111111-2222-4333-8444-555555555556",
+    nonBusinessDays: 2,
+    previousBalance: 120,
+    resultingBalance: 115,
+    startDate: "2026-08-24"
+  });
+  const legalWeekHtml = renderVacationReceiptHtml(legalWeekModel);
+  assert.match(legalWeekHtml, /<th>Dias habiles<\/th><td>5<\/td>/);
+  assert.match(legalWeekHtml, /<th>Domingos e inhabiles<\/th><td>2<\/td>/);
+  assert.match(legalWeekHtml, /<th>Saldo pendiente<\/th><td colspan="3">115<\/td>/);
 });
 
 test("HR vacation hardening migration implements transactional FIFO, idempotent reserves and secure RPCs", async () => {
@@ -856,6 +969,22 @@ test("HR global vacation calendar policy migration adds tenant policy and monthl
   assert.match(sundayRoute, /validateMonthlySundayOffDates/);
   assert.match(client, /Programacion/);
   assert.match(client, /Domingos libres/);
+});
+
+test("HR progressive vacation article 68 migration blocks manual over-recognition", async () => {
+  const migration = await readFile("supabase/migrations/202608210002_hr_progressive_vacation_article_68.sql", "utf8");
+  const route = await readFile("src/app/api/hr/vacations/progressive/route.ts", "utf8");
+  const components = await readFile("src/components/hr/vacation-components.tsx", "utf8");
+
+  assert.match(migration, /hr_vacation_progressive_previous_years_chk/);
+  assert.match(migration, /previous_employer_years >= 0 and previous_employer_years <= 10/);
+  assert.match(migration, /hr_vacation_progressive_recognized_days_chk/);
+  assert.match(migration, /recognized_days = 0/);
+  assert.match(migration, /set search_path = public, pg_temp/);
+  assert.match(route, /recognizedPreviousServiceYears: z\.coerce\.number\(\)\.int\(\)\.min\(0\)\.max\(10\)/);
+  assert.match(route, /hr\.vacation_progressive_previous_years_recognized/);
+  assert.match(components, /Feriado progresivo/);
+  assert.match(components, /Anios previos reconocidos/);
 });
 
 test("HR vacation hardening documents V1 limitations without pretending native XLSX or final PDF", async () => {

@@ -167,6 +167,18 @@ export type HrVacationPeriod = {
   status: string;
 };
 
+export type HrVacationProgressiveRecord = {
+  accreditationDate: string | null;
+  createdAt: string;
+  documentPath: string | null;
+  effectiveFrom: string | null;
+  employeeId: string;
+  id: string;
+  previousEmployerYears: number;
+  reviewNotes: string | null;
+  status: string;
+};
+
 export type HrEmployeeMonthlyDayOff = {
   employeeId: string;
   date: string;
@@ -235,6 +247,7 @@ export type HrDashboardData = {
   honorarios: HrHonorario[];
   vacationLedger: HrVacationLedger[];
   vacationMovements: HrVacationMovement[];
+  vacationProgressiveRecords: HrVacationProgressiveRecord[];
   employeeMonthlyDaysOff: HrEmployeeMonthlyDayOff[];
   vacationPeriods: HrVacationPeriod[];
   kpis: {
@@ -382,6 +395,7 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
       vacationLedger: [],
       employeeMonthlyDaysOff: [],
       vacationMovements: [],
+      vacationProgressiveRecords: [],
       vacationPeriods: []
     };
   }
@@ -392,7 +406,7 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
   // by the authenticated HR membership above and every tenant-owned table below.
   const periodStart = `${period}-01`;
   const periodEnd = new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0)).toISOString().slice(0, 10);
-  const [{ data: employeeRows }, { data: payslipRows }, { data: vacationRows }, { data: paymentRows }, { data: batchRows }, { data: accountantRows }, { data: noveltyRows }, { data: finiquitoRows }, { data: honorarioRows }, { data: vacationLedgerRows }, { data: vacationPeriodRows }, { data: vacationMovementRows }, { data: monthlyDaysOffRows }] = await Promise.all([
+  const [{ data: employeeRows }, { data: payslipRows }, { data: vacationRows }, { data: paymentRows }, { data: batchRows }, { data: accountantRows }, { data: noveltyRows }, { data: finiquitoRows }, { data: honorarioRows }, { data: vacationLedgerRows }, { data: vacationPeriodRows }, { data: vacationMovementRows }, { data: progressiveRows }, { data: monthlyDaysOffRows }] = await Promise.all([
     supabase
       .from("hr_employees")
       .select("*,hr_employee_bank_accounts(id,bank_name,bank_code,account_type,account_number,payment_email,account_holder_name,account_holder_rut,validation_status)")
@@ -466,6 +480,13 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
     supabase
       .from("hr_vacation_movements")
       .select("id,employee_id,movement_type,effective_date,days,previous_balance,resulting_balance,source,source_reference,notes,created_at")
+      .eq("tenant_id", ctx.tenantId)
+      .order("created_at", { ascending: false })
+      .limit(120)
+    ,
+    supabase
+      .from("hr_vacation_progressive_records")
+      .select("id,employee_id,previous_employer_years,accreditation_date,effective_from,document_path,status,review_notes,created_at")
       .eq("tenant_id", ctx.tenantId)
       .order("created_at", { ascending: false })
       .limit(120)
@@ -640,6 +661,17 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
     source: row.source,
     sourceReference: row.source_reference
   }));
+  const vacationProgressiveRecords = (progressiveRows ?? []).map((row) => ({
+    accreditationDate: row.accreditation_date,
+    createdAt: row.created_at,
+    documentPath: row.document_path,
+    effectiveFrom: row.effective_from,
+    employeeId: row.employee_id,
+    id: row.id,
+    previousEmployerYears: Number(row.previous_employer_years ?? 0),
+    reviewNotes: row.review_notes,
+    status: row.status
+  }));
   const employeeMonthlyDaysOff = (monthlyDaysOffRows ?? []).map((row) => ({
     date: row.off_date,
     employeeId: row.employee_id,
@@ -674,6 +706,7 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
     vacationLedger,
     employeeMonthlyDaysOff,
     vacationMovements,
+    vacationProgressiveRecords,
     vacationPeriods,
     payslips,
     period,

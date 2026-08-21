@@ -121,7 +121,7 @@ export function buildVacationReceiptModel(input: VacationReceiptInput) {
     documentDate,
     filename,
     fractionalVacationLabel: input.fractionalVacation ? "Si" : "",
-    legalNote: input.note || "Para el calculo del feriado se consideran los dias habiles de trabajo. Sabados, domingos y festivos se tratan de acuerdo con la jornada aplicable. Uno de estos ejemplares queda en poder del trabajador y otro en poder del empleador.",
+    legalNote: input.note || "Para el calculo del feriado legal se consideran dias habiles de lunes a viernes. Sabados, domingos, festivos y otros dias inhabiles acreditados no se descuentan. Uno de estos ejemplares queda en poder del trabajador y otro en poder del empleador.",
     nonBusinessDays,
     progressiveDays: input.progressiveDays ?? 0,
     projectedProportional: input.projectedProportional ?? 0,

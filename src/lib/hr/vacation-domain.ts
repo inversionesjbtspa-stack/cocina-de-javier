@@ -38,6 +38,12 @@ export type ProgressiveRecord = {
   recognizedDays?: number;
   status: "pendiente" | "en_revision" | "acreditado" | "rechazado" | "vencido" | "reemplazado";
 };
+export type ProgressiveVacationCalculation = {
+  currentEmployerServiceYears: number;
+  progressiveDays: number;
+  recognizedPreviousServiceYears: number;
+  totalRecognizedYears: number;
+};
 export type VacationPeriod = {
   advanceDays?: number;
   availableBalance?: number;
@@ -87,6 +93,7 @@ export type VacationPreviewInput = {
   endDate?: string | null;
   holidays?: Holiday[];
   hireDate: string;
+  manualNonWorkingDays?: Array<{ date: string; reason?: string | null }>;
   periods?: VacationPeriod[];
   previousEmployerYears?: number;
   progressiveRecords?: ProgressiveRecord[];
@@ -168,15 +175,42 @@ export function generateContractPeriods(hireDate: string, asOf = isoFromUtcDate(
   });
 }
 
+export function calculateProgressiveVacationDays(input: {
+  asOfDate?: string;
+  currentEmployerServiceYears: number;
+  recognizedPreviousServiceYears: number;
+}): ProgressiveVacationCalculation {
+  void input.asOfDate;
+  if (!Number.isFinite(input.currentEmployerServiceYears) || input.currentEmployerServiceYears < 0) {
+    throw new RangeError("current_employer_service_years_invalid");
+  }
+  if (!Number.isFinite(input.recognizedPreviousServiceYears) || input.recognizedPreviousServiceYears < 0 || input.recognizedPreviousServiceYears > 10) {
+    throw new RangeError("recognized_previous_service_years_must_be_between_0_and_10");
+  }
+  const currentEmployerServiceYears = Math.floor(input.currentEmployerServiceYears);
+  const recognizedPreviousServiceYears = Math.floor(input.recognizedPreviousServiceYears);
+  const totalRecognizedYears = currentEmployerServiceYears + recognizedPreviousServiceYears;
+  const progressiveDays = totalRecognizedYears < 13 ? 0 : Math.floor((totalRecognizedYears - 10) / 3);
+  return {
+    currentEmployerServiceYears,
+    progressiveDays,
+    recognizedPreviousServiceYears,
+    totalRecognizedYears
+  };
+}
+
 export function calculateProgressiveDays(currentEmployerHireDate: string, asOf: string, records: ProgressiveRecord[] = []) {
   const accredited = records
     .filter((record) => record.status === "acreditado" && (!record.effectiveFrom || compareIsoDate(record.effectiveFrom, asOf) <= 0))
     .sort((a, b) => compareIsoDate(b.effectiveFrom ?? b.accreditationDate ?? "", a.effectiveFrom ?? a.accreditationDate ?? ""))[0];
   if (!accredited) return 0;
-  const previousYears = Math.min(10, Math.max(0, accredited.previousEmployerYears ?? Math.floor((accredited.creditedMonths ?? 0) / 12)));
+  const previousYears = accredited.previousEmployerYears ?? Math.floor((accredited.creditedMonths ?? 0) / 12);
   const currentYears = ageInCompletedYears(currentEmployerHireDate, asOf);
-  const eligibleYearsAfterBase = Math.max(0, previousYears + currentYears - 10);
-  return Math.max(accredited.recognizedDays ?? 0, Math.floor(eligibleYearsAfterBase / 3));
+  return calculateProgressiveVacationDays({
+    asOfDate: asOf,
+    currentEmployerServiceYears: currentYears,
+    recognizedPreviousServiceYears: previousYears
+  }).progressiveDays;
 }
 
 export function calculateAnnualEntitlement(input: { asOf?: string; hireDate?: string; progressiveDays?: number; progressiveRecords?: ProgressiveRecord[] }) {
@@ -254,7 +288,89 @@ export function isVacationBusinessDay(value: string, holidays: Holiday[] = [], r
   return classifyWorkCalendarDay(value, holidays, regionCode, communeCode, schedule).type === "WORKING_DAY";
 }
 
+export type LegalVacationDaysResult = {
+  calendarDays: number;
+  daysToDeduct: number;
+  legalHolidays: number;
+  legalHolidayDates: string[];
+  legalWorkingDays: number;
+  manualNonWorkingDays: number;
+  manualNonWorkingDayDates: string[];
+  saturdays: number;
+  sundays: number;
+};
+
+function legalHolidayDateSet(holidays: Holiday[] = [], regionCode?: string | null, communeCode?: string | null) {
+  return new Set(holidays.filter((holiday) => holidayMatches(holiday, regionCode, communeCode)).map((holiday) => holiday.date));
+}
+
+export function calculateLegalVacationDays(input: {
+  endDate: string;
+  legalHolidays?: Holiday[];
+  manualNonWorkingDays?: Array<{ date: string; reason?: string | null }>;
+  regionCode?: string | null;
+  communeCode?: string | null;
+  startDate: string;
+}): LegalVacationDaysResult {
+  if (compareIsoDate(input.endDate, input.startDate) < 0) {
+    return {
+      calendarDays: 0,
+      daysToDeduct: 0,
+      legalHolidays: 0,
+      legalHolidayDates: [],
+      legalWorkingDays: 0,
+      manualNonWorkingDays: 0,
+      manualNonWorkingDayDates: [],
+      saturdays: 0,
+      sundays: 0
+    };
+  }
+  const holidayDates = legalHolidayDateSet(input.legalHolidays, input.regionCode, input.communeCode);
+  const manualDates = new Set((input.manualNonWorkingDays ?? []).map((day) => day.date));
+  const legalHolidayDates = new Set<string>();
+  const manualNonWorkingDayDates = new Set<string>();
+  let legalWorkingDays = 0;
+  let saturdays = 0;
+  let sundays = 0;
+  for (let cursor = input.startDate; compareIsoDate(cursor, input.endDate) <= 0; cursor = addLocalDays(cursor, 1)) {
+    const weekday = localWeekday(cursor);
+    if (weekday === 6) {
+      saturdays += 1;
+      continue;
+    }
+    if (weekday === 0) {
+      sundays += 1;
+      continue;
+    }
+    if (holidayDates.has(cursor)) {
+      legalHolidayDates.add(cursor);
+      continue;
+    }
+    if (manualDates.has(cursor)) {
+      manualNonWorkingDayDates.add(cursor);
+      continue;
+    }
+    legalWorkingDays += 1;
+  }
+  return {
+    calendarDays: daysBetweenInclusive(input.startDate, input.endDate),
+    daysToDeduct: legalWorkingDays,
+    legalHolidays: legalHolidayDates.size,
+    legalHolidayDates: Array.from(legalHolidayDates),
+    legalWorkingDays,
+    manualNonWorkingDays: manualNonWorkingDayDates.size,
+    manualNonWorkingDayDates: Array.from(manualNonWorkingDayDates),
+    saturdays,
+    sundays
+  };
+}
+
 export function calculateVacationBusinessDays(startDate: string, endDate: string, holidays: Holiday[] = [], regionCode?: string | null, communeCode?: string | null, schedule: VacationSchedule = {}) {
+  void schedule;
+  return calculateLegalVacationDays({ communeCode, endDate, legalHolidays: holidays, regionCode, startDate }).daysToDeduct;
+}
+
+export function calculateVacationOperationalBusinessDays(startDate: string, endDate: string, holidays: Holiday[] = [], regionCode?: string | null, communeCode?: string | null, schedule: VacationSchedule = {}) {
   if (compareIsoDate(endDate, startDate) < 0) return 0;
   let count = 0;
   for (let cursor = startDate; compareIsoDate(cursor, endDate) <= 0; cursor = addLocalDays(cursor, 1)) {
@@ -263,41 +379,40 @@ export function calculateVacationBusinessDays(startDate: string, endDate: string
   return count;
 }
 
-export function countNonBusinessBreakdown(startDate: string, endDate: string, holidays: Holiday[] = [], regionCode?: string | null, communeCode?: string | null, schedule: VacationSchedule = {}) {
+export function countNonBusinessBreakdown(startDate: string, endDate: string, holidays: Holiday[] = [], regionCode?: string | null, communeCode?: string | null, schedule: VacationSchedule = {}, manualNonWorkingDays: Array<{ date: string; reason?: string | null }> = []) {
+  const legal = calculateLegalVacationDays({ communeCode, endDate, legalHolidays: holidays, manualNonWorkingDays, regionCode, startDate });
   const holidayDates = new Set<string>();
   const workCalendar: WorkCalendarDay[] = [];
-  let saturdays = 0;
-  let sundays = 0;
   let companyClosed = 0;
   let mondayClosed = 0;
-  let otherNonWorkingDays = 0;
   let publicHolidaysWorked = 0;
   let scheduledSundayOff = 0;
   const workedHolidayDates = new Set<string>();
   for (let cursor = startDate; compareIsoDate(cursor, endDate) <= 0; cursor = addLocalDays(cursor, 1)) {
     const day = classifyWorkCalendarDay(cursor, holidays, regionCode, communeCode, schedule);
-    const weekday = day.weekday;
     workCalendar.push(day);
-    if (weekday === 6) saturdays += 1;
-    if (weekday === 0) sundays += 1;
     if (day.type === "HOLIDAY") holidayDates.add(cursor);
     if (day.reason === "PUBLIC_HOLIDAY_WORKED") workedHolidayDates.add(cursor);
     if (day.reason === "MONDAY_CLOSED") mondayClosed += 1;
     if (day.reason === "SCHEDULED_SUNDAY_OFF") scheduledSundayOff += 1;
     if (day.reason === "COMPANY_CLOSED") companyClosed += 1;
     if (day.reason === "PUBLIC_HOLIDAY_WORKED") publicHolidaysWorked += 1;
-    if (day.type === "OTHER_NON_WORKING_DAY") otherNonWorkingDays += 1;
   }
   return {
     companyClosed,
-    holidays: holidayDates.size,
-    holidayDates: Array.from(holidayDates),
+    daysToDeduct: legal.daysToDeduct,
+    holidays: legal.legalHolidays,
+    holidayDates: legal.legalHolidayDates,
+    legalHolidays: legal.legalHolidays,
+    legalWorkingDays: legal.legalWorkingDays,
     mondayClosed,
-    otherNonWorkingDays,
+    otherNonWorkingDays: legal.manualNonWorkingDays,
+    manualNonWorkingDays: legal.manualNonWorkingDays,
+    manualNonWorkingDayDates: legal.manualNonWorkingDayDates,
     publicHolidaysWorked,
-    saturdays,
+    saturdays: legal.saturdays,
     scheduledSundayOff,
-    sundays,
+    sundays: legal.sundays,
     workedHolidayDates: Array.from(workedHolidayDates),
     workCalendar
   };
@@ -320,12 +435,13 @@ export function evaluateHolidayCalendarStatus(startDate: string, endDate: string
   return { calendarStatus, calendarWarnings, years };
 }
 
-export function calculateVacationEndDate(startDate: string, requestedBusinessDays: number, holidays: Holiday[] = [], regionCode?: string | null, communeCode?: string | null, schedule: VacationSchedule = {}) {
+export function calculateVacationEndDate(startDate: string, requestedBusinessDays: number, holidays: Holiday[] = [], regionCode?: string | null, communeCode?: string | null, schedule: VacationSchedule = {}, manualNonWorkingDays: Array<{ date: string; reason?: string | null }> = []) {
+  void schedule;
   if (requestedBusinessDays <= 0) return startDate;
   let counted = 0;
   let cursor = startDate;
   while (counted < requestedBusinessDays) {
-    if (isVacationBusinessDay(cursor, holidays, regionCode, communeCode, schedule)) counted += 1;
+    if (calculateLegalVacationDays({ communeCode, endDate: cursor, legalHolidays: holidays, manualNonWorkingDays, regionCode, startDate: cursor }).daysToDeduct === 1) counted += 1;
     if (counted < requestedBusinessDays) cursor = addLocalDays(cursor, 1);
   }
   return cursor;
@@ -443,15 +559,28 @@ export function reverseVacationAllocation(allocations: VacationAllocation[]) {
 export function calculateVacationPreview(input: VacationPreviewInput) {
   const asOf = input.asOf ?? input.startDate;
   const normalizedSchedule = normalizeVacationSchedule(input.schedule);
-  const annualEntitlement = calculateAnnualEntitlement({ asOf, hireDate: input.hireDate, progressiveRecords: input.progressiveRecords });
-  const generatedPeriods = generateContractPeriods(input.hireDate, asOf, 1).map((period) => ({ ...period, baseDays: annualEntitlement }));
+  const progressiveDays = input.hireDate ? calculateProgressiveDays(input.hireDate, asOf, input.progressiveRecords) : 0;
+  const annualEntitlement = calculateAnnualEntitlement({ progressiveDays });
+  const generatedPeriods = generateContractPeriods(input.hireDate, asOf, 1).map((period) => ({
+    ...period,
+    availableBalance: period.status === "closed" ? BASE_ANNUAL_ENTITLEMENT + progressiveDays : period.availableBalance,
+    baseDays: BASE_ANNUAL_ENTITLEMENT,
+    progressiveDays
+  }));
   const periods = input.periods?.length ? input.periods : generatedPeriods;
-  const endDate = input.requestedBusinessDays ? calculateVacationEndDate(input.startDate, input.requestedBusinessDays, input.holidays, input.regionCode, null, normalizedSchedule) : input.endDate ?? input.startDate;
-  const businessDays = input.requestedBusinessDays ?? calculateVacationBusinessDays(input.startDate, endDate, input.holidays, input.regionCode, null, normalizedSchedule);
-  const lastCountedVacationDate = calculateVacationEndDate(input.startDate, businessDays, input.holidays, input.regionCode, null, normalizedSchedule);
+  const endDate = input.requestedBusinessDays ? calculateVacationEndDate(input.startDate, input.requestedBusinessDays, input.holidays, input.regionCode, null, normalizedSchedule, input.manualNonWorkingDays) : input.endDate ?? input.startDate;
+  const legalDays = calculateLegalVacationDays({
+    endDate,
+    legalHolidays: input.holidays,
+    manualNonWorkingDays: input.manualNonWorkingDays,
+    regionCode: input.regionCode,
+    startDate: input.startDate
+  });
+  const businessDays = input.requestedBusinessDays ?? legalDays.daysToDeduct;
+  const lastCountedVacationDate = input.requestedBusinessDays ? endDate : calculateVacationEndDate(input.startDate, businessDays, input.holidays, input.regionCode, null, normalizedSchedule, input.manualNonWorkingDays);
   const effectiveRestEndDate = calculateEffectiveRestEnd(input.startDate, lastCountedVacationDate);
   const returnInfo = calculateReturnToWorkDate(effectiveRestEndDate, normalizedSchedule);
-  const nonBusiness = countNonBusinessBreakdown(input.startDate, effectiveRestEndDate, input.holidays, input.regionCode, null, normalizedSchedule);
+  const nonBusiness = countNonBusinessBreakdown(input.startDate, effectiveRestEndDate, input.holidays, input.regionCode, null, normalizedSchedule, input.manualNonWorkingDays);
   const calendar = evaluateHolidayCalendarStatus(input.startDate, effectiveRestEndDate, input.calendarStatusByYear);
   const totalAvailable = periods.reduce((sum, period) => sum + (period.availableBalance ?? calculatePeriodBalance(period)), 0);
   const projectedProportional = calculateProjectedProportional(annualEntitlement);

@@ -35,9 +35,11 @@ export function VacationSummary({ employee, periods }: { employee: HrEmployee; p
   const reserved = periods.reduce((sum, period) => sum + period.reservedDays, 0);
   const advance = periods.reduce((sum, period) => sum + period.advanceDays, 0);
   const progressive = periods.reduce((sum, period) => sum + period.progressiveDays, 0);
-  const projected = periods[0] ? ((periods[0].baseDays + periods[0].progressiveDays) / 12) : 0;
   const current = periods.find((period) => period.status === "open") ?? periods[0] ?? null;
   const next = periods.find((period) => period.status === "future") ?? null;
+  const currentBase = current?.baseDays ?? 15;
+  const currentProgressive = current?.progressiveDays ?? 0;
+  const projected = current ? ((currentBase + currentProgressive) / 12) : 0;
   return (
     <div className="rounded-lg border border-brand-100 bg-brand-50 p-4">
       <p className="text-xs font-semibold uppercase tracking-wide text-[#667068]">Vacaciones disponibles</p>
@@ -47,7 +49,10 @@ export function VacationSummary({ employee, periods }: { employee: HrEmployee; p
         <MiniMetric label="Saldo proporcional" value={periods.length ? `${projected.toFixed(6)} / mes` : "Requiere periodos"} />
         <MiniMetric label="Reservados" value={`${reserved.toFixed(2)} dias`} />
         <MiniMetric label="Anticipados" value={`${advance.toFixed(2)} dias`} />
-        <MiniMetric label="Progresivos" value={`${progressive.toFixed(2)} dias`} />
+        <MiniMetric label="Feriado base" value={`${currentBase.toFixed(2)} dias`} />
+        <MiniMetric label="Feriado progresivo" value={`${currentProgressive.toFixed(2)} dias`} />
+        <MiniMetric label="Total del periodo" value={`${(currentBase + currentProgressive).toFixed(2)} dias`} />
+        <MiniMetric label="Progresivos historicos" value={`${progressive.toFixed(2)} dias`} />
         <MiniMetric label="Periodo vigente" value={current ? `${formatDate(current.periodStart)} / ${formatDate(current.periodEnd)}` : employee.hireDate ? "Backfill pendiente" : "Requiere ingreso"} />
         <MiniMetric label="Proxima anualidad" value={next ? formatDate(next.periodStart) : "No disponible"} />
       </div>
@@ -61,7 +66,7 @@ export function VacationPeriodsTable({ periods }: { periods: HrDashboardData["va
     <div className="overflow-x-auto">
       <table className="min-w-[860px] w-full text-left text-sm">
         <thead className="bg-brand-50 text-xs uppercase text-[#667068]">
-          <tr><th className="px-4 py-3">Periodo</th><th className="px-4 py-3">Base</th><th className="px-4 py-3">Prog.</th><th className="px-4 py-3">Usados</th><th className="px-4 py-3">Reserv.</th><th className="px-4 py-3">Antic.</th><th className="px-4 py-3">Saldo</th><th className="px-4 py-3">Estado</th></tr>
+          <tr><th className="px-4 py-3">Periodo</th><th className="px-4 py-3">Dias base</th><th className="px-4 py-3">Dias progresivos</th><th className="px-4 py-3">Total periodo</th><th className="px-4 py-3">Utilizados</th><th className="px-4 py-3">Reserv.</th><th className="px-4 py-3">Antic.</th><th className="px-4 py-3">Pendientes</th><th className="px-4 py-3">Estado</th></tr>
         </thead>
         <tbody>
           {periods.map((period) => (
@@ -69,6 +74,7 @@ export function VacationPeriodsTable({ periods }: { periods: HrDashboardData["va
               <td className="px-4 py-3">{period.periodStart} / {period.periodEnd}</td>
               <td className="px-4 py-3">{period.baseDays}</td>
               <td className="px-4 py-3">{period.progressiveDays}</td>
+              <td className="px-4 py-3">{period.baseDays + period.progressiveDays}</td>
               <td className="px-4 py-3">{period.usedDays}</td>
               <td className="px-4 py-3">{period.reservedDays}</td>
               <td className="px-4 py-3">{period.advanceDays}</td>
@@ -76,9 +82,39 @@ export function VacationPeriodsTable({ periods }: { periods: HrDashboardData["va
               <td className="px-4 py-3">{period.status}</td>
             </tr>
           ))}
-          {!periods.length ? <tr><td className="px-4 py-4 text-sm text-[#667068]" colSpan={8}>Sin periodos persistidos. Ejecuta backfill de vacaciones para crear las anualidades reales.</td></tr> : null}
+          {!periods.length ? <tr><td className="px-4 py-4 text-sm text-[#667068]" colSpan={9}>Sin periodos persistidos. Ejecuta backfill de vacaciones para crear las anualidades reales.</td></tr> : null}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+export function VacationProgressiveAudit({ employee, records, submitJson }: { employee: HrEmployee; records: HrDashboardData["vacationProgressiveRecords"]; submitJson: (event: FormEvent<HTMLFormElement>, endpoint: string, success: string) => void }) {
+  return (
+    <div className="space-y-3">
+      <form className="grid gap-3 rounded-md border border-[#dfe4dd] bg-white p-3 text-sm sm:grid-cols-2" onSubmit={(event) => submitJson(event, "/api/hr/vacations/progressive", "Anios previos reconocidos registrados.")}>
+        <input name="employeeId" type="hidden" value={employee.id} />
+        <label className="text-xs font-semibold uppercase tracking-wide text-[#667068]">Anios previos reconocidos
+          <input className="mt-1 w-full rounded-md border px-3 py-2 text-sm normal-case tracking-normal" max="10" min="0" name="recognizedPreviousServiceYears" required step="1" type="number" />
+        </label>
+        <label className="text-xs font-semibold uppercase tracking-wide text-[#667068]">Fecha reconocimiento
+          <input className="mt-1 w-full rounded-md border px-3 py-2 text-sm normal-case tracking-normal" defaultValue={today()} name="accreditationDate" required type="date" />
+        </label>
+        <input className="rounded-md border px-3 py-2 text-sm" name="documentPath" placeholder="Documento respaldo, si existe" />
+        <input className="rounded-md border px-3 py-2 text-sm" name="documentType" placeholder="Tipo documento" />
+        <textarea className="rounded-md border px-3 py-2 text-sm sm:col-span-2" name="observation" placeholder="Observacion administrativa" rows={2} />
+        <button className="rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700 sm:col-span-2" type="submit">Registrar feriado progresivo</button>
+      </form>
+      <div className="space-y-2">
+        {records.map((record) => (
+          <div className="rounded-md border border-[#dfe4dd] bg-white p-3 text-sm" key={record.id}>
+            <p className="font-semibold text-brand-900">{record.previousEmployerYears} anios previos reconocidos</p>
+            <p className="text-xs text-[#667068]">Reconocido el {formatDate(record.accreditationDate)} / vigente desde {formatDate(record.effectiveFrom)} / estado {record.status}</p>
+            {record.reviewNotes ? <p className="mt-1 text-xs text-[#667068]">{record.reviewNotes}</p> : null}
+          </div>
+        ))}
+        {!records.length ? <p className="rounded-md border border-dashed border-[#dfe4dd] p-3 text-sm text-[#667068]">Sin anios previos reconocidos. No se calculan dias progresivos sin respaldo.</p> : null}
+      </div>
     </div>
   );
 }
@@ -119,11 +155,6 @@ function previewNumber(preview: Record<string, unknown> | null, key: string) {
   return typeof value === "number" ? value : null;
 }
 
-function previewString(preview: Record<string, unknown> | null, key: string) {
-  const value = preview?.[key];
-  return typeof value === "string" ? value : null;
-}
-
 function previewAllocations(preview: Record<string, unknown> | null) {
   const value = preview?.allocations;
   return Array.isArray(value) ? value as Array<Record<string, unknown>> : [];
@@ -146,7 +177,6 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
   const [endDate, setEndDate] = useState("");
   const [fractionationAgreement, setFractionationAgreement] = useState(false);
   const [fractionalVacation, setFractionalVacation] = useState(false);
-  const [manualBusinessDays, setManualBusinessDays] = useState("");
   const [manualHolidayDate, setManualHolidayDate] = useState("");
   const [manualHolidayReason, setManualHolidayReason] = useState("");
   const [note, setNote] = useState("");
@@ -161,9 +191,8 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
     endDate,
     fractionationAgreement,
     manualNonWorkingDays: manualHolidayDate ? [{ date: manualHolidayDate, reason: manualHolidayReason || "Cierre empresa manual" }] : [],
-    requestedBusinessDays: manualBusinessDays ? Number(manualBusinessDays) : undefined,
     startDate
-  }), [advanceAuthorized, employeeId, endDate, fractionationAgreement, manualBusinessDays, manualHolidayDate, manualHolidayReason, startDate]);
+  }), [advanceAuthorized, employeeId, endDate, fractionationAgreement, manualHolidayDate, manualHolidayReason, startDate]);
 
   const previewKey = useMemo(() => JSON.stringify(payload), [payload]);
 
@@ -175,7 +204,6 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
       endDate,
       fractionationAgreement,
       manualNonWorkingDays: manualHolidayDate ? [{ date: manualHolidayDate, reason: manualHolidayReason || "Cierre empresa manual" }] : [],
-      requestedBusinessDays: manualBusinessDays ? Number(manualBusinessDays) : undefined,
       startDate
     };
     const requestKey = JSON.stringify(payload);
@@ -199,7 +227,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
     } catch {
       setPreview({ data: null, error: "No se pudo calcular la solicitud. Intenta nuevamente.", key: requestKey, loading: false });
     }
-  }, [advanceAuthorized, employeeId, endDate, fractionationAgreement, manualBusinessDays, manualHolidayDate, manualHolidayReason, startDate]);
+  }, [advanceAuthorized, employeeId, endDate, fractionationAgreement, manualHolidayDate, manualHolidayReason, startDate]);
 
   useEffect(() => {
     setPreview({ data: null, error: null, key: null, loading: Boolean(startDate && endDate) });
@@ -249,7 +277,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
     <form className="mt-4 space-y-4" onSubmit={confirmVacation}>
       <div>
         <h4 className="text-sm font-semibold text-brand-900">Solicitar vacaciones</h4>
-        <p className="mt-1 text-xs text-[#667068]">El sistema calcula dias corridos, dias a descontar, calendario empresa, saldo y FIFO antes de confirmar.</p>
+        <p className="mt-1 text-xs text-[#667068]">El sistema calcula dias corridos, dias habiles legales, saldo y FIFO antes de confirmar.</p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-xs font-semibold uppercase tracking-wide text-[#667068]">Desde
@@ -265,11 +293,10 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
       <details className="rounded-md border border-[#dfe4dd] bg-white p-3">
         <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-[#667068]">Opciones avanzadas</summary>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <input className="w-full rounded-md border px-3 py-2 text-sm" onChange={(event) => setManualBusinessDays(event.target.value)} placeholder="Dias a descontar manuales" step="0.01" type="number" value={manualBusinessDays} />
-          <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">Agregar cierre empresa
+          <label className="grid gap-1 text-xs font-semibold uppercase text-[#667068]">Agregar feriado / dia inhabil
             <input className="w-full rounded-md border px-3 py-2 text-sm font-normal normal-case" max={endDate || undefined} min={startDate || undefined} onChange={(event) => setManualHolidayDate(event.target.value)} type="date" value={manualHolidayDate} />
           </label>
-          <input className="w-full rounded-md border px-3 py-2 text-sm" onChange={(event) => setManualHolidayReason(event.target.value)} placeholder="Motivo cierre empresa" value={manualHolidayReason} />
+          <input className="w-full rounded-md border px-3 py-2 text-sm" onChange={(event) => setManualHolidayReason(event.target.value)} placeholder="Motivo del dia inhabil" value={manualHolidayReason} />
           <label className="flex items-center gap-2 text-sm"><input checked={fractionalVacation} onChange={(event) => setFractionalVacation(event.target.checked)} type="checkbox" /> Feriado fraccionado</label>
           <label className="flex items-center gap-2 text-sm"><input checked={fractionationAgreement} onChange={(event) => setFractionationAgreement(event.target.checked)} type="checkbox" /> Acuerdo de fraccionamiento</label>
           <label className="flex items-center gap-2 text-sm"><input checked={advanceAuthorized} onChange={(event) => setAdvanceAuthorized(event.target.checked)} type="checkbox" /> Autorizar anticipadas</label>
@@ -286,13 +313,13 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <MiniMetric label="Desde" value={formatDate(startDate)} />
-            <MiniMetric label="Hasta" value={formatDate(previewString(preview.data, "effectiveRestEndDate") ?? endDate)} />
+            <MiniMetric label="Hasta" value={formatDate(endDate)} />
             <MiniMetric label="Dias corridos" value={String(previewNumber(preview.data, "calendarDays") ?? "-")} />
-            <MiniMetric label="Dias a descontar" value={String(previewNumber(preview.data, "businessDays") ?? "-")} />
-            <MiniMetric label="Lunes / cierres" value={String(Number((preview.data.nonBusiness as Record<string, unknown> | undefined)?.mondayClosed ?? 0))} />
-            <MiniMetric label="Domingos libres" value={String(Number((preview.data.nonBusiness as Record<string, unknown> | undefined)?.scheduledSundayOff ?? 0))} />
-            <MiniMetric label="Feriados trabajados" value={String(Number((preview.data.nonBusiness as Record<string, unknown> | undefined)?.publicHolidaysWorked ?? 0))} />
-            <MiniMetric label="Cierres extraordinarios" value={String(Number((preview.data.nonBusiness as Record<string, unknown> | undefined)?.companyClosed ?? 0))} />
+            <MiniMetric label="Dias habiles" value={String(previewNumber(preview.data, "businessDays") ?? "-")} />
+            <MiniMetric label="Sabados" value={String(Number((preview.data.nonBusiness as Record<string, unknown> | undefined)?.saturdays ?? 0))} />
+            <MiniMetric label="Domingos" value={String(Number((preview.data.nonBusiness as Record<string, unknown> | undefined)?.sundays ?? 0))} />
+            <MiniMetric label="Feriados" value={String(Number((preview.data.nonBusiness as Record<string, unknown> | undefined)?.legalHolidays ?? 0))} />
+            <MiniMetric label="Otros inhabiles" value={String(Number((preview.data.nonBusiness as Record<string, unknown> | undefined)?.manualNonWorkingDays ?? 0))} />
             <MiniMetric label="Progresivas disponibles" value={String(Math.max(0, (previewNumber(preview.data, "annualEntitlement") ?? 15) - 15))} />
             <MiniMetric label="Saldo antes" value={formatDays(previewNumber(preview.data, "totalAvailable"))} />
             <MiniMetric label="Dias a descontar" value={formatDays(previewNumber(preview.data, "businessDays"))} />
@@ -301,7 +328,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
           {preview.data.scheduleReviewRequired ? <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">No hay politica empresa ni override individual valido para calcular esta solicitud.</p> : null}
           {allocationRows.length ? (
             <div className="mt-3 rounded-md border border-[#dfe4dd] bg-white p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-[#667068]">Periodo contractual utilizado</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#667068]">Periodo(s) contractual(es) utilizado(s)</p>
               <div className="mt-2 space-y-1">
                 {allocationRows.map((allocation, index) => (
                   <p className="text-xs text-[#4e5a52]" key={`${String(allocation.periodId ?? index)}`}>

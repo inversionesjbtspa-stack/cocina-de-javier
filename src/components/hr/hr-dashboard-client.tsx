@@ -28,6 +28,7 @@ import {
   VacationImportPreview,
   VacationMovements,
   VacationPeriodsTable,
+  VacationProgressiveAudit,
   VacationRequestForm,
   VacationRecentRequests,
   VacationSummary
@@ -1278,6 +1279,7 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
   const ledger = data.vacationLedger.filter((item) => item.employeeId === employee.id);
   const periods = data.vacationPeriods.filter((item) => item.employeeId === employee.id);
   const movements = data.vacationMovements.filter((item) => item.employeeId === employee.id);
+  const progressiveRecords = data.vacationProgressiveRecords.filter((item) => item.employeeId === employee.id);
   async function action(id: string, endpoint: string, body: Record<string, unknown> = {}) {
     const response = await fetch(`/api/hr/vacations/${id}/${endpoint}`, {
       body: JSON.stringify(body),
@@ -1335,6 +1337,10 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
           <div className="mt-4 overflow-hidden rounded-md border border-[#dfe4dd]">
             <TableHeader title="Detalle por periodo" />
             <VacationPeriodsTable periods={periods} />
+          </div>
+          <div className="mt-4">
+            <p className="mb-2 text-sm font-semibold text-brand-900">Feriado progresivo</p>
+            <VacationProgressiveAudit employee={employee} records={progressiveRecords} submitJson={submitJson} />
           </div>
           <div className="mt-4">
             <p className="mb-2 text-sm font-semibold text-brand-900">Movimientos persistentes</p>

@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
-import { calculateVacationPreview, yearsInRange, type HolidayCalendarStatus } from "@/lib/hr/vacation-domain";
+import { calculateVacationPreview, holidayForDate, localWeekday, yearsInRange, type Holiday, type HolidayCalendarStatus } from "@/lib/hr/vacation-domain";
 import { resolveEmployeeWorkingCalendar } from "@/lib/hr/vacation-calendar-server";
-import { assertEmployeeInTenant, buildFallbackPeriods, ensureVacationPeriodsForEmployee, mapPeriodRow, safeVacationHolidays } from "@/lib/hr/vacation-server";
+import { assertEmployeeInTenant, buildFallbackPeriods, ensureVacationPeriodsForEmployee, mapPeriodRow, mapProgressiveRecord, safeVacationHolidays } from "@/lib/hr/vacation-server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -26,10 +26,17 @@ function domainError(code: string, message: string, status = 422, fields?: Recor
   return NextResponse.json({ ok: false, code, error: code, message, fields }, { status });
 }
 
-function validateManualClosedDays(manualDays: Array<{ date: string; reason: string }>, startDate: string, endDate: string) {
+function validateManualClosedDays(manualDays: Array<{ date: string; reason: string }>, startDate: string, endDate: string, holidays: Holiday[]) {
   for (const day of manualDays) {
     if (day.date < startDate || day.date > endDate) {
       return { error: "manual_non_working_day_out_of_range" };
+    }
+    const weekday = localWeekday(day.date);
+    if (weekday === 0 || weekday === 6) {
+      return { error: "manual_non_working_day_must_be_weekday" };
+    }
+    if (holidayForDate(day.date, holidays)) {
+      return { error: "manual_non_working_day_duplicates_holiday" };
     }
   }
   return { error: null };
@@ -52,9 +59,10 @@ export async function POST(request: Request) {
     const supabase = createAdminClient();
     const previewEnd = body.endDate || body.startDate;
     const calendarYears = yearsInRange(body.startDate, previewEnd);
-    const [{ data: employee }, { data: periodRows }, { data: holidayRows }, { data: calendarRows }] = await Promise.all([
+    const [{ data: employee }, { data: periodRows }, { data: progressiveRows }, { data: holidayRows }, { data: calendarRows }] = await Promise.all([
       supabase.from("hr_employees").select("id,tenant_id,full_name,rut,hire_date,work_schedule").eq("tenant_id", ctx.membership.tenant_id).eq("id", body.employeeId).maybeSingle(),
       supabase.from("hr_vacation_periods").select("*").eq("tenant_id", ctx.membership.tenant_id).eq("employee_id", body.employeeId),
+      supabase.from("hr_vacation_progressive_records").select("previous_employer_years,credited_months,accreditation_date,effective_from,recognized_days,status").eq("tenant_id", ctx.membership.tenant_id).eq("employee_id", body.employeeId),
       supabase.from("hr_holiday_calendar").select("*").eq("status", "active"),
       supabase.from("hr_holiday_calendar_years").select("calendar_year,verification_status").in("calendar_year", calendarYears)
     ]);
@@ -63,14 +71,15 @@ export async function POST(request: Request) {
     const employeeRow = checked.employee as Record<string, unknown> & { hire_date?: string | null; id: string; tenant_id?: string | null };
     if (!employeeRow.hire_date) return domainError("EMPLOYEE_HIRE_DATE_REQUIRED", "No se puede calcular porque falta la fecha de ingreso del trabajador.");
 
+    const progressiveRecords = (progressiveRows ?? []).map((row) => mapProgressiveRecord(row as Record<string, unknown>));
     const calendarStatusByYear = Object.fromEntries((calendarRows ?? []).map((row) => [String(row.calendar_year), String(row.verification_status) as HolidayCalendarStatus]));
     const ensured = periodRows?.length
       ? { periods: periodRows.map((row) => mapPeriodRow(row as Record<string, unknown>)), usedFallback: false }
-      : await ensureVacationPeriodsForEmployee({ asOf: body.startDate, employee: employeeRow, supabase, userId: ctx.user.id });
+      : await ensureVacationPeriodsForEmployee({ asOf: body.startDate, employee: employeeRow, progressiveRecords, supabase, userId: ctx.user.id });
     const periods = ensured.periods.length ? ensured.periods : buildFallbackPeriods(employeeRow, body.startDate);
     const holidays = safeVacationHolidays(holidayRows as Array<Record<string, unknown>> | null);
-    const manualClosed = validateManualClosedDays(body.manualNonWorkingDays, body.startDate, body.endDate || body.startDate);
-    if (manualClosed.error) return domainError("MANUAL_NON_WORKING_DAY_OUT_OF_RANGE", "El cierre manual debe estar dentro del rango solicitado.", 422);
+    const manualClosed = validateManualClosedDays(body.manualNonWorkingDays, body.startDate, body.endDate || body.startDate, holidays);
+    if (manualClosed.error) return domainError(manualClosed.error.toUpperCase(), "El dia inhabil manual debe ser de lunes a viernes, estar dentro del rango y no duplicar un feriado oficial.", 422);
     const workingCalendar = await resolveEmployeeWorkingCalendar({
       employeeId: body.employeeId,
       employeeSchedule: employeeRow.work_schedule,
@@ -88,7 +97,9 @@ export async function POST(request: Request) {
       endDate: body.endDate || null,
       hireDate: employeeRow.hire_date,
       holidays,
+      manualNonWorkingDays: body.manualNonWorkingDays,
       periods,
+      progressiveRecords,
       requestedBusinessDays: body.requestedBusinessDays ?? null,
       schedule: workingCalendar.schedule,
       startDate: body.startDate

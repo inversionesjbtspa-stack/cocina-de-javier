@@ -2,9 +2,11 @@ import { companyConfigFromRow } from "./company-config.ts";
 import {
   CHILE_HOLIDAYS_FIXTURE,
   calculateProjectedProportional,
+  calculateProgressiveDays,
   calculateVacationPreview,
   generateContractPeriods,
   type Holiday,
+  type ProgressiveRecord,
   type VacationPeriod,
   type VacationSchedule
 } from "./vacation-domain.ts";
@@ -83,9 +85,21 @@ export function buildFallbackPeriods(employee: { hire_date?: string | null; id: 
   }));
 }
 
+export function mapProgressiveRecord(row: Record<string, unknown>): ProgressiveRecord {
+  return {
+    accreditationDate: row.accreditation_date as string | null,
+    creditedMonths: Number(row.credited_months ?? 0),
+    effectiveFrom: row.effective_from as string | null,
+    previousEmployerYears: Number(row.previous_employer_years ?? 0),
+    recognizedDays: Number(row.recognized_days ?? 0),
+    status: row.status as ProgressiveRecord["status"]
+  };
+}
+
 export async function ensureVacationPeriodsForEmployee(input: {
   asOf: string;
   employee: { hire_date?: string | null; id: string; tenant_id?: string | null };
+  progressiveRecords?: ProgressiveRecord[];
   supabase: unknown;
   userId: string;
   yearsForward?: number;
@@ -119,12 +133,14 @@ export async function ensureVacationPeriodsForEmployee(input: {
   });
   if (preview.conflicts.length) return { conflicts: preview.conflicts, created: 0, periods: existing.map(mapPeriodRow), usedFallback: false };
   if (!preview.missing.length) return { created: 0, periods: existing.map(mapPeriodRow), usedFallback: false };
+  const progressiveDays = calculateProgressiveDays(input.employee.hire_date, input.asOf, input.progressiveRecords ?? []);
   const rows = preview.missing.map((period) => ({
     base_days: period.baseDays,
     created_by: input.userId,
     employee_id: input.employee.id,
     period_end: period.periodEnd,
     period_start: period.periodStart,
+    progressive_days: progressiveDays,
     status: period.status,
     tenant_id: input.employee.tenant_id,
     updated_by: input.userId

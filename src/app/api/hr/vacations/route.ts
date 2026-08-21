@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
-import { calculateVacationPreview, yearsInRange, type HolidayCalendarStatus } from "@/lib/hr/vacation-domain";
+import { calculateVacationPreview, holidayForDate, localWeekday, yearsInRange, type Holiday, type HolidayCalendarStatus } from "@/lib/hr/vacation-domain";
 import { resolveEmployeeWorkingCalendar } from "@/lib/hr/vacation-calendar-server";
-import { assertEmployeeInTenant, buildFallbackPeriods, buildVacationSnapshot, ensureVacationPeriodsForEmployee, mapPeriodRow, persistVacationReceiptForRequest, safeVacationHolidays, type VacationReceiptPersistenceClient } from "@/lib/hr/vacation-server";
+import { assertEmployeeInTenant, buildFallbackPeriods, buildVacationSnapshot, ensureVacationPeriodsForEmployee, mapPeriodRow, mapProgressiveRecord, persistVacationReceiptForRequest, safeVacationHolidays, type VacationReceiptPersistenceClient } from "@/lib/hr/vacation-server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -32,10 +32,17 @@ function legacyStatus(status: string) {
   return status === "pendiente" ? "solicitada" : status;
 }
 
-function validateManualClosedDays(manualDays: Array<{ date: string; reason: string }>, startDate: string, endDate: string) {
+function validateManualClosedDays(manualDays: Array<{ date: string; reason: string }>, startDate: string, endDate: string, holidays: Holiday[]) {
   for (const day of manualDays) {
     if (day.date < startDate || day.date > endDate) {
       return { error: "manual_non_working_day_out_of_range" };
+    }
+    const weekday = localWeekday(day.date);
+    if (weekday === 0 || weekday === 6) {
+      return { error: "manual_non_working_day_must_be_weekday" };
+    }
+    if (holidayForDate(day.date, holidays)) {
+      return { error: "manual_non_working_day_duplicates_holiday" };
     }
   }
   return { error: null };
@@ -67,6 +74,7 @@ export async function POST(request: Request) {
   const { data: employee } = await supabase.from("hr_employees").select("id,tenant_id,full_name,rut,position,area,cost_center,hire_date,contract_type,work_schedule").eq("tenant_id", ctx.membership.tenant_id).eq("id", body.employeeId).maybeSingle();
   const { data: company } = await supabase.from("companies").select("legal_name,name,rut,address,phone").eq("id", ctx.membership.company_id).maybeSingle();
   const { data: periodRows } = await supabase.from("hr_vacation_periods").select("*").eq("tenant_id", ctx.membership.tenant_id).eq("employee_id", body.employeeId);
+  const { data: progressiveRows } = await supabase.from("hr_vacation_progressive_records").select("previous_employer_years,credited_months,accreditation_date,effective_from,recognized_days,status").eq("tenant_id", ctx.membership.tenant_id).eq("employee_id", body.employeeId);
   const { data: holidayRows } = await supabase.from("hr_holiday_calendar").select("*").eq("status", "active");
   const { data: calendarRows } = await supabase.from("hr_holiday_calendar_years").select("calendar_year,verification_status").in("calendar_year", calendarYears);
   const checked = assertEmployeeInTenant(employee, ctx.membership.tenant_id);
@@ -75,12 +83,13 @@ export async function POST(request: Request) {
   if (!employeeRow.hire_date) return NextResponse.json({ ok: false, error: "employee_hire_date_required" }, { status: 422 });
 
   const holidays = safeVacationHolidays(holidayRows as Array<Record<string, unknown>> | null);
-  const manualClosed = validateManualClosedDays(body.manualNonWorkingDays, body.startDate, previewEnd);
-  if (manualClosed.error) return NextResponse.json({ ok: false, error: "manual_non_working_day_out_of_range" }, { status: 422 });
+  const manualClosed = validateManualClosedDays(body.manualNonWorkingDays, body.startDate, previewEnd, holidays);
+  if (manualClosed.error) return NextResponse.json({ ok: false, error: manualClosed.error }, { status: 422 });
+  const progressiveRecords = (progressiveRows ?? []).map((row) => mapProgressiveRecord(row as Record<string, unknown>));
   const calendarStatusByYear = Object.fromEntries((calendarRows ?? []).map((row) => [String(row.calendar_year), String(row.verification_status) as HolidayCalendarStatus]));
   const ensured = periodRows?.length
     ? { periods: periodRows.map((row) => mapPeriodRow(row as Record<string, unknown>)), usedFallback: false }
-    : await ensureVacationPeriodsForEmployee({ asOf: body.startDate, employee: employeeRow, supabase, userId: ctx.user.id });
+    : await ensureVacationPeriodsForEmployee({ asOf: body.startDate, employee: employeeRow, progressiveRecords, supabase, userId: ctx.user.id });
   const periods = ensured.periods.length ? ensured.periods : buildFallbackPeriods(employeeRow, body.startDate);
   const workingCalendar = await resolveEmployeeWorkingCalendar({
     employeeId: body.employeeId,
@@ -99,7 +108,9 @@ export async function POST(request: Request) {
     endDate: body.endDate || null,
     hireDate: employeeRow.hire_date,
     holidays,
+    manualNonWorkingDays: body.manualNonWorkingDays,
     periods,
+    progressiveRecords,
     requestedBusinessDays: body.requestedBusinessDays ?? null,
     schedule: workingCalendar.schedule,
     startDate: body.startDate
@@ -132,7 +143,7 @@ export async function POST(request: Request) {
     fractionation_agreement: body.fractionationAgreement,
     is_fractioned: preview.businessDays < 10,
     last_counted_vacation_date: preview.lastCountedVacationDate,
-    non_business_days: Number(preview.nonBusiness.mondayClosed ?? 0) + Number(preview.nonBusiness.scheduledSundayOff ?? 0) + Number(preview.nonBusiness.companyClosed ?? 0),
+    non_business_days: Number(preview.nonBusiness.saturdays ?? 0) + Number(preview.nonBusiness.sundays ?? 0) + Number(preview.nonBusiness.legalHolidays ?? 0) + Number(preview.nonBusiness.manualNonWorkingDays ?? 0),
     observation: observationText || null,
     previous_balance: preview.totalAvailable,
     projected_business_days: preview.projectedProportional,
