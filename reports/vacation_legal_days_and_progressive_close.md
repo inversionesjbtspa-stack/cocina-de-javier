@@ -126,16 +126,64 @@ Backup reciente disponible:
 
 Intento de nuevo dump con Supabase CLI: fallido porque Docker Desktop no esta disponible. El archivo vacio generado por ese intento fue eliminado.
 
-Dry-run Supabase:
+Dry-run Supabase antes de aplicar:
 
 - pendiente solo `202608210002_hr_progressive_vacation_article_68.sql`.
+
+Aplicacion Supabase:
+
+- `202608210002_hr_progressive_vacation_article_68.sql`: aplicada correctamente.
+- `supabase migration list --linked`: local y remoto alineados hasta `202608210002`.
+- no se aplicaron otras migraciones.
 
 ## Validacion local
 
 - `npm run typecheck`: OK.
 - `npm run lint`: OK.
 - tests con Node 24.19.0: 56 passed, 2 skipped, 0 failed.
+- test focal `tests/hr-module.test.ts`: 40 passed, 2 skipped, 0 failed.
 - `npm run build`: OK.
+
+## Deploy
+
+Commit:
+
+- `0b52406 fix(rrhh): correct legal vacation days and progressive entitlement`
+
+Push:
+
+- `origin/main`: actualizado de `f0a4ea7` a `0b52406`.
+
+Vercel Production:
+
+- deployment listo: `https://cocina-de-javier-9ihgx0iyk-inversionesjbtspa-stacks-projects.vercel.app`
+- alias productivo validado: `https://cocina-de-javier.vercel.app`
+- `/recursos-humanos`: HTTP 307 a login cuando no hay sesion y carga autenticada con sesion RRHH existente.
+
+## Validacion productiva autenticada
+
+Trabajador auditado visualmente:
+
+- BETANCOURT PAREZ JESUS.
+- saldo visible antes de previsualizar: `120.00 dias`.
+- periodo vigente visible: `28-07-2026 / 27-07-2027`.
+
+Previsualizacion ejecutada sin confirmar solicitud real:
+
+- desde: `24-08-2026`;
+- hasta: `30-08-2026`;
+- dias corridos: `7`;
+- dias habiles legales: `5`;
+- sabados: `1`;
+- domingos: `1`;
+- feriados: `0`;
+- otros inhabiles: `0`;
+- saldo antes: `120.00 dias`;
+- dias a descontar: `5.00 dias`;
+- saldo despues: `115.00 dias`;
+- FIFO visible: `Periodo 1: 28-07-2020 -> 27-07-2021 / 5 dias`.
+
+No se presiono `CONFIRMAR VACACIONES`.
 
 ## Modulos no modificados
 
@@ -145,10 +193,11 @@ Dry-run Supabase:
 - Liquidaciones: intacto.
 - Pagos: intacto.
 
-## Pendientes por completar en fases remotas
+## Cierre
 
-- aplicar migracion progresivo en Supabase si se mantiene autorizacion;
-- push normal;
-- deploy Production;
-- validacion productiva autenticada del preview 24-08-2026 a 30-08-2026 sin confirmar vacaciones reales;
-- auditoria visual del saldo de BETANCOURT PAREZ JESUS desde UI/DB productiva si existe acceso autenticado verificable.
+- migracion progresiva aplicada: SI.
+- calculo legal desplegado: SI.
+- produccion lista: SI.
+- preview productivo 24-08-2026 a 30-08-2026: correcto, descuenta 5 dias.
+- saldo 120 auditado: visible en produccion y no modificado automaticamente.
+- vacaciones reales creadas durante validacion: 0.
