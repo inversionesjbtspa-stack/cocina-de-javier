@@ -1298,7 +1298,7 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
         <VacationRequestForm employeeId={employee.id} submitJson={submitJson} />
         <VacationRecentRequests vacations={vacations} />
       </SectionCard>
-      <SectionCard className="min-w-0 overflow-hidden p-5">
+      <SectionCard className="w-full min-w-0 max-w-full overflow-hidden p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="font-semibold text-brand-900">Comprobantes y auditoria</h3>
@@ -1308,29 +1308,29 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
         </div>
         <div className="mt-4">
           <p className="mb-2 text-sm font-semibold text-brand-900">Comprobantes recientes</p>
-          <div className="max-h-[460px] space-y-3 overflow-y-auto pr-1">
+          <div className="max-h-[460px] max-w-full space-y-3 overflow-y-auto pr-1">
             {vacations.map((vacation) => (
-              <div className="min-w-0 rounded-md border border-[#dfe4dd] bg-white p-3 text-sm" key={vacation.id}>
+              <div className="min-w-0 max-w-full overflow-hidden rounded-md border border-[#dfe4dd] bg-white p-3 text-sm" key={vacation.id}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="whitespace-nowrap font-semibold text-brand-900">{vacation.startDate} &rarr; {vacation.endDate}</p>
+                    <p className="font-semibold text-brand-900 sm:whitespace-nowrap">{vacation.startDate} &rarr; {vacation.endDate}</p>
                     <div className="mt-2 grid gap-1 text-xs text-[#667068]">
                       <p><span className="font-semibold text-[#3f4a43]">{vacation.businessDays} dias habiles</span></p>
                       <p>Saldo posterior: <span className="font-semibold text-[#3f4a43]">{vacation.resultingBalance} dias</span></p>
                       <p>Retorno: <span className="font-semibold text-[#3f4a43]">{vacation.returnToWorkDate ?? "por confirmar"}</span></p>
                       <p className="mt-1">Documento:</p>
-                      <p className="break-normal font-semibold text-brand-900 [overflow-wrap:normal]">{vacation.documentNumber ?? "Pendiente"}</p>
+                      <p className="break-words font-semibold text-brand-900">{vacation.documentNumber ?? "Pendiente"}</p>
                     </div>
                   </div>
                   <Pill className={statusClass(vacation.status)}>{vacation.status}</Pill>
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  <a className="inline-flex min-h-9 items-center justify-center rounded-md border border-brand-700 px-2.5 py-1.5 text-center text-xs font-semibold text-brand-700" href={`/api/hr/vacations/${vacation.id}/papeleta?format=html`} rel="noreferrer" target="_blank">Vista previa</a>
-                  <a className="inline-flex min-h-9 items-center justify-center rounded-md border border-brand-700 px-2.5 py-1.5 text-center text-xs font-semibold text-brand-700" href={`/api/hr/vacations/${vacation.id}/papeleta?format=html#print`} rel="noreferrer" target="_blank">Imprimir</a>
-                  <a className="inline-flex min-h-9 items-center justify-center gap-1 rounded-md bg-brand-700 px-2.5 py-1.5 text-center text-xs font-semibold text-white" href={`/api/hr/vacations/${vacation.id}/papeleta?format=pdf`} rel="noreferrer" target="_blank">PDF <Download className="h-3.5 w-3.5" /></a>
-                  {["borrador", "solicitada", "pendiente"].includes(vacation.status) ? <button className="min-h-9 rounded-md border border-emerald-300 px-2.5 py-1.5 text-xs font-semibold text-emerald-700" onClick={() => action(vacation.id, "approve")} type="button">Aprobar</button> : null}
-                  {!["aprobada", "rechazada", "anulada"].includes(vacation.status) ? <button className="min-h-9 rounded-md border border-amber-300 px-2.5 py-1.5 text-xs font-semibold text-amber-700" onClick={() => action(vacation.id, "reject", { reason: "Rechazo registrado desde RRHH" })} type="button">Rechazar</button> : null}
-                  <button className="min-h-9 rounded-md border border-rose-300 px-2.5 py-1.5 text-xs font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-50" disabled={vacation.status === "anulada"} onClick={() => cancelVacationRequest(vacation.id)} type="button">Anular solicitud</button>
+                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <a className="inline-flex min-h-9 w-full items-center justify-center rounded-md border border-brand-700 px-2.5 py-1.5 text-center text-xs font-semibold text-brand-700" href={`/api/hr/vacations/${vacation.id}/papeleta?format=html`} rel="noreferrer" target="_blank">Vista previa</a>
+                  <a className="inline-flex min-h-9 w-full items-center justify-center rounded-md border border-brand-700 px-2.5 py-1.5 text-center text-xs font-semibold text-brand-700" href={`/api/hr/vacations/${vacation.id}/papeleta?format=html#print`} rel="noreferrer" target="_blank">Imprimir</a>
+                  <a className="inline-flex min-h-9 w-full items-center justify-center gap-1 rounded-md bg-brand-700 px-2.5 py-1.5 text-center text-xs font-semibold text-white" href={`/api/hr/vacations/${vacation.id}/papeleta?format=pdf`} rel="noreferrer" target="_blank">PDF <Download className="h-3.5 w-3.5" /></a>
+                  {["borrador", "solicitada", "pendiente"].includes(vacation.status) ? <button className="min-h-9 w-full rounded-md border border-emerald-300 px-2.5 py-1.5 text-xs font-semibold text-emerald-700" onClick={() => action(vacation.id, "approve")} type="button">Aprobar</button> : null}
+                  {!["aprobada", "rechazada", "anulada"].includes(vacation.status) ? <button className="min-h-9 w-full rounded-md border border-amber-300 px-2.5 py-1.5 text-xs font-semibold text-amber-700" onClick={() => action(vacation.id, "reject", { reason: "Rechazo registrado desde RRHH" })} type="button">Rechazar</button> : null}
+                  <button className="min-h-9 w-full rounded-md border border-rose-300 px-2.5 py-1.5 text-xs font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-50" disabled={vacation.status === "anulada"} onClick={() => cancelVacationRequest(vacation.id)} type="button">Anular solicitud</button>
                 </div>
               </div>
             ))}
