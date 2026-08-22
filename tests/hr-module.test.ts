@@ -1060,20 +1060,38 @@ test("HR vacation confirmation uses authenticated session and human UI errors", 
   assert.match(createRoute, /createClient/);
   assert.match(createRoute, /authSupabase\.rpc\("hr_create_vacation_request"/);
   assert.match(createRoute, /authSupabase\.rpc\("hr_approve_vacation_request"/);
-  assert.match(createRoute, /rpc\.error\.message === "unauthorized" \? 401/);
-  assert.match(createRoute, /approved\.error\.message === "unauthorized" \? 401/);
+  assert.match(createRoute, /function vacationErrorStatus/);
+  assert.match(createRoute, /function vacationErrorCode/);
+  assert.match(createRoute, /VACATION_CREATE_FAILED/);
+  assert.match(createRoute, /VACATION_APPROVAL_FAILED/);
   assert.match(createRoute, /calendarStatus === "incomplete"/);
   assert.match(createRoute, /Calendario de feriados incompleto validado por preview RRHH/);
 
   assert.match(vacationComponents, /humanVacationConfirmMessage/);
   assert.match(vacationComponents, /Tu sesion expiro\. Vuelve a iniciar sesion antes de confirmar las vacaciones\./);
   assert.match(vacationComponents, /No tienes permisos para confirmar vacaciones\./);
+  assert.match(vacationComponents, /La solicitud se creo, pero no pudo aprobarse automaticamente/);
   assert.match(vacationComponents, /No se pudo confirmar la solicitud\. No se realizaron cambios\./);
   assert.match(vacationComponents, /credentials: "same-origin"/);
   assert.match(vacationComponents, /const \[confirming, setConfirming\]/);
   assert.match(vacationComponents, /if \(confirming\) return/);
   assert.match(vacationComponents, /disabled=\{!previewValidAndCurrent \|\| confirming \|\| Boolean\(confirmed\)\}/);
   assert.doesNotMatch(vacationComponents, /window\.alert/);
+});
+
+test("HR vacation confirmation keeps approved requests successful when receipt persistence fails", async () => {
+  const createRoute = await readFile("src/app/api/hr/vacations/route.ts", "utf8");
+  const vacationComponents = await readFile("src/components/hr/vacation-components.tsx", "utf8");
+
+  assert.match(createRoute, /VACATION_RECEIPT_FAILED/);
+  assert.match(createRoute, /VACATION_CONFIRMED_RECEIPT_PENDING/);
+  assert.match(createRoute, /document_generation_status: "error"/);
+  assert.match(createRoute, /document_generation_status: "generated"/);
+  assert.match(createRoute, /return NextResponse\.json\(\{\s*ok: true,\s*code: "VACATION_CONFIRMED_RECEIPT_PENDING"/);
+  assert.doesNotMatch(createRoute, /if \(!receipt\.ok\) return NextResponse\.json\(\{ ok: false, error: receipt\.error, requestId \}/);
+
+  assert.match(vacationComponents, /receiptWarning/);
+  assert.match(vacationComponents, /La solicitud fue confirmada\. El comprobante quedo pendiente de regeneracion\./);
 });
 
 test("HR global vacation calendar policy migration adds tenant policy and monthly Sunday schedule safely", async () => {

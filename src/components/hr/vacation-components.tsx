@@ -147,6 +147,7 @@ type VacationPreviewState = {
 type VacationConfirmationState = {
   receiptPdfUrl?: string;
   receiptPreviewUrl?: string;
+  receiptWarning?: string;
   requestId?: string;
 };
 
@@ -197,10 +198,12 @@ function humanVacationConfirmMessage(result: Record<string, unknown> | null, sta
   const code = String(result?.error ?? result?.code ?? "");
   if (status === 401 || code === "unauthorized") return "Tu sesion expiro. Vuelve a iniciar sesion antes de confirmar las vacaciones.";
   if (status === 403 || code === "hr_forbidden" || code === "forbidden") return "No tienes permisos para confirmar vacaciones.";
-  if (code === "vacation_overlap") return "Existe una solicitud de vacaciones superpuesta. No se realizaron cambios.";
+  if (code === "vacation_overlap" || code === "VACATION_CONFLICT") return "Existe una solicitud de vacaciones superpuesta. No se realizaron cambios.";
   if (code === "vacation_preview_invalid") return "La vista previa ya no es valida. Recalcula antes de confirmar.";
-  if (code === "insufficient_vacation_balance") return "El saldo disponible no cubre los dias solicitados. No se realizaron cambios.";
+  if (code === "insufficient_vacation_balance" || code === "VACATION_BALANCE_CHANGED") return "El saldo disponible cambio o no cubre los dias solicitados. No se realizaron cambios.";
   if (code === "vacation_calendar_not_verified") return "Falta verificar el calendario de feriados antes de confirmar.";
+  if (code === "VACATION_CREATE_FAILED") return "No se pudo crear la solicitud de vacaciones. No se realizaron cambios.";
+  if (code === "VACATION_APPROVAL_FAILED") return "La solicitud se creo, pero no pudo aprobarse automaticamente. Revisa el historial antes de reintentar.";
   return "No se pudo confirmar la solicitud. No se realizaron cambios.";
 }
 
@@ -309,6 +312,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
       setConfirmed({
         receiptPdfUrl: typeof result?.receiptPdfUrl === "string" ? result.receiptPdfUrl : undefined,
         receiptPreviewUrl: typeof result?.receiptPreviewUrl === "string" ? result.receiptPreviewUrl : undefined,
+        receiptWarning: result?.receiptErrorCode === "VACATION_RECEIPT_FAILED" ? "La solicitud fue confirmada. El comprobante quedo pendiente de regeneracion." : undefined,
         requestId: typeof result?.requestId === "string" ? result.requestId : undefined
       });
     } catch {
@@ -400,7 +404,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
       {confirmed ? (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
           <p className="font-semibold">VACACIONES REGISTRADAS</p>
-          <p className="mt-1 text-xs">Solicitud {confirmed.requestId}. El comprobante fue generado y asociado al trabajador.</p>
+          <p className="mt-1 text-xs">Solicitud {confirmed.requestId}. {confirmed.receiptWarning ?? "El comprobante fue generado y asociado al trabajador."}</p>
           <div className="mt-3 flex flex-wrap gap-2">
             {confirmed.receiptPdfUrl ? <a className="rounded-md bg-emerald-700 px-3 py-2 text-xs font-semibold text-white" href={confirmed.receiptPdfUrl} rel="noreferrer" target="_blank">DESCARGAR COMPROBANTE</a> : null}
             {confirmed.receiptPreviewUrl ? <a className="rounded-md border border-emerald-700 px-3 py-2 text-xs font-semibold text-emerald-800" href={confirmed.receiptPreviewUrl} rel="noreferrer" target="_blank">VER COMPROBANTE</a> : null}

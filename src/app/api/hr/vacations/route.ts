@@ -33,6 +33,25 @@ function legacyStatus(status: string) {
   return status === "pendiente" ? "solicitada" : status;
 }
 
+function vacationErrorStatus(error: string) {
+  if (error === "unauthorized") return 401;
+  if (error === "hr_forbidden") return 403;
+  if (error === "vacation_overlap") return 409;
+  return 422;
+}
+
+function vacationErrorCode(stage: "create" | "approval", error: string) {
+  if (error === "vacation_overlap") return "VACATION_CONFLICT";
+  if (error === "insufficient_vacation_balance") return "VACATION_BALANCE_CHANGED";
+  if (error === "unauthorized") return "unauthorized";
+  if (error === "hr_forbidden") return "hr_forbidden";
+  return stage === "create" ? "VACATION_CREATE_FAILED" : "VACATION_APPROVAL_FAILED";
+}
+
+function logVacationConfirmFailure(stage: string, details: Record<string, unknown>) {
+  console.error("hr_vacation_confirm_failed", { stage, ...details });
+}
+
 function validateManualClosedDays(manualDays: Array<{ date: string; reason: string }>, startDate: string, endDate: string, holidays: Holiday[]) {
   for (const day of manualDays) {
     if (day.date < startDate || day.date > endDate) {
@@ -163,8 +182,10 @@ export async function POST(request: Request) {
     p_payload: { ...payload, snapshot }
   });
   if (rpc.error) {
-    const status = rpc.error.message === "unauthorized" ? 401 : rpc.error.message === "hr_forbidden" ? 403 : 422;
-    return NextResponse.json({ ok: false, error: rpc.error.message }, { status });
+    const error = rpc.error.message;
+    const code = vacationErrorCode("create", error);
+    logVacationConfirmFailure("create", { code, dbCode: rpc.error.code, message: error });
+    return NextResponse.json({ ok: false, code, error }, { status: vacationErrorStatus(error) });
   }
 
   const requestId = String(rpc.data);
@@ -178,8 +199,10 @@ export async function POST(request: Request) {
       p_calendar_override_reason: calendarOverrideReason
     });
     if (approved.error) {
-      const status = approved.error.message === "unauthorized" ? 401 : approved.error.message === "hr_forbidden" ? 403 : 422;
-      return NextResponse.json({ ok: false, error: approved.error.message, requestId }, { status });
+      const error = approved.error.message;
+      const code = vacationErrorCode("approval", error);
+      logVacationConfirmFailure("approval", { code, dbCode: approved.error.code, message: error, requestId });
+      return NextResponse.json({ ok: false, code, error, requestId }, { status: vacationErrorStatus(error) });
     }
     const receipt = await persistVacationReceiptForRequest({
       companyId: ctx.membership.company_id,
@@ -188,7 +211,31 @@ export async function POST(request: Request) {
       tenantId: ctx.membership.tenant_id,
       userId: ctx.user.id
     });
-    if (!receipt.ok) return NextResponse.json({ ok: false, error: receipt.error, requestId }, { status: 422 });
+    if (!receipt.ok) {
+      logVacationConfirmFailure("receipt", { code: "VACATION_RECEIPT_FAILED", error: receipt.error, requestId });
+      await supabase
+        .from("hr_vacation_requests")
+        .update({ document_generation_status: "error" })
+        .eq("tenant_id", ctx.membership.tenant_id)
+        .eq("id", requestId);
+      return NextResponse.json({
+        ok: true,
+        code: "VACATION_CONFIRMED_RECEIPT_PENDING",
+        periodsPersisted: !ensured.usedFallback && periods.length > 0,
+        preview,
+        receiptErrorCode: "VACATION_RECEIPT_FAILED",
+        receiptPreviewUrl: `/api/hr/vacations/${requestId}/papeleta?format=html`,
+        requestId
+      });
+    }
+    const statusUpdate = await supabase
+      .from("hr_vacation_requests")
+      .update({ document_generation_status: "generated" })
+      .eq("tenant_id", ctx.membership.tenant_id)
+      .eq("id", requestId);
+    if (statusUpdate.error) {
+      logVacationConfirmFailure("receipt_status_update", { code: "VACATION_RECEIPT_STATUS_UPDATE_FAILED", error: statusUpdate.error.message, requestId });
+    }
   }
   return NextResponse.json({
     ok: true,
