@@ -1298,7 +1298,7 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
         <VacationRequestForm employeeId={employee.id} submitJson={submitJson} />
         <VacationRecentRequests vacations={vacations} />
       </SectionCard>
-      <SectionCard className="w-full min-w-0 max-w-full overflow-hidden p-5">
+      <SectionCard className="w-full min-w-0 max-w-[calc(100vw-2.5rem)] overflow-hidden p-5 xl:max-w-full">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="font-semibold text-brand-900">Comprobantes y auditoria</h3>
