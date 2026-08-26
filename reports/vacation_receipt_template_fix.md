@@ -12,6 +12,8 @@ El comprobante generado por ERP usaba un diseno tipo reporte/dashboard: bloques 
 
 Ademas, el periodo contractual podia aparecer como `No informado` cuando la solicitud no tenia `contract_period_start/end`, aunque el FIFO real ya existia en `hr_vacation_allocations`.
 
+En validacion productiva del primer deploy se detecto otro problema de presentacion: el snapshot historico de la solicitud conservaba `company: Empresa`, por lo que la vista previa podia imprimir empresa generica aunque existiera configuracion viva en `companies`. Se corrigio la prioridad para usar primero la configuracion actual de empresa y dejar el snapshot solo como respaldo.
+
 ## Archivos modificados
 
 - `src/lib/hr/vacation-receipt.ts`
@@ -36,6 +38,7 @@ Ademas, el periodo contractual podia aparecer como `No informado` cuando la soli
 - El renderer PDF se cambio a A4 horizontal, fondo blanco y texto negro, sin cajas coloreadas tipo dashboard.
 - La ruta de comprobante y la regeneracion persistida consultan `hr_vacation_allocations` y `hr_vacation_periods` para usar el periodo FIFO real si la solicitud no trae periodo contractual directo.
 - `fractionalVacationLabel` ahora siempre imprime `Si` o `No`, evitando campos vacios.
+- La configuracion viva de empresa tiene prioridad sobre snapshots historicos incompletos.
 
 ## Caso validado
 
@@ -72,4 +75,3 @@ Pendiente de ejecutar despues de deploy Production Ready:
 - validar que no se crea un nuevo movimiento;
 - validar descuento unico de 5 dias;
 - validar saldo permanece 115.
-

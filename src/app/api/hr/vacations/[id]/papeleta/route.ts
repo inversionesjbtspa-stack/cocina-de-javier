@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { companyConfigFromRow } from "@/lib/hr/company-config";
+import { companyConfigFromRow, mergeCompanyConfig } from "@/lib/hr/company-config";
 import { requireHrContext } from "@/lib/hr/auth";
 import { buildVacationReceiptModel, renderVacationReceiptHtml, renderVacationReceiptPdf, vacationReceiptHash } from "@/lib/hr/vacation-receipt";
 import { fetchVacationReceiptAllocations } from "@/lib/hr/vacation-server";
@@ -37,6 +37,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const snapshot = data.receipt_snapshot ?? data.snapshot;
   const snapshotEmployee = snapshot?.employee as Record<string, string | null> | undefined;
   const snapshotCompany = snapshot?.company;
+  const companyConfig = mergeCompanyConfig(companyConfigFromRow(company.data), snapshotCompany ? companyConfigFromRow(snapshotCompany) : companyConfigFromRow(null));
   const employee = firstRelation(data.hr_employees as Array<Record<string, string | null>> | Record<string, string | null> | null);
   const allocations = receiptAllocations.length ? receiptAllocations : snapshot?.allocations ?? data.vacation_allocations ?? [];
   const firstAllocation = allocations[0];
@@ -44,7 +45,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     allocations,
     approvedByName: data.approved_by_name ?? null,
     businessDays: Number(data.business_days ?? snapshot?.business_days ?? 0),
-    company: snapshotCompany ? companyConfigFromRow(snapshotCompany) : companyConfigFromRow(company.data),
+    company: companyConfig,
     contractPeriodEnd: data.contract_period_end ?? firstAllocation?.periodEnd ?? null,
     contractPeriodStart: data.contract_period_start ?? firstAllocation?.periodStart ?? null,
     documentDate: data.document_date ?? null,

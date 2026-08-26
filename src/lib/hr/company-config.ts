@@ -21,3 +21,12 @@ export function companyConfigFromRow(row: unknown): HrCompanyConfig {
     rut: record?.rut || fallbackHrCompanyConfig.rut
   };
 }
+
+export function mergeCompanyConfig(primary: HrCompanyConfig, fallback: HrCompanyConfig): HrCompanyConfig {
+  return {
+    address: primary.address || fallback.address,
+    legalName: primary.legalName && primary.legalName !== "Empresa" ? primary.legalName : fallback.legalName,
+    phone: primary.phone || fallback.phone,
+    rut: primary.rut || fallback.rut
+  };
+}

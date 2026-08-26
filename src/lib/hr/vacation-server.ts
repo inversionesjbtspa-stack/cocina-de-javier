@@ -1,4 +1,4 @@
-import { companyConfigFromRow } from "./company-config.ts";
+import { companyConfigFromRow, mergeCompanyConfig } from "./company-config.ts";
 import {
   CHILE_HOLIDAYS_FIXTURE,
   calculateProjectedProportional,
@@ -307,6 +307,7 @@ export async function persistVacationReceiptForRequest(input: {
   const snapshot = data.receipt_snapshot as Record<string, unknown> | null | undefined ?? data.snapshot as Record<string, unknown> | null | undefined;
   const snapshotEmployee = snapshot?.employee as Record<string, string | null> | undefined;
   const snapshotCompany = snapshot?.company;
+  const companyConfig = mergeCompanyConfig(companyConfigFromRow(company.data), snapshotCompany ? companyConfigFromRow(snapshotCompany) : companyConfigFromRow(null));
   const employee = firstRelation(data.hr_employees as Array<Record<string, string | null>> | Record<string, string | null> | null);
   const allocations = receiptAllocations.length ? receiptAllocations : (snapshot?.allocations as Parameters<typeof buildVacationReceiptModel>[0]["allocations"]) ?? [];
   const firstAllocation = allocations[0];
@@ -314,7 +315,7 @@ export async function persistVacationReceiptForRequest(input: {
     allocations,
     approvedByName: data.approved_by_name as string | undefined,
     businessDays: Number(data.business_days ?? 0),
-    company: snapshotCompany ? companyConfigFromRow(snapshotCompany) : companyConfigFromRow(company.data),
+    company: companyConfig,
     contractPeriodEnd: (data.contract_period_end as string | null) ?? firstAllocation?.periodEnd ?? null,
     contractPeriodStart: (data.contract_period_start as string | null) ?? firstAllocation?.periodStart ?? null,
     documentDate: data.document_date as string | null,

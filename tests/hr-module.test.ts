@@ -36,6 +36,7 @@ import {
   validateFractionation
 } from "../src/lib/hr/vacation-domain.ts";
 import { buildVacationReceiptModel, nextBusinessDateAfter, renderVacationReceiptHtml, renderVacationReceiptPdf, vacationReceiptHash } from "../src/lib/hr/vacation-receipt.ts";
+import { companyConfigFromRow, mergeCompanyConfig } from "../src/lib/hr/company-config.ts";
 
 const fixturePath = (...segments: string[]) => path.resolve(process.cwd(), "tests", "fixtures", "hr", ...segments);
 
@@ -1011,6 +1012,10 @@ test("HR vacation receipt renders the definitive feriado model without legacy tr
   assert.match(legalWeekHtml, /<div class="detail-row"><span>DOMINGOS E INHABILES<\/span><span>2<\/span><\/div>/);
   assert.match(legalWeekHtml, /<div class="detail-row"><span>FERIADO FRACCIONADO<\/span><span>No<\/span><\/div>/);
   assert.match(legalWeekHtml, /<div class="detail-row"><span>SALDO PENDIENTE<\/span><span>115<\/span><\/div>/);
+
+  const currentCompany = companyConfigFromRow({ address: "AVENIDA VITACURA 7125", legal_name: "J.PASCUAL Y FAMILIA SPA", phone: "24957750", rut: "79939910-5" });
+  const staleSnapshotCompany = companyConfigFromRow({ legalName: "Empresa", rut: "", address: "", phone: "" });
+  assert.deepEqual(mergeCompanyConfig(currentCompany, staleSnapshotCompany), currentCompany);
 });
 
 test("HR vacation hardening migration implements transactional FIFO, idempotent reserves and secure RPCs", async () => {
