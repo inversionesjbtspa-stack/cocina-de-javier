@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { companyConfigFromRow } from "@/lib/hr/company-config";
 import { requireHrContext } from "@/lib/hr/auth";
 import { buildVacationReceiptModel, renderVacationReceiptHtml, renderVacationReceiptPdf, vacationReceiptHash } from "@/lib/hr/vacation-receipt";
+import { fetchVacationReceiptAllocations } from "@/lib/hr/vacation-server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -17,7 +18,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const url = new URL(request.url);
   const format = url.searchParams.get("format") ?? "pdf";
   const supabase = createAdminClient();
-  const [{ data }, company] = await Promise.all([
+  const [{ data }, company, receiptAllocations] = await Promise.all([
     supabase
       .from("hr_vacation_requests")
       .select("*,hr_employees(id,full_name,rut,position,area,cost_center,hire_date,contract_type)")
@@ -28,7 +29,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       .from("companies")
       .select("legal_name,name,rut,address,phone")
       .eq("id", ctx.membership.company_id)
-      .maybeSingle()
+      .maybeSingle(),
+    fetchVacationReceiptAllocations(supabase, ctx.membership.tenant_id, id)
   ]);
 
   if (!data) return NextResponse.json({ ok: false, error: "vacation_not_found" }, { status: 404 });
@@ -36,13 +38,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const snapshotEmployee = snapshot?.employee as Record<string, string | null> | undefined;
   const snapshotCompany = snapshot?.company;
   const employee = firstRelation(data.hr_employees as Array<Record<string, string | null>> | Record<string, string | null> | null);
+  const allocations = receiptAllocations.length ? receiptAllocations : snapshot?.allocations ?? data.vacation_allocations ?? [];
+  const firstAllocation = allocations[0];
   const model = buildVacationReceiptModel({
-    allocations: snapshot?.allocations ?? data.vacation_allocations ?? [],
+    allocations,
     approvedByName: data.approved_by_name ?? null,
     businessDays: Number(data.business_days ?? snapshot?.business_days ?? 0),
-    company: snapshotCompany ?? companyConfigFromRow(company.data),
-    contractPeriodEnd: data.contract_period_end ?? null,
-    contractPeriodStart: data.contract_period_start ?? null,
+    company: snapshotCompany ? companyConfigFromRow(snapshotCompany) : companyConfigFromRow(company.data),
+    contractPeriodEnd: data.contract_period_end ?? firstAllocation?.periodEnd ?? null,
+    contractPeriodStart: data.contract_period_start ?? firstAllocation?.periodStart ?? null,
     documentDate: data.document_date ?? null,
     employee: {
       area: snapshotEmployee?.area ?? employee?.area ?? null,

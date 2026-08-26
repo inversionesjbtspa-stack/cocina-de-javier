@@ -3,10 +3,16 @@ import type { HrCompanyConfig } from "./company-config.ts";
 import { businessDaysInclusive } from "./utils.ts";
 
 export type VacationPeriodAllocation = {
-  balanceAfter: number;
-  balanceBefore: number;
-  daysUsed: number;
-  period: string;
+  allocatedDays?: number;
+  allocationOrder?: number;
+  balanceAfter?: number;
+  balanceBefore?: number;
+  daysUsed?: number;
+  period?: string;
+  periodEnd?: string | null;
+  periodStart?: string | null;
+  previousBalance?: number;
+  resultingBalance?: number;
 };
 
 export type VacationReceiptEmployee = {
@@ -62,6 +68,7 @@ function isoDate(date: Date) {
 
 export function formatChileDate(value: string | null | undefined) {
   if (!value) return "No informado";
+  if (!/^\d{4}-\d{2}-\d{2}/.test(value)) return value;
   const [year, month, day] = value.slice(0, 10).split("-");
   return year && month && day ? `${day}/${month}/${year}` : value;
 }
@@ -100,17 +107,54 @@ export function vacationReceiptNumber(requestId: string, documentDate: string) {
   return `FER-${year}-${suffix}`;
 }
 
+function allocationDays(item: VacationPeriodAllocation) {
+  return Number(item.daysUsed ?? item.allocatedDays ?? 0);
+}
+
+function allocationBalanceBefore(item: VacationPeriodAllocation) {
+  return Number(item.balanceBefore ?? item.previousBalance ?? 0);
+}
+
+function allocationBalanceAfter(item: VacationPeriodAllocation) {
+  return Number(item.balanceAfter ?? item.resultingBalance ?? 0);
+}
+
+function allocationPeriodLabel(item: VacationPeriodAllocation) {
+  if (item.periodStart && item.periodEnd) return `${formatChileDate(item.periodStart)} / ${formatChileDate(item.periodEnd)}`;
+  return item.period || "";
+}
+
+function normalizeAllocations(input: VacationPeriodAllocation[] | undefined, fallback: VacationPeriodAllocation) {
+  const allocations = input?.length ? input : [fallback];
+  return allocations.map((item) => ({
+    ...item,
+    balanceAfter: allocationBalanceAfter(item),
+    balanceBefore: allocationBalanceBefore(item),
+    daysUsed: allocationDays(item),
+    period: allocationPeriodLabel(item) || item.period || "Periodo no informado"
+  }));
+}
+
+function contractPeriodFromModel(model: Pick<VacationReceiptModel, "allocations" | "contractPeriodEnd" | "contractPeriodStart">) {
+  const firstAllocation = model.allocations[0];
+  return {
+    end: model.contractPeriodEnd || firstAllocation?.periodEnd || null,
+    start: model.contractPeriodStart || firstAllocation?.periodStart || null
+  };
+}
+
 export function buildVacationReceiptModel(input: VacationReceiptInput) {
   const documentDate = input.documentDate || isoDate(new Date());
   const receiptNumber = input.receiptNumber || vacationReceiptNumber(input.id, documentDate);
   const nonBusinessDays = input.nonBusinessDays ?? nonBusinessDaysInclusive(input.startDate, input.endDate);
   const reincorporationDate = input.returnToWorkDate || nextBusinessDateAfter(input.endDate);
-  const allocations = input.allocations?.length ? input.allocations : [{
+  const allocations = normalizeAllocations(input.allocations, {
     balanceAfter: input.resultingBalance,
     balanceBefore: input.previousBalance,
     daysUsed: input.businessDays,
-    period: `${input.contractPeriodStart ?? "Periodo"} / ${input.contractPeriodEnd ?? "sin cierre"}`
-  }];
+    periodEnd: input.contractPeriodEnd,
+    periodStart: input.contractPeriodStart
+  });
   const vacationKind = input.resultingBalance <= 0 ? "TOTAL" : "PARCIAL";
   const filename = `Comprobante vacaciones - ${sanitizeVacationFilename(input.employee.fullName)} - ${documentDate} - ${receiptNumber}.pdf`;
 
@@ -120,7 +164,7 @@ export function buildVacationReceiptModel(input: VacationReceiptInput) {
     businessDays: input.businessDays || businessDaysInclusive(input.startDate, input.endDate),
     documentDate,
     filename,
-    fractionalVacationLabel: input.fractionalVacation ? "Si" : "",
+    fractionalVacationLabel: input.fractionalVacation ? "Si" : "No",
     legalNote: input.note || "Para el calculo del feriado legal se consideran dias habiles de lunes a viernes. Sabados, domingos, festivos y otros dias inhabiles acreditados no se descuentan. Uno de estos ejemplares queda en poder del trabajador y otro en poder del empleador.",
     nonBusinessDays,
     progressiveDays: input.progressiveDays ?? 0,
@@ -136,103 +180,92 @@ function escapeHtml(value: string | number | null | undefined) {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function kv(label: string, value: string | number | null | undefined) {
-  return `<div class="kv"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "No informado")}</strong></div>`;
-}
-
 export function renderVacationReceiptHtml(model: VacationReceiptModel) {
-  const allocationRows = model.allocations.map((item) => `<tr><td>${escapeHtml(item.period)}</td><td>${formatDays(item.balanceBefore)}</td><td>${formatDays(item.daysUsed)}</td><td>${formatDays(item.balanceAfter)}</td></tr>`).join("");
+  const contractPeriod = contractPeriodFromModel(model);
+  const allocationNote = model.allocations.map((item) => `${escapeHtml(item.period)}: ${formatDays(item.daysUsed)} dias`).join(" · ");
   return `<!doctype html>
 <html lang="es">
 <head>
 <meta charset="utf-8" />
 <title>${escapeHtml(model.receiptNumber)} - Comprobante de feriado</title>
 <style>
-  :root { --ink:#24191a; --muted:#6d625d; --line:#cdbfb3; --paper:#fffaf2; --brand:#6e1730; }
+  :root { --ink:#111; --muted:#333; --line:#111; --soft:#777; }
   * { box-sizing: border-box; }
-  body { margin:0; background:#eee7dc; color:var(--ink); font-family: Arial, Helvetica, sans-serif; }
+  body { margin:0; background:#ececec; color:var(--ink); font-family: Arial, Helvetica, sans-serif; }
   .toolbar { display:flex; justify-content:center; gap:10px; padding:16px; }
-  .toolbar button { border:1px solid var(--brand); border-radius:6px; background:white; color:var(--brand); cursor:pointer; font-weight:700; padding:9px 14px; }
-  .page { width:8.5in; min-height:11in; margin:20px auto; background:white; padding:0.58in 0.62in; box-shadow:0 10px 28px rgba(0,0,0,.16); }
-  .top { border:1px solid var(--line); display:grid; grid-template-columns:1.2fr .8fr; min-height:118px; }
-  .company { padding:16px 18px; }
-  .company h1 { font-size:18px; letter-spacing:.02em; margin:0 0 12px; }
-  .meta { border-left:1px solid var(--line); padding:16px 18px; }
-  .meta .number { color:var(--brand); font-size:17px; font-weight:800; }
-  .kv { display:grid; grid-template-columns:128px 1fr; gap:8px; font-size:11px; line-height:1.45; }
-  .kv span { color:var(--muted); font-weight:700; text-transform:uppercase; }
-  .kv strong { font-weight:700; }
-  .title { margin:22px 0 12px; text-align:center; }
-  .title h2 { border-bottom:2px solid var(--brand); display:inline-block; font-size:20px; margin:0; padding:0 18px 5px; }
-  .intro { font-size:13px; line-height:1.62; margin:12px 0 16px; text-align:justify; }
-  .box { border:1px solid var(--line); margin-top:12px; padding:14px 16px; }
-  .box h3 { color:var(--brand); font-size:12px; letter-spacing:.06em; margin:0 0 10px; text-transform:uppercase; }
-  .grid { display:grid; grid-template-columns:1fr 1fr; gap:7px 18px; }
-  table { border-collapse:collapse; width:100%; }
-  th, td { border:1px solid var(--line); font-size:11px; padding:7px 8px; text-align:left; }
-  th { background:var(--paper); color:var(--brand); text-transform:uppercase; }
-  .balance { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:10px; }
-  .balance div { background:var(--paper); border:1px solid var(--line); padding:8px; }
-  .balance span { color:var(--muted); display:block; font-size:10px; font-weight:700; text-transform:uppercase; }
-  .balance strong { font-size:15px; }
-  .signatures { display:grid; grid-template-columns:1fr 1fr; gap:80px; margin-top:52px; }
-  .signature { border-top:1px solid var(--ink); padding-top:8px; text-align:center; font-size:12px; }
-  .note { border-top:1px solid var(--line); color:var(--muted); font-size:10.5px; line-height:1.45; margin-top:22px; padding-top:10px; }
-  .status { border:1px solid var(--line); border-radius:999px; display:inline-block; font-size:10px; font-weight:800; padding:4px 9px; text-transform:uppercase; }
-  @page { size: letter; margin: 0.45in; }
+  .toolbar button { border:1px solid #333; border-radius:4px; background:white; color:#111; cursor:pointer; font-weight:700; padding:8px 14px; }
+  .page { width:297mm; min-height:210mm; margin:20px auto; background:white; padding:13mm 15mm; box-shadow:0 8px 26px rgba(0,0,0,.14); }
+  .header { display:grid; grid-template-columns:minmax(0, 1fr) 210px; gap:24px; align-items:start; }
+  .company { font-size:12px; line-height:1.5; }
+  .company-row { display:grid; grid-template-columns:96px minmax(0, 1fr); gap:10px; min-height:18px; }
+  .company-row span { font-weight:700; }
+  .date { font-size:12px; text-align:left; }
+  .date strong { display:block; font-size:11px; margin-top:8px; }
+  h1 { font-size:18px; margin:18px 0 16px; text-align:center; text-decoration:underline; }
+  .period { font-size:13px; line-height:1.7; text-align:center; }
+  .period-dates { display:flex; justify-content:center; gap:42px; margin-top:2px; }
+  .intro { font-size:12.5px; line-height:1.55; margin:18px 0 4px; max-width:100%; }
+  .worker { display:grid; grid-template-columns:42px 1fr auto; gap:10px; align-items:end; font-size:13px; margin:2px 0 18px; }
+  .line-value { border-bottom:1px solid var(--line); min-height:22px; padding:0 4px 3px; font-weight:700; }
+  .worker-rut { color:var(--muted); font-size:11px; white-space:nowrap; }
+  .rest-title { font-size:12px; font-weight:700; margin:18px 0 8px; text-align:center; text-decoration:underline; }
+  .rest-dates { display:flex; justify-content:center; gap:70px; font-size:13px; font-weight:700; margin-bottom:20px; }
+  .body-grid { display:grid; grid-template-columns:390px 1px minmax(280px, 1fr); gap:30px; align-items:start; }
+  .separator { background:#111; height:150px; margin-top:8px; width:1px; }
+  .detail-title { display:grid; grid-template-columns:1fr 70px; font-size:12px; font-weight:700; margin-bottom:6px; }
+  .detail-row { display:grid; grid-template-columns:1fr 70px; gap:12px; font-size:12px; min-height:24px; align-items:center; }
+  .detail-row span:first-child { font-weight:700; }
+  .detail-row span:last-child { border-bottom:1px solid var(--line); min-height:19px; text-align:center; }
+  .period-note { color:var(--soft); font-size:9.5px; line-height:1.35; margin-top:8px; }
+  .signatures { display:grid; grid-template-columns:1fr 1fr; gap:34px; margin-top:56px; }
+  .signature { border-top:1px solid var(--line); font-size:11px; padding-top:7px; text-align:center; }
+  .note { color:#222; font-size:9.5px; line-height:1.35; margin-top:22px; }
+  @page { size: A4 landscape; margin: 12mm; }
   @media print {
     body { background:white; }
     .toolbar { display:none; }
     .page { box-shadow:none; margin:0; padding:0; width:auto; min-height:auto; }
-    .box, table, .signatures { break-inside:avoid; }
   }
 </style>
 </head>
 <body>
 <div class="toolbar"><button onclick="window.print()">Imprimir / Guardar PDF</button></div>
 <main class="page">
-  <section class="top">
+  <section class="header">
     <div class="company">
-      <h1>${escapeHtml(model.company.legalName)}</h1>
-      ${kv("Razon social", model.company.legalName)}
-      ${kv("RUT empresa", model.company.rut)}
-      ${kv("Direccion", model.company.address)}
-      ${kv("Telefono", model.company.phone)}
+      <div class="company-row"><span>Razon Social:</span><strong>${escapeHtml(model.company.legalName)}</strong></div>
+      <div class="company-row"><span>R.U.T.:</span><strong>${escapeHtml(model.company.rut)}</strong></div>
+      <div class="company-row"><span>Direccion:</span><strong>${escapeHtml(model.company.address || "No informado")}</strong></div>
+      <div class="company-row"><span>Telefono:</span><strong>${escapeHtml(model.company.phone || "No informado")}</strong></div>
     </div>
-    <div class="meta">
-      <p class="number">${escapeHtml(model.receiptNumber)}</p>
-      ${kv("Fecha emision", formatChileDate(model.documentDate))}
-      ${kv("Solicitud", model.id)}
-      ${kv("Estado", model.statusLabel)}
+    <div class="date">
+      <div><strong>Fecha:</strong> ${formatChileDate(model.documentDate)}</div>
+      <strong>${escapeHtml(model.receiptNumber)}</strong>
     </div>
   </section>
-  <div class="title"><h2>COMPROBANTE DE FERIADO</h2></div>
-  <p class="intro">Correspondiente al Periodo Contractual: <strong>Del ${formatChileDate(model.contractPeriodStart ?? model.allocations[0]?.period)} Al ${formatChileDate(model.contractPeriodEnd)}</strong>. En cumplimiento a las disposiciones legales vigentes se deja constancia que el trabajador Don: <strong>${escapeHtml(model.employee.fullName)}</strong> hara uso de su feriado <strong>${model.vacationKind}</strong> con remuneracion integra de acuerdo al siguiente detalle:</p>
-  <section class="box"><h3>Datos del trabajador</h3><div class="grid">
-    ${kv("Nombre", model.employee.fullName)}
-    ${kv("RUT", model.employee.rut)}
-    ${kv("Cargo", model.employee.position)}
-    ${kv("Area", model.employee.area)}
-    ${kv("Centro costo", model.employee.costCenter)}
-    ${kv("Ingreso", formatChileDate(model.employee.hireDate))}
-    ${kv("Contrato", model.employee.contractType)}
-  </div></section>
-  <section class="box"><h3>Descanso efectivo entre las fechas que se indican</h3><div class="grid">
-    ${kv("Desde el", formatChileDate(model.startDate))}
-    ${kv("Al", formatChileDate(model.endDate))}
-    ${kv("Reincorporacion", formatChileDate(model.reincorporationDate))}
-    ${kv("Autorizo", model.approvedByName || "Pendiente")}
-  </div></section>
-  <section class="box"><h3>Detalle del feriado | Dias</h3>
-    <table><tbody>
-      <tr><th>Dias habiles</th><td>${formatDays(model.businessDays)}</td><th>Vac. progresivas</th><td>${formatDays(model.progressiveDays)}</td></tr>
-      <tr><th>Domingos e inhabiles</th><td>${formatDays(model.nonBusinessDays)}</td><th>Feriado fraccionado</th><td>${escapeHtml(model.fractionalVacationLabel)}</td></tr>
-      <tr><th>Saldo pendiente</th><td colspan="3">${formatDays(model.resultingBalance)}</td></tr>
-    </tbody></table>
-    <div class="balance"><div><span>Saldo anterior</span><strong>${formatDays(model.previousBalance)}</strong></div><div><span>Dias utilizados</span><strong>${formatDays(model.businessDays)}</strong></div><div><span>Saldo posterior</span><strong>${formatDays(model.resultingBalance)}</strong></div><div><span>Proporcional proyectado</span><strong>${formatDays(model.projectedProportional)}</strong></div></div>
+  <h1>COMPROBANTE DE FERIADO</h1>
+  <section class="period">
+    <div>Correspondiente al Periodo Contractual:</div>
+    <div class="period-dates"><span>Del ${formatChileDate(contractPeriod.start)}</span><span>Al ${formatChileDate(contractPeriod.end)}</span></div>
   </section>
-  <section class="box"><h3>Aplicacion por periodos</h3><table><thead><tr><th>Periodo</th><th>Saldo anterior</th><th>Dias utilizados</th><th>Saldo posterior</th></tr></thead><tbody>${allocationRows}</tbody></table></section>
-  <div class="signatures"><div class="signature">Firma Empleador o Rep. Legal</div><div class="signature">Firma del trabajador</div></div>
+  <p class="intro">En cumplimiento a las disposiciones legales vigentes se deja constancia que a contar de las fechas que se indican, el trabajador</p>
+  <div class="worker"><strong>Don:</strong><div class="line-value">${escapeHtml(model.employee.fullName)}</div><div class="worker-rut">RUT: ${escapeHtml(model.employee.rut || "No informado")}</div></div>
+  <p class="intro">Hara uso de su feriado <strong>${model.vacationKind}</strong> con remuneracion integra, de acuerdo al detalle que se indica a continuacion.</p>
+  <div class="rest-title">DESCANSO EFECTIVO ENTRE LAS FECHAS QUE SE INDICAN</div>
+  <div class="rest-dates"><span>DESDE EL ${formatChileDate(model.startDate)}</span><span>AL ${formatChileDate(model.endDate)}</span></div>
+  <section class="body-grid">
+    <div>
+      <div class="detail-title"><span>DETALLE DEL FERIADO</span><span>DIAS</span></div>
+      <div class="detail-row"><span>DIAS HABILES</span><span>${formatDays(model.businessDays)}</span></div>
+      <div class="detail-row"><span>VAC. PROGRESIVAS</span><span>${formatDays(model.progressiveDays)}</span></div>
+      <div class="detail-row"><span>DOMINGOS E INHABILES</span><span>${formatDays(model.nonBusinessDays)}</span></div>
+      <div class="detail-row"><span>FERIADO FRACCIONADO</span><span>${escapeHtml(model.fractionalVacationLabel)}</span></div>
+      <div class="detail-row"><span>SALDO PENDIENTE</span><span>${formatDays(model.resultingBalance)}</span></div>
+      ${allocationNote ? `<div class="period-note">Imputacion FIFO: ${allocationNote}</div>` : ""}
+    </div>
+    <div class="separator"></div>
+    <div class="signatures"><div class="signature">Firma Empleador o Rep. Legal</div><div class="signature">Firma del trabajador</div></div>
+  </section>
   <p class="note"><strong>NOTA:</strong> ${escapeHtml(model.legalNote)}</p>
 </main>
 </body>
@@ -243,46 +276,68 @@ function pdfText(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7E]/g, "").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
 }
 
-function pdfLine(y: number, label: string, value: string | number | null | undefined) {
-  return `0.15 0.11 0.10 rg BT /F1 9 Tf 52 ${y} Td (${pdfText(label)}: ${pdfText(String(value || "No informado"))}) Tj ET`;
-}
-
 export function renderVacationReceiptPdf(model: VacationReceiptModel) {
+  const contractPeriod = contractPeriodFromModel(model);
+  const allocationNote = model.allocations.map((item) => `${item.period}: ${formatDays(item.daysUsed)} dias`).join(" | ");
+  const text = (x: number, y: number, size: number, value: string, font = "F1") => `0 0 0 rg BT /${font} ${size} Tf ${x} ${y} Td (${pdfText(value)}) Tj ET`;
+  const line = (x1: number, y1: number, x2: number, y2: number) => `0 0 0 RG 0.7 w ${x1} ${y1} m ${x2} ${y2} l S`;
+  const note = `NOTA: ${model.legalNote}`;
   const content = [
-    "0.96 0.93 0.88 rg 40 706 532 96 re f",
-    "0.43 0.09 0.16 rg BT /F2 18 Tf 52 778 Td (COMPROBANTE DE FERIADO) Tj ET",
-    `0.43 0.09 0.16 rg BT /F2 12 Tf 390 778 Td (${pdfText(model.receiptNumber)}) Tj ET`,
-    pdfLine(748, "Razon social", model.company.legalName),
-    pdfLine(732, "RUT empresa", model.company.rut),
-    pdfLine(716, "Fecha emision", formatChileDate(model.documentDate)),
-    `0.15 0.11 0.10 rg BT /F1 10 Tf 52 676 Td (${pdfText(`Correspondiente al Periodo Contractual: Del ${formatChileDate(model.contractPeriodStart)} Al ${formatChileDate(model.contractPeriodEnd)}`)}) Tj ET`,
-    `0.15 0.11 0.10 rg BT /F1 10 Tf 52 656 Td (${pdfText(`Don: ${model.employee.fullName} hara uso de su feriado ${model.vacationKind} con remuneracion integra.`)}) Tj ET`,
-    "0.96 0.93 0.88 rg 40 540 532 90 re f",
-    pdfLine(610, "Trabajador", model.employee.fullName),
-    pdfLine(594, "RUT", model.employee.rut),
-    pdfLine(578, "Cargo", model.employee.position),
-    pdfLine(562, "Ingreso", formatChileDate(model.employee.hireDate)),
-    "0.96 0.93 0.88 rg 40 418 532 90 re f",
-    pdfLine(488, "Desde el", formatChileDate(model.startDate)),
-    pdfLine(472, "Al", formatChileDate(model.endDate)),
-    pdfLine(456, "Reincorporacion", formatChileDate(model.reincorporationDate)),
-    pdfLine(440, "Dias habiles", formatDays(model.businessDays)),
-    "0.96 0.93 0.88 rg 40 284 532 106 re f",
-    pdfLine(368, "Vacaciones progresivas", formatDays(model.progressiveDays)),
-    pdfLine(352, "Domingos e inhabiles", formatDays(model.nonBusinessDays)),
-    pdfLine(336, "Feriado fraccionado", model.fractionalVacationLabel),
-    pdfLine(320, "Saldo anterior", formatDays(model.previousBalance)),
-    pdfLine(304, "Saldo posterior", formatDays(model.resultingBalance)),
-    `0.40 0.33 0.30 rg BT /F1 8 Tf 52 254 Td (${pdfText(model.legalNote).slice(0, 120)}) Tj ET`,
-    "0.65 0.56 0.50 RG 0.8 w 70 198 m 250 198 l S",
-    "0.65 0.56 0.50 RG 0.8 w 360 198 m 540 198 l S",
-    "0.15 0.11 0.10 rg BT /F1 9 Tf 105 180 Td (Firma trabajador) Tj ET",
-    "0.15 0.11 0.10 rg BT /F1 9 Tf 384 180 Td (Firma empleador o Rep. Legal) Tj ET"
+    text(42, 548, 10, "Razon Social:", "F2"),
+    text(132, 548, 10, model.company.legalName, "F2"),
+    text(42, 530, 10, "R.U.T.:", "F2"),
+    text(132, 530, 10, model.company.rut || "No informado", "F2"),
+    text(42, 512, 10, "Direccion:", "F2"),
+    text(132, 512, 10, model.company.address || "No informado", "F2"),
+    text(42, 494, 10, "Telefono:", "F2"),
+    text(132, 494, 10, model.company.phone || "No informado", "F2"),
+    text(648, 548, 10, `Fecha: ${formatChileDate(model.documentDate)}`, "F1"),
+    text(648, 530, 8, model.receiptNumber, "F1"),
+    text(318, 464, 16, "COMPROBANTE DE FERIADO", "F2"),
+    line(318, 459, 523, 459),
+    text(300, 432, 11, "Correspondiente al Periodo Contractual:", "F1"),
+    text(268, 410, 11, `Del ${formatChileDate(contractPeriod.start)}`, "F2"),
+    text(448, 410, 11, `Al ${formatChileDate(contractPeriod.end)}`, "F2"),
+    text(42, 374, 10, "En cumplimiento a las disposiciones legales vigentes se deja constancia que a contar de las fechas que se indican, el trabajador", "F1"),
+    text(42, 346, 11, "Don:", "F2"),
+    line(80, 344, 590, 344),
+    text(86, 349, 11, model.employee.fullName, "F2"),
+    text(612, 349, 8, `RUT: ${model.employee.rut || "No informado"}`, "F1"),
+    text(42, 314, 10, `Hara uso de su feriado ${model.vacationKind} con remuneracion integra, de acuerdo al detalle que se indica a continuacion.`, "F1"),
+    text(244, 278, 10, "DESCANSO EFECTIVO ENTRE LAS FECHAS QUE SE INDICAN", "F2"),
+    line(244, 274, 596, 274),
+    text(238, 250, 11, `DESDE EL ${formatChileDate(model.startDate)}`, "F2"),
+    text(450, 250, 11, `AL ${formatChileDate(model.endDate)}`, "F2"),
+    text(58, 212, 10, "DETALLE DEL FERIADO", "F2"),
+    text(330, 212, 10, "DIAS", "F2"),
+    text(58, 188, 10, "DIAS HABILES", "F2"),
+    line(315, 185, 380, 185),
+    text(342, 189, 10, formatDays(model.businessDays), "F1"),
+    text(58, 164, 10, "VAC. PROGRESIVAS", "F2"),
+    line(315, 161, 380, 161),
+    text(342, 165, 10, formatDays(model.progressiveDays), "F1"),
+    text(58, 140, 10, "DOMINGOS E INHABILES", "F2"),
+    line(315, 137, 380, 137),
+    text(342, 141, 10, formatDays(model.nonBusinessDays), "F1"),
+    text(58, 116, 10, "FERIADO FRACCIONADO", "F2"),
+    line(315, 113, 380, 113),
+    text(338, 117, 10, model.fractionalVacationLabel, "F1"),
+    text(58, 92, 10, "SALDO PENDIENTE", "F2"),
+    line(315, 89, 380, 89),
+    text(338, 93, 10, formatDays(model.resultingBalance), "F1"),
+    allocationNote ? text(58, 72, 7, `Imputacion FIFO: ${allocationNote.slice(0, 135)}`, "F1") : "",
+    line(422, 220, 422, 78),
+    line(482, 162, 638, 162),
+    line(666, 162, 818, 162),
+    text(498, 144, 9, "Firma Empleador o Rep. Legal", "F1"),
+    text(696, 144, 9, "Firma del trabajador", "F1"),
+    text(42, 42, 7, note.slice(0, 150), "F1"),
+    text(42, 30, 7, note.slice(150, 300), "F1")
   ].join("\n");
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 841.89 595.28] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
     `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`

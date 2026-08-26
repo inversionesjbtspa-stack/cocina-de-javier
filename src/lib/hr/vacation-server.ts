@@ -10,7 +10,7 @@ import {
   type VacationPeriod,
   type VacationSchedule
 } from "./vacation-domain.ts";
-import { buildVacationReceiptModel, renderVacationReceiptPdf, vacationReceiptHash } from "./vacation-receipt.ts";
+import { buildVacationReceiptModel, renderVacationReceiptPdf, vacationReceiptHash, type VacationPeriodAllocation } from "./vacation-receipt.ts";
 import { previewVacationPeriodBackfill } from "./vacation-persistence.ts";
 
 export type HrVacationContext = {
@@ -227,6 +227,59 @@ export type VacationReceiptPersistenceClient = {
   };
 };
 
+function mapVacationAllocationRow(row: Record<string, unknown>, periods: Map<string, { periodEnd: string | null; periodStart: string | null }>): VacationPeriodAllocation {
+  const periodId = String(row.vacation_period_id ?? row.period_id ?? "");
+  const period = periods.get(periodId);
+  return {
+    allocatedDays: Number(row.allocated_days ?? row.days_used ?? 0),
+    allocationOrder: Number(row.allocation_order ?? 0),
+    balanceAfter: Number(row.resulting_balance ?? row.balance_after ?? 0),
+    balanceBefore: Number(row.previous_balance ?? row.balance_before ?? 0),
+    periodEnd: period?.periodEnd ?? null,
+    periodStart: period?.periodStart ?? null
+  };
+}
+
+export async function fetchVacationReceiptAllocations(supabase: unknown, tenantId: string, requestId: string) {
+  const client = supabase as {
+    from: (table: string) => {
+      select: (columns: string) => {
+        eq: (column: string, value: string) => unknown;
+      };
+    };
+  };
+  const allocationQuery = client
+    .from("hr_vacation_allocations")
+    .select("*")
+    .eq("tenant_id", tenantId) as {
+      eq: (column: string, value: string) => {
+        order: (column: string, options?: { ascending?: boolean }) => PromiseLike<{ data: Array<Record<string, unknown>> | null; error?: { message: string } | null }>;
+      };
+    };
+  const allocationResult = await allocationQuery.eq("request_id", requestId).order("allocation_order", { ascending: true });
+  const allocations = allocationResult.data ?? [];
+  if (!allocations.length) return [];
+
+  const periodIds = Array.from(new Set(allocations.map((row) => String(row.vacation_period_id ?? row.period_id ?? "")).filter(Boolean)));
+  const periodMap = new Map<string, { periodEnd: string | null; periodStart: string | null }>();
+  if (periodIds.length) {
+    const periodQuery = client
+      .from("hr_vacation_periods")
+      .select("id,period_start,period_end")
+      .eq("tenant_id", tenantId) as {
+        in: (column: string, values: string[]) => PromiseLike<{ data: Array<Record<string, unknown>> | null; error?: { message: string } | null }>;
+      };
+    const periodResult = await periodQuery.in("id", periodIds);
+    (periodResult.data ?? []).forEach((row) => {
+      periodMap.set(String(row.id), {
+        periodEnd: row.period_end ? String(row.period_end) : null,
+        periodStart: row.period_start ? String(row.period_start) : null
+      });
+    });
+  }
+  return allocations.map((row) => mapVacationAllocationRow(row, periodMap));
+}
+
 export async function persistVacationReceiptForRequest(input: {
   companyId: string;
   requestId: string;
@@ -234,7 +287,7 @@ export async function persistVacationReceiptForRequest(input: {
   tenantId: string;
   userId: string;
 }) {
-  const [{ data }, company] = await Promise.all([
+  const [{ data }, company, receiptAllocations] = await Promise.all([
     input.supabase
       .from("hr_vacation_requests")
       .select("*,hr_employees(id,full_name,rut,position,area,cost_center,hire_date,contract_type)")
@@ -245,7 +298,8 @@ export async function persistVacationReceiptForRequest(input: {
       .from("companies")
       .select("legal_name,name,rut,address,phone")
       .eq("id", input.companyId)
-      .maybeSingle()
+      .maybeSingle(),
+    fetchVacationReceiptAllocations(input.supabase, input.tenantId, input.requestId)
   ]);
   if (!data) return { ok: false as const, error: "vacation_not_found" };
   if (data.status !== "aprobada") return { ok: false as const, error: "vacation_not_approved" };
@@ -254,13 +308,15 @@ export async function persistVacationReceiptForRequest(input: {
   const snapshotEmployee = snapshot?.employee as Record<string, string | null> | undefined;
   const snapshotCompany = snapshot?.company;
   const employee = firstRelation(data.hr_employees as Array<Record<string, string | null>> | Record<string, string | null> | null);
+  const allocations = receiptAllocations.length ? receiptAllocations : (snapshot?.allocations as Parameters<typeof buildVacationReceiptModel>[0]["allocations"]) ?? [];
+  const firstAllocation = allocations[0];
   const model = buildVacationReceiptModel({
-    allocations: (snapshot?.allocations as Parameters<typeof buildVacationReceiptModel>[0]["allocations"]) ?? [],
+    allocations,
     approvedByName: data.approved_by_name as string | undefined,
     businessDays: Number(data.business_days ?? 0),
     company: snapshotCompany ? companyConfigFromRow(snapshotCompany) : companyConfigFromRow(company.data),
-    contractPeriodEnd: data.contract_period_end as string | null,
-    contractPeriodStart: data.contract_period_start as string | null,
+    contractPeriodEnd: (data.contract_period_end as string | null) ?? firstAllocation?.periodEnd ?? null,
+    contractPeriodStart: (data.contract_period_start as string | null) ?? firstAllocation?.periodStart ?? null,
     documentDate: data.document_date as string | null,
     employee: {
       area: snapshotEmployee?.area ?? employee?.area ?? null,

@@ -934,8 +934,8 @@ test("HR vacation receipt renders the definitive feriado model without legacy tr
   const cancelRoute = await readFile("src/app/api/hr/vacations/[id]/route.ts", "utf8");
   const model = buildVacationReceiptModel({
     allocations: [
-      { balanceAfter: 0, balanceBefore: 5, daysUsed: 5, period: "2024-2025" },
-      { balanceAfter: 13, balanceBefore: 15, daysUsed: 2, period: "2025-2026" }
+      { balanceAfter: 0, balanceBefore: 5, daysUsed: 5, periodEnd: "2025-07-22", periodStart: "2024-07-23" },
+      { balanceAfter: 13, balanceBefore: 15, daysUsed: 2, periodEnd: "2026-07-22", periodStart: "2025-07-23" }
     ],
     businessDays: 7,
     company: { address: "Av. Demo 123", legalName: "Empresa Demo SPA", phone: "222222222", rut: "76.000.000-0" },
@@ -956,8 +956,18 @@ test("HR vacation receipt renders the definitive feriado model without legacy tr
   assert.equal(nextBusinessDateAfter("2026-07-31"), "2026-08-03");
   assert.equal(model.vacationKind, "PARCIAL");
   assert.match(html, /COMPROBANTE DE FERIADO/);
-  assert.match(html, /Aplicacion por periodos/);
-  assert.match(html, /Reincorporacion/);
+  assert.match(html, /Correspondiente al Periodo Contractual/);
+  assert.match(html, /Del 23\/07\/2024/);
+  assert.match(html, /Al 22\/07\/2025/);
+  assert.match(html, /DESCANSO EFECTIVO ENTRE LAS FECHAS QUE SE INDICAN/);
+  assert.match(html, /DETALLE DEL FERIADO/);
+  assert.match(html, /VAC\. PROGRESIVAS/);
+  assert.match(html, /DOMINGOS E INHABILES/);
+  assert.match(html, /FERIADO FRACCIONADO/);
+  assert.match(html, /SALDO PENDIENTE/);
+  assert.match(html, /Firma Empleador o Rep\. Legal/);
+  assert.match(html, /Firma del trabajador/);
+  assert.doesNotMatch(html, /No informado/);
   assert.doesNotMatch(html, /Gnostice|TRIAL version/i);
   assert.ok(pdf.byteLength > 1000);
   assert.equal(vacationReceiptHash(pdf).length, 64);
@@ -978,21 +988,29 @@ test("HR vacation receipt renders the definitive feriado model without legacy tr
   assert.match(periodsMigration, /hr_accredit_progressive_vacation/);
 
   const legalWeekModel = buildVacationReceiptModel({
+    allocations: [{ balanceAfter: 115, balanceBefore: 120, daysUsed: 5, periodEnd: "2021-07-27", periodStart: "2020-07-28" }],
     businessDays: 5,
-    company: { address: "Av. Demo 123", legalName: "Empresa Demo SPA", phone: "222222222", rut: "76.000.000-0" },
+    company: { address: "AVENIDA VITACURA 7125", legalName: "J.PASCUAL Y FAMILIA SPA", phone: "24957750", rut: "79939910-5" },
     documentDate: "2026-08-21",
     employee: { fullName: "BETANCOURT PAREZ JESUS", rut: "25.289.035-1" },
-    endDate: "2026-08-30",
+    endDate: "2026-08-23",
     id: "11111111-2222-4333-8444-555555555556",
     nonBusinessDays: 2,
     previousBalance: 120,
     resultingBalance: 115,
-    startDate: "2026-08-24"
+    startDate: "2026-08-17"
   });
   const legalWeekHtml = renderVacationReceiptHtml(legalWeekModel);
-  assert.match(legalWeekHtml, /<th>Dias habiles<\/th><td>5<\/td>/);
-  assert.match(legalWeekHtml, /<th>Domingos e inhabiles<\/th><td>2<\/td>/);
-  assert.match(legalWeekHtml, /<th>Saldo pendiente<\/th><td colspan="3">115<\/td>/);
+  assert.match(legalWeekHtml, /J\.PASCUAL Y FAMILIA SPA/);
+  assert.match(legalWeekHtml, /79939910-5/);
+  assert.match(legalWeekHtml, /Del 28\/07\/2020/);
+  assert.match(legalWeekHtml, /Al 27\/07\/2021/);
+  assert.match(legalWeekHtml, /DESDE EL 17\/08\/2026/);
+  assert.match(legalWeekHtml, /AL 23\/08\/2026/);
+  assert.match(legalWeekHtml, /<div class="detail-row"><span>DIAS HABILES<\/span><span>5<\/span><\/div>/);
+  assert.match(legalWeekHtml, /<div class="detail-row"><span>DOMINGOS E INHABILES<\/span><span>2<\/span><\/div>/);
+  assert.match(legalWeekHtml, /<div class="detail-row"><span>FERIADO FRACCIONADO<\/span><span>No<\/span><\/div>/);
+  assert.match(legalWeekHtml, /<div class="detail-row"><span>SALDO PENDIENTE<\/span><span>115<\/span><\/div>/);
 });
 
 test("HR vacation hardening migration implements transactional FIFO, idempotent reserves and secure RPCs", async () => {
