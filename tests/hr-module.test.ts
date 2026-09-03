@@ -484,6 +484,75 @@ test("HR vacation FIFO allocates mandatory example and keeps second period prote
   assert.equal(validateFractionation({ agreementAccepted: true, periods: [{ availableBalance: 15, baseDays: 15, continuousBlockRequired: 10, continuousBlockUsed: 0, periodEnd: "2026-07-22", periodStart: "2025-07-23" }], requestedDays: 2 }).ok, true);
 });
 
+test("HR vacation fractionation requires agreement only when a protected block is still pending", () => {
+  const protectedPeriod = { availableBalance: 15, baseDays: 15, continuousBlockRequired: 10, continuousBlockUsed: 0, periodEnd: "2026-07-27", periodStart: "2025-07-28", usedDays: 0 };
+  const fulfilledPeriod = { ...protectedPeriod, availableBalance: 5, continuousBlockUsed: 10, usedDays: 10 };
+
+  const fiveWithoutAgreement = validateFractionation({ agreementAccepted: false, periods: [protectedPeriod], requestedDays: 5 });
+  assert.equal(fiveWithoutAgreement.ok, false);
+  assert.equal(fiveWithoutAgreement.reason, "fractionation_agreement_required");
+  assert.equal(validateFractionation({ agreementAccepted: true, periods: [protectedPeriod], requestedDays: 5 }).ok, true);
+  assert.equal(validateFractionation({ agreementAccepted: false, periods: [fulfilledPeriod], requestedDays: 3 }).ok, true);
+  assert.equal(validateFractionation({ agreementAccepted: true, periods: [{ ...protectedPeriod, availableBalance: 10, usedDays: 5 }], requestedDays: 5 }).ok, true);
+});
+
+test("HR vacation preview allows separate same-month fractions only with valid agreement", async () => {
+  const request = {
+    calendarStatusByYear: { "2026": "verified" as const },
+    endDate: "2026-09-18",
+    hireDate: "2025-07-28",
+    holidays: [],
+    periods: [{ availableBalance: 10, baseDays: 15, continuousBlockRequired: 10, continuousBlockUsed: 0, periodEnd: "2026-07-27", periodStart: "2025-07-28", status: "open" as const, usedDays: 5 }],
+    schedule: { source: "employee" as const, workingWeekdays: [1, 2, 3, 4, 5] },
+    startDate: "2026-09-14"
+  };
+
+  const withoutAgreement = calculateVacationPreview(request);
+  assert.equal(withoutAgreement.businessDays, 5);
+  assert.equal(withoutAgreement.canConfirm, false);
+  assert.equal(withoutAgreement.reviewReasons.includes("fractionation_agreement_required"), true);
+  assert.equal(withoutAgreement.reviewReasons.includes("continuous_block_would_be_broken"), false);
+
+  const withAgreement = calculateVacationPreview({ ...request, agreementAccepted: true });
+  assert.equal(withAgreement.canConfirm, true);
+  assert.equal(withAgreement.requiresReview, false);
+  assert.equal(withAgreement.totalAfterRequest, 5);
+  assert.deepEqual(withAgreement.reviewReasons, []);
+
+  const domain = await readFile("src/lib/hr/vacation-domain.ts", "utf8");
+  const previewRoute = await readFile("src/app/api/hr/vacations/preview/route.ts", "utf8");
+  assert.doesNotMatch(`${domain}\n${previewRoute}`, /sameMonth|existingVacationInMonth|oneVacationPerMonth/);
+  assert.match(previewRoute, /\.lte\("start_date", preview\.effectiveRestEndDate\)/);
+  assert.match(previewRoute, /\.gte\("end_date", body\.startDate\)/);
+});
+
+test("HR vacation fractionation UI and receipt expose actionable agreement state", async () => {
+  const components = await readFile("src/components/hr/vacation-components.tsx", "utf8");
+  const route = await readFile("src/app/api/hr/vacations/route.ts", "utf8");
+  const papeletaRoute = await readFile("src/app/api/hr/vacations/[id]/papeleta/route.ts", "utf8");
+  const server = await readFile("src/lib/hr/vacation-server.ts", "utf8");
+  const model = buildVacationReceiptModel({
+    businessDays: 5,
+    company: { address: "AV VITACURA 7482", legalName: "J PASCUAL Y FAMILIA SPA", phone: "(2) 2495 7750", rut: "79.939.910-5" },
+    employee: { fullName: "TRABAJADOR FIXTURE", rut: "11.111.111-1" },
+    endDate: "2026-09-18",
+    fractionalVacation: true,
+    id: "fixture",
+    previousBalance: 15,
+    resultingBalance: 10,
+    startDate: "2026-09-14"
+  });
+
+  assert.match(components, /REQUIERE ACUERDO DE FRACCIONAMIENTO/);
+  assert.match(components, /REGISTRAR ACUERDO DE FRACCIONAMIENTO/);
+  assert.match(route, /is_fractioned: preview\.businessDays < 10/);
+  assert.match(route, /fractionation_agreement: body\.fractionationAgreement/);
+  assert.match(papeletaRoute, /data\.is_fractioned \?\? data\.fractional_vacation/);
+  assert.match(server, /data\.is_fractioned \?\? data\.fractional_vacation/);
+  assert.equal(model.fractionalVacationLabel, "Si");
+  assert.match(renderVacationReceiptHtml(model), /FERIADO FRACCIONADO[\s\S]*Si/);
+});
+
 test("HR vacation blocks silent advances and permits explicit advance within projected proportional", () => {
   assert.equal(validateAdvanceVacation({ availableDays: 1, projectedProportionalDays: 2, requestedDays: 2 }).ok, false);
   assert.equal(validateAdvanceVacation({ advanceAuthorized: true, availableDays: 1, projectedProportionalDays: 2, requestedDays: 2 }).ok, true);

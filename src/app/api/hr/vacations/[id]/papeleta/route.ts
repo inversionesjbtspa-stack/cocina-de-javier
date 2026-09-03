@@ -60,7 +60,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       rut: snapshotEmployee?.rut ?? employee?.rut ?? ""
     },
     endDate: data.effective_rest_end_date ?? data.end_date,
-    fractionalVacation: data.fractional_vacation ?? null,
+    fractionalVacation: data.is_fractioned ?? data.fractional_vacation ?? null,
     id,
     nonBusinessDays: data.non_business_days ?? null,
     note: data.note ?? null,

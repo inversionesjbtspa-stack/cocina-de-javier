@@ -531,6 +531,15 @@ export function validateContinuousBlock(period: VacationPeriod, requestedDays: n
 
 export function validateFractionation(input: FractionationInput) {
   if (input.requestedDays >= CONTINUOUS_BLOCK_MINIMUM_DAYS) return { ok: true, reason: null };
+  const protectedPeriods = input.periods.filter((period) => (period.continuousBlockUsed ?? 0) < (period.continuousBlockRequired ?? CONTINUOUS_BLOCK_MINIMUM_DAYS));
+  if (protectedPeriods.length && !input.agreementAccepted) {
+    return {
+      ok: false,
+      reason: "fractionation_agreement_required",
+      remainingProtectedBlock: Math.max(...protectedPeriods.map((period) => (period.continuousBlockRequired ?? CONTINUOUS_BLOCK_MINIMUM_DAYS) - (period.continuousBlockUsed ?? 0)))
+    };
+  }
+  if (input.agreementAccepted) return { ok: true, reason: null, remainingProtectedBlock: 0 };
   const invalid = input.periods
     .map((period) => validateContinuousBlock(period, input.requestedDays))
     .find((result) => !result.ok);

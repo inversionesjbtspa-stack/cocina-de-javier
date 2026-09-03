@@ -330,7 +330,7 @@ export async function persistVacationReceiptForRequest(input: {
       rut: snapshotEmployee?.rut ?? employee?.rut ?? ""
     },
     endDate: (data.effective_rest_end_date ?? data.end_date) as string,
-    fractionalVacation: data.fractional_vacation as boolean | null,
+    fractionalVacation: (data.is_fractioned ?? data.fractional_vacation) as boolean | null,
     id: input.requestId,
     nonBusinessDays: data.non_business_days as number | null,
     note: data.note as string | null,

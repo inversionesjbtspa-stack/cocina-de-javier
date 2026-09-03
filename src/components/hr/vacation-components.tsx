@@ -170,8 +170,8 @@ function humanVacationReviewReason(reason: string) {
   const labels: Record<string, string> = {
     advance_exceeds_projected_proportional: "Los dias anticipados superan el proporcional proyectado.",
     advance_vacation_requires_explicit_authorization: "La solicitud requiere vacaciones anticipadas sin autorizacion explicita.",
-    continuous_block_would_be_broken: "La solicitud rompe el bloque continuo minimo protegido del periodo.",
-    fractionation_agreement_required: "La solicitud requiere acuerdo de fraccionamiento.",
+    continuous_block_would_be_broken: "La solicitud no conserva el bloque continuo minimo protegido del periodo.",
+    fractionation_agreement_required: "Esta solicitud corresponde a un feriado fraccionado. Para continuar debe registrarse el acuerdo entre trabajador y empleador.",
     holiday_calendar_incomplete: "El calendario de feriados esta incompleto para el rango solicitado.",
     holiday_calendar_missing: "Falta verificar el calendario de feriados para el rango solicitado.",
     insufficient_vacation_balance: "El saldo disponible no cubre los dias solicitados.",
@@ -280,6 +280,9 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
   const previewIsCurrent = preview.key === previewKey;
   const previewCanConfirm = preview.data?.canConfirm === true || (preview.data?.canConfirm !== false && preview.data?.valid === true);
   const previewValidAndCurrent = previewIsCurrent && previewCanConfirm && !preview.error && !preview.loading;
+  const previewBusinessDays = previewNumber(preview.data, "businessDays");
+  const requiresFractionationAgreement = previewIsCurrent && previewReviewReasons(preview.data).includes("fractionation_agreement_required");
+  const isFractionedPreview = typeof previewBusinessDays === "number" && previewBusinessDays > 0 && previewBusinessDays < 10;
 
   async function confirmVacation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -295,7 +298,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
         body: JSON.stringify({
           ...payload,
           documentDate: today(),
-          fractionalVacation,
+          fractionalVacation: fractionalVacation || isFractionedPreview || fractionationAgreement,
           note,
           observation,
           status: "aprobada"
@@ -348,8 +351,8 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
             <input className="w-full rounded-md border px-3 py-2 text-sm font-normal normal-case" max={endDate || undefined} min={startDate || undefined} onChange={(event) => setManualHolidayDate(event.target.value)} type="date" value={manualHolidayDate} />
           </label>
           <input className="w-full rounded-md border px-3 py-2 text-sm" onChange={(event) => setManualHolidayReason(event.target.value)} placeholder="Motivo del dia inhabil" value={manualHolidayReason} />
-          <label className="flex items-center gap-2 text-sm"><input checked={fractionalVacation} onChange={(event) => setFractionalVacation(event.target.checked)} type="checkbox" /> Feriado fraccionado</label>
-          <label className="flex items-center gap-2 text-sm"><input checked={fractionationAgreement} onChange={(event) => setFractionationAgreement(event.target.checked)} type="checkbox" /> Acuerdo de fraccionamiento</label>
+          <label className="flex items-center gap-2 text-sm"><input checked={fractionalVacation || isFractionedPreview} onChange={(event) => setFractionalVacation(event.target.checked)} type="checkbox" /> Feriado fraccionado</label>
+          <label className="flex items-center gap-2 text-sm"><input checked={fractionationAgreement} onChange={(event) => { setFractionationAgreement(event.target.checked); if (event.target.checked) setFractionalVacation(true); }} type="checkbox" /> Acuerdo de fraccionamiento</label>
           <label className="flex items-center gap-2 text-sm"><input checked={advanceAuthorized} onChange={(event) => setAdvanceAuthorized(event.target.checked)} type="checkbox" /> Autorizar anticipadas</label>
           <input className="w-full rounded-md border px-3 py-2 text-sm sm:col-span-2" onChange={(event) => setObservation(event.target.value)} placeholder="Observacion interna" value={observation} />
           <input className="w-full rounded-md border px-3 py-2 text-sm sm:col-span-2" onChange={(event) => setNote(event.target.value)} placeholder="Nota para comprobante" value={note} />
@@ -360,7 +363,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
         <div className="rounded-lg border border-brand-100 bg-brand-50 p-4 text-sm text-brand-900">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="font-semibold">Resumen de vacaciones</h4>
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${previewCanConfirm ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{previewCanConfirm ? "LISTO PARA CONFIRMAR" : "REVISAR"}</span>
+            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${previewCanConfirm ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{previewCanConfirm ? "LISTO PARA CONFIRMAR" : requiresFractionationAgreement ? "REQUIERE ACUERDO DE FRACCIONAMIENTO" : "REVISAR"}</span>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <MiniMetric label="Desde" value={formatDate(startDate)} />
@@ -377,6 +380,16 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
             <MiniMetric label="Saldo despues" value={formatDays(previewNumber(preview.data, "totalAfterRequest"))} />
           </div>
           {preview.data.scheduleReviewRequired ? <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">No hay politica empresa ni override individual valido para calcular esta solicitud.</p> : null}
+          {requiresFractionationAgreement ? (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              <p className="font-semibold">FERIADO FRACCIONADO</p>
+              <p className="mt-1">Esta solicitud corresponde a {formatDays(previewBusinessDays)} dias habiles. Para continuar debe existir acuerdo de fraccionamiento entre empleador y trabajador.</p>
+              <label className="mt-3 flex items-center gap-2 text-sm font-semibold">
+                <input checked={fractionationAgreement} onChange={(event) => { setFractionationAgreement(event.target.checked); if (event.target.checked) setFractionalVacation(true); }} type="checkbox" />
+                REGISTRAR ACUERDO DE FRACCIONAMIENTO
+              </label>
+            </div>
+          ) : null}
           {!previewCanConfirm ? (
             <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
               <p className="font-semibold">Motivo:</p>
