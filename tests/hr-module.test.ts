@@ -957,6 +957,8 @@ test("HR vacation receipt renders the definitive feriado model without legacy tr
   assert.equal(nextBusinessDateAfter("2026-07-31"), "2026-08-03");
   assert.equal(model.vacationKind, "PARCIAL");
   assert.match(html, /COMPROBANTE DE FERIADO/);
+  assert.match(html, /alt="La Cocina de Javier"/);
+  assert.match(html, /data:image\/png;base64/);
   assert.match(html, /Correspondiente al Periodo Contractual/);
   assert.match(html, /Del 23\/07\/2024/);
   assert.match(html, /Al 22\/07\/2025/);
@@ -971,6 +973,7 @@ test("HR vacation receipt renders the definitive feriado model without legacy tr
   assert.doesNotMatch(html, /No informado/);
   assert.doesNotMatch(html, /Gnostice|TRIAL version/i);
   assert.ok(pdf.byteLength > 1000);
+  assert.match(pdf.toString("latin1"), /\/Logo Do/);
   assert.equal(vacationReceiptHash(pdf).length, 64);
   assert.match(migration, /receipt_snapshot jsonb/);
   assert.match(migration, /file_sha256 text/);

@@ -1,4 +1,7 @@
 import crypto from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import zlib from "node:zlib";
 import type { HrCompanyConfig } from "./company-config.ts";
 import { businessDaysInclusive } from "./utils.ts";
 
@@ -180,9 +183,22 @@ function escapeHtml(value: string | number | null | undefined) {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+const RECEIPT_LOGO_PATH = path.join(process.cwd(), "public", "logo-lcdj.gif");
+
+function readReceiptLogoDataUri() {
+  try {
+    const buffer = readFileSync(RECEIPT_LOGO_PATH);
+    return `data:image/png;base64,${buffer.toString("base64")}`;
+  } catch (error) {
+    console.warn("hr_vacation_receipt_logo_unavailable", error instanceof Error ? error.message : String(error));
+    return null;
+  }
+}
+
 export function renderVacationReceiptHtml(model: VacationReceiptModel) {
   const contractPeriod = contractPeriodFromModel(model);
   const allocationNote = model.allocations.map((item) => `${escapeHtml(item.period)}: ${formatDays(item.daysUsed)} dias`).join(" · ");
+  const logoDataUri = readReceiptLogoDataUri();
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -195,10 +211,12 @@ export function renderVacationReceiptHtml(model: VacationReceiptModel) {
   .toolbar { display:flex; justify-content:center; gap:10px; padding:16px; }
   .toolbar button { border:1px solid #333; border-radius:4px; background:white; color:#111; cursor:pointer; font-weight:700; padding:8px 14px; }
   .page { width:297mm; min-height:210mm; margin:20px auto; background:white; padding:13mm 15mm; box-shadow:0 8px 26px rgba(0,0,0,.14); }
-  .header { display:grid; grid-template-columns:minmax(0, 1fr) 210px; gap:24px; align-items:start; }
+  .header { display:grid; grid-template-columns:minmax(0, 1fr) 100px 210px; gap:18px; align-items:start; }
   .company { font-size:12px; line-height:1.5; }
   .company-row { display:grid; grid-template-columns:96px minmax(0, 1fr); gap:10px; min-height:18px; }
   .company-row span { font-weight:700; }
+  .receipt-logo { align-self:start; display:flex; justify-content:center; padding-top:2px; }
+  .receipt-logo img { display:block; height:auto; max-height:38px; object-fit:contain; width:92px; }
   .date { font-size:12px; text-align:left; }
   .date strong { display:block; font-size:11px; margin-top:8px; }
   h1 { font-size:18px; margin:18px 0 16px; text-align:center; text-decoration:underline; }
@@ -238,6 +256,7 @@ export function renderVacationReceiptHtml(model: VacationReceiptModel) {
       <div class="company-row"><span>Direccion:</span><strong>${escapeHtml(model.company.address || "No informado")}</strong></div>
       <div class="company-row"><span>Telefono:</span><strong>${escapeHtml(model.company.phone || "No informado")}</strong></div>
     </div>
+    <div class="receipt-logo">${logoDataUri ? `<img alt="La Cocina de Javier" src="${logoDataUri}" />` : ""}</div>
     <div class="date">
       <div><strong>Fecha:</strong> ${formatChileDate(model.documentDate)}</div>
       <strong>${escapeHtml(model.receiptNumber)}</strong>
@@ -276,13 +295,90 @@ function pdfText(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7E]/g, "").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
 }
 
+function paethPredictor(left: number, above: number, upperLeft: number) {
+  const p = left + above - upperLeft;
+  const pa = Math.abs(p - left);
+  const pb = Math.abs(p - above);
+  const pc = Math.abs(p - upperLeft);
+  if (pa <= pb && pa <= pc) return left;
+  return pb <= pc ? above : upperLeft;
+}
+
+function readReceiptLogoPngForPdf() {
+  try {
+    const png = readFileSync(RECEIPT_LOGO_PATH);
+    if (png.subarray(0, 8).compare(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) !== 0) return null;
+    let offset = 8;
+    let width = 0;
+    let height = 0;
+    let bitDepth = 0;
+    let colorType = 0;
+    const idat: Buffer[] = [];
+    while (offset < png.length) {
+      const length = png.readUInt32BE(offset);
+      const type = png.subarray(offset + 4, offset + 8).toString("ascii");
+      const data = png.subarray(offset + 8, offset + 8 + length);
+      if (type === "IHDR") {
+        width = data.readUInt32BE(0);
+        height = data.readUInt32BE(4);
+        bitDepth = data[8];
+        colorType = data[9];
+      }
+      if (type === "IDAT") idat.push(data);
+      if (type === "IEND") break;
+      offset += length + 12;
+    }
+    const bytesPerPixel = colorType === 6 ? 4 : colorType === 2 ? 3 : 0;
+    if (!width || !height || bitDepth !== 8 || !bytesPerPixel) return null;
+    const inflated = zlib.inflateSync(Buffer.concat(idat));
+    const stride = width * bytesPerPixel;
+    const rgba = Buffer.alloc(height * stride);
+    let inputOffset = 0;
+    for (let y = 0; y < height; y += 1) {
+      const filter = inflated[inputOffset];
+      inputOffset += 1;
+      const rowStart = y * stride;
+      for (let x = 0; x < stride; x += 1) {
+        const raw = inflated[inputOffset + x];
+        const left = x >= bytesPerPixel ? rgba[rowStart + x - bytesPerPixel] : 0;
+        const above = y > 0 ? rgba[rowStart + x - stride] : 0;
+        const upperLeft = y > 0 && x >= bytesPerPixel ? rgba[rowStart + x - stride - bytesPerPixel] : 0;
+        const value = filter === 0
+          ? raw
+          : filter === 1
+            ? raw + left
+            : filter === 2
+              ? raw + above
+              : filter === 3
+                ? raw + Math.floor((left + above) / 2)
+                : raw + paethPredictor(left, above, upperLeft);
+        rgba[rowStart + x] = value & 0xff;
+      }
+      inputOffset += stride;
+    }
+    const rgb = Buffer.alloc(width * height * 3);
+    for (let source = 0, target = 0; source < rgba.length; source += bytesPerPixel, target += 3) {
+      rgb[target] = rgba[source];
+      rgb[target + 1] = rgba[source + 1];
+      rgb[target + 2] = rgba[source + 2];
+    }
+    return { data: zlib.deflateSync(rgb), height, width };
+  } catch (error) {
+    console.warn("hr_vacation_receipt_pdf_logo_unavailable", error instanceof Error ? error.message : String(error));
+    return null;
+  }
+}
+
 export function renderVacationReceiptPdf(model: VacationReceiptModel) {
   const contractPeriod = contractPeriodFromModel(model);
   const allocationNote = model.allocations.map((item) => `${item.period}: ${formatDays(item.daysUsed)} dias`).join(" | ");
   const text = (x: number, y: number, size: number, value: string, font = "F1") => `0 0 0 rg BT /${font} ${size} Tf ${x} ${y} Td (${pdfText(value)}) Tj ET`;
   const line = (x1: number, y1: number, x2: number, y2: number) => `0 0 0 RG 0.7 w ${x1} ${y1} m ${x2} ${y2} l S`;
+  const logo = readReceiptLogoPngForPdf();
+  const logoDraw = logo ? "q 92 0 0 37.95 374 506 cm /Logo Do Q" : "";
   const note = `NOTA: ${model.legalNote}`;
   const content = [
+    logoDraw,
     text(42, 548, 10, "Razon Social:", "F2"),
     text(132, 548, 10, model.company.legalName, "F2"),
     text(42, 530, 10, "R.U.T.:", "F2"),
@@ -334,25 +430,28 @@ export function renderVacationReceiptPdf(model: VacationReceiptModel) {
     text(42, 42, 7, note.slice(0, 150), "F1"),
     text(42, 30, 7, note.slice(150, 300), "F1")
   ].join("\n");
+  const contentObjectNumber = logo ? 7 : 6;
+  const resources = logo ? "/Resources << /Font << /F1 4 0 R /F2 5 0 R >> /XObject << /Logo 6 0 R >> >>" : "/Resources << /Font << /F1 4 0 R /F2 5 0 R >> >>";
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 841.89 595.28] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 841.89 595.28] ${resources} /Contents ${contentObjectNumber} 0 R >>`,
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
+    ...(logo ? [`<< /Type /XObject /Subtype /Image /Width ${logo.width} /Height ${logo.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length ${logo.data.length} >>\nstream\n${logo.data.toString("binary")}\nendstream`] : []),
     `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`
   ];
   let pdf = "%PDF-1.4\n";
   const offsets = [0];
   objects.forEach((object, index) => {
-    offsets.push(Buffer.byteLength(pdf));
+    offsets.push(Buffer.byteLength(pdf, "binary"));
     pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
   });
-  const xrefOffset = Buffer.byteLength(pdf);
+  const xrefOffset = Buffer.byteLength(pdf, "binary");
   pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
   offsets.slice(1).forEach((offset) => { pdf += `${String(offset).padStart(10, "0")} 00000 n \n`; });
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-  return Buffer.from(pdf);
+  return Buffer.from(pdf, "binary");
 }
 
 export function vacationReceiptHash(buffer: Buffer) {
