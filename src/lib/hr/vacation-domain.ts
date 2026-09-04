@@ -3,6 +3,18 @@ export const BASE_ANNUAL_ENTITLEMENT = 15;
 export const CONTINUOUS_BLOCK_MINIMUM_DAYS = 10;
 
 export type VacationStatus = "borrador" | "solicitada" | "pendiente" | "aprobada" | "rechazada" | "anulada" | "en_curso" | "finalizada";
+export const CANCELLED_VACATION_STATUSES: ReadonlySet<string> = new Set(["anulada", "rechazada"]);
+export const OPERATIONAL_VACATION_STATUSES: ReadonlySet<string> = new Set(["borrador", "solicitada", "pendiente", "aprobada", "en_curso", "finalizada"]);
+
+export function isCancelledVacationRequest(status: string | null | undefined) {
+  return CANCELLED_VACATION_STATUSES.has(String(status ?? "").toLowerCase());
+}
+
+export function isOperationalVacationRequest(status: string | null | undefined) {
+  const normalized = String(status ?? "").toLowerCase();
+  return OPERATIONAL_VACATION_STATUSES.has(normalized) && !isCancelledVacationRequest(normalized);
+}
+
 export type VacationPeriodStatus = "open" | "closed" | "future";
 export type VacationAllocationType = "earned" | "reserved" | "advance" | "reversal";
 export type VacationSchedule = {

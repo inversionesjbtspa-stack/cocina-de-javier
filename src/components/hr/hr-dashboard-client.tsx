@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import {
   BadgeDollarSign,
   CalendarDays,
@@ -22,6 +23,7 @@ import {
 import { formatClp } from "@/lib/dte/purchases-data";
 import type { HrDashboardData, HrEmployee } from "@/lib/hr/data";
 import { buildSalaryRows, salaryRowHasNovelty } from "@/lib/hr/salary-data";
+import { isCancelledVacationRequest, isOperationalVacationRequest } from "@/lib/hr/vacation-domain";
 import { EmployeeSummary } from "@/components/hr/employee-summary";
 import {
   VacationAccrualForm,
@@ -112,9 +114,9 @@ function download(blob: Blob, filename: string) {
 }
 
 function statusClass(status: string) {
-  if (status === "activo" || status === "pagado" || status === "aprobado") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  if (status === "activo" || status === "pagado" || status === "aprobado" || status === "aprobada") return "border-emerald-200 bg-emerald-50 text-emerald-800";
   if (status === "pendiente_pago" || status === "en_nomina" || status === "solicitada") return "border-amber-200 bg-amber-50 text-amber-800";
-  if (status === "anulado" || status === "rechazado" || status === "finiquitado") return "border-rose-200 bg-rose-50 text-rose-800";
+  if (status === "anulado" || status === "anulada" || status === "rechazado" || status === "rechazada" || status === "finiquitado") return "border-rose-200 bg-rose-50 text-rose-800";
   return "border-[#dfe4dd] bg-white text-[#4e5a52]";
 }
 
@@ -235,6 +237,7 @@ function SectionCard({ children, className = "" }: { children: React.ReactNode; 
 }
 
 export function HrDashboardClient({ data, initialSection }: { data: HrDashboardData; initialSection?: string }) {
+  const router = useRouter();
   const initialActiveSection = sections.some((section) => section.id === initialSection) ? initialSection as HrSection : "workers";
   const [activeSection, setActiveSection] = useState<HrSection>(initialActiveSection);
   const [employees, setEmployees] = useState(data.employees);
@@ -720,7 +723,12 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
       method: "PATCH"
     });
     const payload = await response.json().catch(() => null);
-    setMessage(response.ok ? "Solicitud de vacaciones anulada y auditada." : payload?.error ?? "No se pudo anular la solicitud.");
+    if (!response.ok) {
+      setMessage(payload?.error ?? "No se pudo anular la solicitud.");
+      return;
+    }
+    setMessage(payload?.result?.already_cancelled ? "La solicitud ya se encontraba anulada." : "Solicitud de vacaciones anulada y auditada.");
+    router.refresh();
   }
 
   return (
@@ -1280,6 +1288,7 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
   const periods = data.vacationPeriods.filter((item) => item.employeeId === employee.id);
   const movements = data.vacationMovements.filter((item) => item.employeeId === employee.id);
   const progressiveRecords = data.vacationProgressiveRecords.filter((item) => item.employeeId === employee.id);
+  const operationalVacations = vacations.filter((vacation) => isOperationalVacationRequest(vacation.status));
   async function action(id: string, endpoint: string, body: Record<string, unknown> = {}) {
     const response = await fetch(`/api/hr/vacations/${id}/${endpoint}`, {
       body: JSON.stringify(body),
@@ -1296,7 +1305,7 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
         <p className="mt-2 text-sm text-[#667068]">El sistema calcula dias habiles legales, saldo y FIFO antes de confirmar.</p>
         <VacationSummary employee={employee} periods={periods} />
         <VacationRequestForm employeeId={employee.id} submitJson={submitJson} />
-        <VacationRecentRequests vacations={vacations} />
+        <VacationRecentRequests vacations={operationalVacations} />
       </SectionCard>
       <SectionCard className="w-full min-w-0 max-w-[calc(100vw-2.5rem)] overflow-hidden p-5 xl:max-w-full">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1330,7 +1339,7 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
                   <a className="inline-flex min-h-9 w-full items-center justify-center gap-1 rounded-md bg-brand-700 px-2.5 py-1.5 text-center text-xs font-semibold text-white" href={`/api/hr/vacations/${vacation.id}/papeleta?format=pdf`} rel="noreferrer" target="_blank">PDF <Download className="h-3.5 w-3.5" /></a>
                   {["borrador", "solicitada", "pendiente"].includes(vacation.status) ? <button className="min-h-9 w-full rounded-md border border-emerald-300 px-2.5 py-1.5 text-xs font-semibold text-emerald-700" onClick={() => action(vacation.id, "approve")} type="button">Aprobar</button> : null}
                   {!["aprobada", "rechazada", "anulada"].includes(vacation.status) ? <button className="min-h-9 w-full rounded-md border border-amber-300 px-2.5 py-1.5 text-xs font-semibold text-amber-700" onClick={() => action(vacation.id, "reject", { reason: "Rechazo registrado desde RRHH" })} type="button">Rechazar</button> : null}
-                  <button className="min-h-9 w-full rounded-md border border-rose-300 px-2.5 py-1.5 text-xs font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-50" disabled={vacation.status === "anulada"} onClick={() => cancelVacationRequest(vacation.id)} type="button">Anular solicitud</button>
+                  <button className="min-h-9 w-full rounded-md border border-rose-300 px-2.5 py-1.5 text-xs font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-50" disabled={isCancelledVacationRequest(vacation.status)} onClick={() => cancelVacationRequest(vacation.id)} type="button">{isCancelledVacationRequest(vacation.status) ? "Solicitud anulada" : "Anular solicitud"}</button>
                 </div>
               </div>
             ))}

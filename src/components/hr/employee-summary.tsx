@@ -1,5 +1,6 @@
 import { formatClp } from "@/lib/dte/purchases-data";
 import type { HrDashboardData, HrEmployee } from "@/lib/hr/data";
+import { isOperationalVacationRequest } from "@/lib/hr/vacation-domain";
 import type { ReactNode } from "react";
 
 function pillClass(status: "ok" | "warn" | "neutral") {
@@ -36,7 +37,7 @@ export function EmployeeSummary({ data, employee }: { data: HrDashboardData; emp
   const vacationUsed = periods.reduce((sum, period) => sum + period.usedDays, 0);
   const currentPeriod = periods.find((period) => period.status === "open") ?? periods[0] ?? null;
   const nextVacation = vacations
-    .filter((vacation) => !["anulada", "rechazada"].includes(vacation.status) && (vacation.effectiveRestEndDate ?? vacation.endDate) >= todayIso())
+    .filter((vacation) => isOperationalVacationRequest(vacation.status) && (vacation.effectiveRestEndDate ?? vacation.endDate) >= todayIso())
     .sort((a, b) => a.startDate.localeCompare(b.startDate))[0] ?? null;
   const latestPayslip = payslips[0] ?? null;
   const pendingPayments = payments.filter((payment) => ["aprobado", "pendiente_pago", "en_nomina"].includes(payment.status));

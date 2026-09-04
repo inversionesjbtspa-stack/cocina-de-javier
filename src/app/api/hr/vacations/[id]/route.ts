@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
+import { isCancelledVacationRequest } from "@/lib/hr/vacation-domain";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
@@ -47,11 +49,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (!parsed.success) return NextResponse.json({ ok: false, error: "vacation_patch_validation_failed", fields: parsed.error.flatten().fieldErrors }, { status: 422 });
   const { id } = await params;
   const supabase = createAdminClient();
-  const result = await supabase.rpc("hr_cancel_vacation_request", {
+  const authSupabase = await createClient();
+  const result = await authSupabase.rpc("hr_cancel_vacation_request", {
     p_reason: parsed.data.reason,
     p_request_id: id
   });
-  if (!result.error) return NextResponse.json({ ok: true, result: result.data });
   const { data: current }: VacationRequestLookupResult = await supabase
     .from("hr_vacation_requests")
     .select("id,tenant_id,status")
@@ -59,5 +61,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     .eq("id", id)
     .maybeSingle();
   if (!current || current.tenant_id !== ctx.membership.tenant_id) return NextResponse.json({ ok: false, error: "vacation_not_found" }, { status: 404 });
-  return NextResponse.json({ ok: false, error: result.error.message }, { status: 422 });
+  if (result.error) {
+    if (isCancelledVacationRequest(current.status) && result.error.message.includes("vacation_already_cancelled")) {
+      return NextResponse.json({ ok: true, result: { already_cancelled: true, status: current.status } });
+    }
+    return NextResponse.json({ ok: false, error: result.error.message }, { status: 422 });
+  }
+  if (!isCancelledVacationRequest(current.status)) {
+    return NextResponse.json({ ok: false, error: "vacation_cancel_not_persisted", status: current.status }, { status: 409 });
+  }
+  return NextResponse.json({ ok: true, result: { ...(typeof result.data === "object" && result.data ? result.data : {}), status: current.status } });
 }

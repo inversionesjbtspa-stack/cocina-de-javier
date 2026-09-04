@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import type { HrDashboardData, HrEmployee } from "@/lib/hr/data";
+import { isCancelledVacationRequest, isOperationalVacationRequest } from "@/lib/hr/vacation-domain";
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -431,7 +432,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
 }
 
 function simpleVacationStatus(vacation: HrDashboardData["vacations"][number]) {
-  if (vacation.status === "anulada" || vacation.status === "rechazada") return "CANCELADA";
+  if (isCancelledVacationRequest(vacation.status)) return "CANCELADA";
   if (vacation.status === "borrador") return "BORRADOR";
   if (vacation.status !== "aprobada") return "PROGRAMADA";
   const current = today();
@@ -441,6 +442,7 @@ function simpleVacationStatus(vacation: HrDashboardData["vacations"][number]) {
 }
 
 export function VacationRecentRequests({ vacations }: { vacations: HrDashboardData["vacations"] }) {
+  const operationalVacations = vacations.filter((vacation) => isOperationalVacationRequest(vacation.status));
   return (
     <div className="mt-4 overflow-x-auto rounded-lg border border-[#dfe4dd] bg-white">
       <div className="border-b border-[#dfe4dd] px-4 py-3">
@@ -451,7 +453,7 @@ export function VacationRecentRequests({ vacations }: { vacations: HrDashboardDa
           <tr><th className="px-4 py-3">Desde</th><th className="px-4 py-3">Hasta</th><th className="px-4 py-3">Dias</th><th className="px-4 py-3">Periodo</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Saldo posterior</th><th className="px-4 py-3">Comprobante</th></tr>
         </thead>
         <tbody>
-          {vacations.slice(0, 8).map((vacation) => (
+          {operationalVacations.slice(0, 8).map((vacation) => (
             <tr className="border-t" key={vacation.id}>
               <td className="px-4 py-3">{formatDate(vacation.startDate)}</td>
               <td className="px-4 py-3">{formatDate(vacation.effectiveRestEndDate ?? vacation.endDate)}</td>
@@ -462,7 +464,7 @@ export function VacationRecentRequests({ vacations }: { vacations: HrDashboardDa
               <td className="px-4 py-3">{vacation.documentNumber ? <a className="font-semibold text-brand-700" href={`/api/hr/vacations/${vacation.id}/papeleta?format=pdf`} rel="noreferrer" target="_blank">PDF</a> : "Pendiente"}</td>
             </tr>
           ))}
-          {!vacations.length ? <tr><td className="px-4 py-4 text-sm text-[#667068]" colSpan={7}>Sin vacaciones programadas.</td></tr> : null}
+          {!operationalVacations.length ? <tr><td className="px-4 py-4 text-sm text-[#667068]" colSpan={7}>Sin vacaciones programadas.</td></tr> : null}
         </tbody>
       </table>
     </div>

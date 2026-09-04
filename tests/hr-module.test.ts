@@ -31,6 +31,8 @@ import {
   classifyWorkCalendarDay,
   evaluateHolidayCalendarStatus,
   generateContractPeriods,
+  isCancelledVacationRequest,
+  isOperationalVacationRequest,
   reverseVacationAllocation,
   validateAdvanceVacation,
   validateFractionation
@@ -44,6 +46,17 @@ test("HR vacation helpers count business days and accrue Chile base vacation day
   assert.equal(businessDaysInclusive("2026-05-25", "2026-05-31"), 5);
   assert.equal(businessDaysInclusive("2026-05-30", "2026-05-31"), 0);
   assert.equal(accruedVacationDays("2025-05-26", new Date("2026-05-26T00:00:00")), 15);
+});
+
+test("HR vacation status helpers keep cancelled requests out of operational views", () => {
+  assert.equal(isCancelledVacationRequest("anulada"), true);
+  assert.equal(isCancelledVacationRequest("rechazada"), true);
+  assert.equal(isCancelledVacationRequest("aprobada"), false);
+  assert.equal(isOperationalVacationRequest("anulada"), false);
+  assert.equal(isOperationalVacationRequest("rechazada"), false);
+  assert.equal(isOperationalVacationRequest("aprobada"), true);
+  assert.equal(isOperationalVacationRequest("solicitada"), true);
+  assert.equal(isOperationalVacationRequest("en_curso"), true);
 });
 
 test("HR module exposes operational tables, storage buckets and payment template flow", async () => {
@@ -1140,10 +1153,34 @@ test("HR vacation hardening migration implements transactional FIFO, idempotent 
   assert.doesNotMatch(approveRoute, /p_snapshot/);
   assert.doesNotMatch(rejectRoute, /rpc_not_available_fallback_reject/);
   assert.doesNotMatch(cancelRoute, /rpc_not_available_fallback_cancel/);
+  assert.match(cancelRoute, /import \{ createClient \} from "@\/lib\/supabase\/server"/);
+  assert.match(cancelRoute, /const authSupabase = await createClient\(\)/);
+  assert.match(cancelRoute, /authSupabase\.rpc\("hr_cancel_vacation_request"/);
+  assert.match(cancelRoute, /vacation_cancel_not_persisted/);
+  assert.match(cancelRoute, /vacation_already_cancelled/);
+  assert.match(cancelRoute, /already_cancelled/);
   assert.match(receiptRoute, /createSignedUrl/);
   assert.match(receiptRoute, /expiresInSeconds: 600/);
   assert.match(accrualRoute, /getEmployeeForHrTenant/);
   assert.match(accrualRoute, /employee_not_active/);
+});
+
+test("HR vacation cancellation UI refreshes data and hides cancelled requests from active lists", async () => {
+  const client = await readFile("src/components/hr/hr-dashboard-client.tsx", "utf8");
+  const summary = await readFile("src/components/hr/employee-summary.tsx", "utf8");
+  const vacationComponents = await readFile("src/components/hr/vacation-components.tsx", "utf8");
+
+  assert.match(client, /import \{ useRouter \} from "next\/navigation"/);
+  assert.match(client, /const router = useRouter\(\)/);
+  assert.match(client, /router\.refresh\(\)/);
+  assert.match(client, /isOperationalVacationRequest\(vacation\.status\)/);
+  assert.match(client, /isCancelledVacationRequest\(vacation\.status\)/);
+  assert.match(client, /Solicitud anulada/);
+  assert.match(client, /already_cancelled/);
+  assert.match(summary, /isOperationalVacationRequest\(vacation\.status\)/);
+  assert.match(vacationComponents, /const operationalVacations = vacations\.filter/);
+  assert.match(vacationComponents, /isOperationalVacationRequest\(vacation\.status\)/);
+  assert.match(vacationComponents, /!operationalVacations\.length/);
 });
 
 test("HR vacation confirmation uses authenticated session and human UI errors", async () => {
