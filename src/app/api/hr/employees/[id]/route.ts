@@ -9,6 +9,7 @@ const patchSchema = z.object({
   area: z.string().trim().max(120).optional(),
   bankAccount: z.string().trim().optional(),
   bankCode: z.string().trim().optional(),
+  bankGlosaTef: z.string().trim().max(120).optional(),
   bankName: z.string().trim().optional(),
   commune: z.string().trim().max(120).optional(),
   costCenter: z.string().trim().max(120).optional(),
@@ -20,6 +21,7 @@ const patchSchema = z.object({
   phone: z.string().trim().max(80).optional(),
   position: z.string().trim().max(160).optional(),
   reason: z.string().trim().max(500).optional(),
+  realOwnerName: z.string().trim().max(160).optional(),
   salary: z.coerce.number().min(0).optional(),
   status: z.enum(["activo", "inactivo", "finiquitado", "suspendido"]).optional(),
   tipoCuenta: z.string().trim().optional(),
@@ -84,7 +86,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
   await supabase.from("hr_employees").update(employeeUpdate).eq("id", id).eq("tenant_id", ctx.membership.tenant_id);
 
-  if (body.bankName !== undefined || body.bankCode !== undefined || body.bankAccount !== undefined || body.tipoCuenta !== undefined || body.emailPayment !== undefined) {
+  if (body.bankName !== undefined || body.bankCode !== undefined || body.bankAccount !== undefined || body.tipoCuenta !== undefined || body.emailPayment !== undefined || body.realOwnerName !== undefined || body.bankGlosaTef !== undefined) {
     const bank = Array.isArray(before.data.hr_employee_bank_accounts) ? before.data.hr_employee_bank_accounts[0] : before.data.hr_employee_bank_accounts;
     const payload = {
       account_holder_name: body.titularCuenta ?? before.data.full_name,
@@ -93,8 +95,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       account_type: body.tipoCuenta ?? bank?.account_type ?? null,
       bank_code: body.bankCode ?? bank?.bank_code ?? null,
       bank_name: body.bankName ?? bank?.bank_name ?? null,
+      glosa_tef: body.bankGlosaTef ?? bank?.glosa_tef ?? null,
       employee_id: id,
       payment_email: body.emailPayment ?? bank?.payment_email ?? before.data.work_email ?? before.data.personal_email ?? null,
+      real_owner_name: body.realOwnerName ?? bank?.real_owner_name ?? body.titularCuenta ?? before.data.full_name,
+      review_status: body.tipoCuenta && body.bankName && body.bankCode && body.bankAccount ? "VALIDADO_MANUAL" : "POR_REVISAR",
       tenant_id: ctx.membership.tenant_id,
       updated_by: ctx.user.id,
       validation_status: body.bankName && body.bankCode && body.bankAccount ? "validated" : "pending"

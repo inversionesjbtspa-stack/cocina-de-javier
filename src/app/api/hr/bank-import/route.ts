@@ -1,37 +1,22 @@
 import { NextResponse } from "next/server";
 import { requireHrContext } from "@/lib/hr/auth";
-import { parseHrBankWorkbook } from "@/lib/hr/bank-import-parser";
-import { normalizeRut } from "@/lib/hr/utils";
+import { buildBankImportPreview, parseHrBankSourceFile } from "@/lib/hr/bank-tef";
 import { createAdminClient } from "@/lib/supabase/admin";
-
-function normalizeName(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^A-Za-z0-9]+/g, " ")
-    .trim()
-    .toUpperCase();
-}
-
-function glosaName(value: string) {
-  return normalizeName(value.replace(/^REM\s+[A-Z]+\s+/i, ""));
-}
-
-function accountTypeFromCode(bankCode: string) {
-  return bankCode === "875" ? "Cuenta Mercado Pago" : "Cuenta corriente";
-}
 
 type EmployeeRow = {
   full_name: string;
   id: string;
-  payment_enabled: boolean;
   rut: string;
   status: string;
-};
-
-type BankRow = {
-  account_number: string | null;
-  id: string;
+  hr_employee_bank_accounts?: Array<{
+    account_number: string | null;
+    bank_code: string | null;
+    glosa_tef?: string | null;
+    account_holder_name: string | null;
+    account_holder_rut: string | null;
+    payment_email: string | null;
+    real_owner_name?: string | null;
+  }>;
 };
 
 export async function POST(request: Request) {
@@ -39,92 +24,92 @@ export async function POST(request: Request) {
   if (ctx.error) return ctx.error;
   const form = await request.formData();
   const file = form.get("bankFile");
+  const mode = String(form.get("mode") ?? "preview");
   if (!(file instanceof File)) return NextResponse.json({ ok: false, error: "hr_bank_file_required" }, { status: 422 });
 
-  const rows = parseHrBankWorkbook(Buffer.from(await file.arrayBuffer()));
+  const parsedFile = parseHrBankSourceFile(Buffer.from(await file.arrayBuffer()), file.name);
   const supabase = createAdminClient();
   const { data: employees } = await supabase
     .from("hr_employees")
-    .select("id,rut,full_name,status,payment_enabled")
+    .select("id,rut,full_name,status,hr_employee_bank_accounts(id,account_number,bank_code,glosa_tef,account_holder_name,account_holder_rut,payment_email,real_owner_name)")
     .eq("tenant_id", ctx.membership.tenant_id);
 
-  const employeeRows = (employees ?? []) as EmployeeRow[];
-  const byRut = new Map(employeeRows.map((employee) => [normalizeRut(employee.rut), employee]));
-  const byName = new Map(employeeRows.map((employee) => [normalizeName(employee.full_name), employee]));
+  const employeeRows = ((employees ?? []) as EmployeeRow[]).map((employee) => {
+    const bank = employee.hr_employee_bank_accounts?.[0];
+    return {
+      fullName: employee.full_name,
+      id: employee.id,
+      rut: employee.rut,
+      status: employee.status,
+      bankAccount: bank ? {
+        accountNumber: bank.account_number,
+        bankCode: bank.bank_code,
+        glosaTef: bank.glosa_tef,
+        holderName: bank.account_holder_name,
+        holderRut: bank.account_holder_rut,
+        paymentEmail: bank.payment_email,
+        realOwnerName: bank.real_owner_name
+      } : null
+    };
+  });
+  const preview = buildBankImportPreview(parsedFile.rows, employeeRows);
 
-  let updated = 0;
+  if (mode !== "commit") {
+    return NextResponse.json({
+      ok: true,
+      preview,
+      source: { fileName: file.name, sheetName: parsedFile.sheetName, sourceKind: parsedFile.sourceKind },
+      writeMode: "preview_only"
+    });
+  }
+
+  const importable = preview.rows.filter((row) => row.employeeId && (row.status === "LISTO" || row.status === "CAMBIO DE CUENTA"));
   let inserted = 0;
-  let enabled = 0;
-  const unmatched: Array<{ glosaTef: string; holderName: string; holderRut: string; rowNumber: number }> = [];
-  const incomplete: Array<{ employeeName: string; missing: string[]; rowNumber: number }> = [];
-
-  for (const row of rows) {
-    const employee =
-      (row.holderRut ? byRut.get(row.holderRut) : undefined) ??
-      byName.get(normalizeName(row.holderName)) ??
-      byName.get(glosaName(row.glosaTef)) ??
-      employeeRows.find((candidate) => glosaName(row.glosaTef).includes(normalizeName(candidate.full_name)) || normalizeName(candidate.full_name).includes(glosaName(row.glosaTef)));
-
-    if (!employee) {
-      unmatched.push({ glosaTef: row.glosaTef, holderName: row.holderName, holderRut: row.holderRut, rowNumber: row.rowNumber });
-      continue;
-    }
-
-    const missing = [];
-    if (!row.bankCode) missing.push("codigo banco");
-    if (!row.accountNumber) missing.push("numero cuenta");
-    if (!row.email) missing.push("email pago");
-    if (missing.length) incomplete.push({ employeeName: employee.full_name, missing, rowNumber: row.rowNumber });
-    const valid = Boolean(row.bankCode && row.accountNumber);
+  let updated = 0;
+  for (const row of importable) {
     const { data: existing } = await supabase
       .from("hr_employee_bank_accounts")
-      .select("id,account_number")
+      .select("id")
       .eq("tenant_id", ctx.membership.tenant_id)
-      .eq("employee_id", employee.id)
+      .eq("employee_id", row.employeeId)
       .eq("is_primary", true)
       .maybeSingle();
     const payload = {
-      account_holder_name: row.holderName || employee.full_name,
-      account_holder_rut: row.holderRut || employee.rut,
+      account_holder_name: row.holderName || row.employeeName,
+      account_holder_rut: row.holderRut,
       account_number: row.accountNumber,
-      account_type: accountTypeFromCode(row.bankCode),
+      account_type: null,
       bank_code: row.bankCode,
       bank_name: row.bankName || row.bankCode,
-      glosa_tef: row.glosaTef,
+      glosa_tef: row.glosaTef || null,
       imported_at: new Date().toISOString(),
       is_primary: true,
       payment_email: row.email || null,
+      real_owner_name: row.realOwnerName || row.employeeName,
+      review_status: "POR_REVISAR_TIPO_CUENTA",
       source_file: file.name,
       tenant_id: ctx.membership.tenant_id,
       updated_by: ctx.user.id,
-      validation_status: valid ? "valid" : "pending"
+      validation_status: "pending"
     };
-    if ((existing as BankRow | null)?.id) {
-      await supabase.from("hr_employee_bank_accounts").update(payload).eq("id", (existing as BankRow).id);
+    if (existing?.id) {
+      await supabase.from("hr_employee_bank_accounts").update(payload).eq("id", existing.id);
       updated += 1;
     } else {
-      await supabase.from("hr_employee_bank_accounts").insert({ ...payload, created_by: ctx.user.id, employee_id: employee.id });
+      await supabase.from("hr_employee_bank_accounts").insert({ ...payload, created_by: ctx.user.id, employee_id: row.employeeId });
       inserted += 1;
     }
-    await supabase.from("hr_employees").update({
-      glosa_tef: row.glosaTef,
-      payment_enabled: employee.status === "activo" && valid,
-      payment_enabled_at: employee.status === "activo" && valid && !employee.payment_enabled ? new Date().toISOString() : undefined,
-      payment_enabled_by: employee.status === "activo" && valid && !employee.payment_enabled ? ctx.user.id : undefined,
-      updated_by: ctx.user.id
-    }).eq("id", employee.id);
-    if (employee.status === "activo" && valid && !employee.payment_enabled) enabled += 1;
   }
 
   await supabase.from("audit_events").insert({
     actor_role: ctx.membership.role,
     actor_user_id: ctx.user.id,
-    after_data: { enabled, file: file.name, imported: rows.length, incomplete: incomplete.length, inserted, unmatched: unmatched.length, updated },
+    after_data: { file: file.name, inserted, preview: preview.summary, sheet: parsedFile.sheetName, updated },
     company_id: ctx.membership.company_id,
     entity_type: "hr_employee_bank_accounts",
-    event_type: "hr.bank_accounts_imported",
+    event_type: "hr.bank_accounts_imported_from_preview",
     tenant_id: ctx.membership.tenant_id
   });
 
-  return NextResponse.json({ ok: true, enabled, imported: rows.length, incomplete, inserted, unmatched, updated });
+  return NextResponse.json({ ok: true, imported: importable.length, inserted, preview, updated });
 }

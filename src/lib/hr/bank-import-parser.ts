@@ -1,5 +1,5 @@
-import { mapBankName } from "../payments/bank-mappings";
-import { normalizeRut } from "./utils";
+import { mapBankName } from "../payments/bank-mappings.ts";
+import { normalizeRut } from "./utils.ts";
 
 export type HrBankImportRow = {
   accountNumber: string;
