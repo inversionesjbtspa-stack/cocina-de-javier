@@ -7,6 +7,7 @@ import AdmZip from "adm-zip";
 import { classifyPayslipPdf } from "../src/lib/hr/payslip-classifier.ts";
 import test from "node:test";
 import { buildPayslipPayrollImportItems, summarizePayslipPayrollImport } from "../src/lib/hr/payslip-payroll-import.ts";
+import { buildBankImportPreview, buildHrTefPreview, generateHrTefWorkbook, parseHrBankSourceFile } from "../src/lib/hr/bank-tef.ts";
 import { extractPayslipsFromPdf, generateAccountantWorkbook, parseAccountantWorkbook, payslipPaymentGlosa } from "../src/lib/hr/payroll-parser.ts";
 import { validatePaymentBatchEmployee } from "../src/lib/hr/payment-batch.ts";
 import { buildSalaryRows, salaryRowHasNovelty } from "../src/lib/hr/salary-data.ts";
@@ -42,10 +43,77 @@ import { companyConfigFromRow, mergeCompanyConfig } from "../src/lib/hr/company-
 
 const fixturePath = (...segments: string[]) => path.resolve(process.cwd(), "tests", "fixtures", "hr", ...segments);
 
+function bankXlsxFixture() {
+  const zip = new AdmZip();
+  const rows = [
+    ["Cta_destino", "Cod_banco", "RUT benef.", "Nombre segun Glosa TEF", "correo", "Propietario real de la cuenta"],
+    ["226552003", "39", "252890351", "JESUS BETANCOURT", "pago@example.com", "BETANCOURT PAREZ JESUS"],
+    ["63824981", "16", "263905156", "MEDINA KEMBERLY", "tercero@example.com", "MIGUEL MOLINA"]
+  ];
+  const cell = (column: string, row: number, value: string) => `<c r="${column}${row}" t="inlineStr"><is><t>${value}</t></is></c>`;
+  const sheetRows = rows.map((row, rowIndex) => `<row r="${rowIndex + 1}">${row.map((value, columnIndex) => cell(String.fromCharCode(65 + columnIndex), rowIndex + 1, value)).join("")}</row>`).join("");
+  zip.addFile("[Content_Types].xml", Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`));
+  zip.addFile("_rels/.rels", Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`));
+  zip.addFile("xl/_rels/workbook.xml.rels", Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`));
+  zip.addFile("xl/workbook.xml", Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Hoja2" sheetId="1" r:id="rId1"/></sheets></workbook>`));
+  zip.addFile("xl/worksheets/sheet1.xml", Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData></worksheet>`));
+  return zip.toBuffer();
+}
+
 test("HR vacation helpers count business days and accrue Chile base vacation days", () => {
   assert.equal(businessDaysInclusive("2026-05-25", "2026-05-31"), 5);
   assert.equal(businessDaysInclusive("2026-05-30", "2026-05-31"), 0);
   assert.equal(accruedVacationDays("2025-05-26", new Date("2026-05-26T00:00:00")), 15);
+});
+
+test("HR bank import parses XLSX Hoja2 and matches exclusively by RUT", () => {
+  const parsed = parseHrBankSourceFile(bankXlsxFixture(), "nomina codex.xlsx");
+  assert.equal(parsed.sheetName, "Hoja2");
+  assert.equal(parsed.rows.length, 2);
+  assert.equal(parsed.rows[0].holderRut, "252890351");
+  const preview = buildBankImportPreview(parsed.rows, [
+    { fullName: "BETANCOURT PAREZ JESUS", id: "emp-1", rut: "25.289.035-1", status: "activo" },
+    { fullName: "MEDINA KEMBERLY", id: "emp-2", rut: "26.390.515-6", status: "activo" }
+  ]);
+  assert.equal(preview.summary.ready, 1);
+  assert.equal(preview.summary.thirdPartyReview, 1);
+  assert.equal(preview.rows[0].matchedBy, "rut");
+  assert.equal(preview.rows[1].status, "CUENTA DE TERCERO / REVISAR");
+});
+
+test("HR bank import does not match by name when RUT is missing or wrong", () => {
+  const parsed = parseHrBankSourceFile(bankXlsxFixture(), "nomina codex.xlsx");
+  const rows = [{ ...parsed.rows[0], holderRut: "999999999" }];
+  const preview = buildBankImportPreview(rows, [
+    { fullName: "JESUS BETANCOURT", id: "emp-1", rut: "25.289.035-1", status: "activo" }
+  ]);
+  assert.equal(preview.summary.unmatched, 1);
+  assert.equal(preview.rows[0].employeeId, null);
+});
+
+test("HR TEF preview excludes zero amounts and incomplete bank data", () => {
+  const preview = buildHrTefPreview([
+    { accountNumber: "226552003", accountType: "Cuenta corriente", amount: 100000, bankCode: "39", bankName: "ITAU", employeeId: "emp-1", employeeName: "BETANCOURT PAREZ JESUS", employeeRut: "25289035-1", holderRut: "25289035-1", id: "11111111-1111-4111-8111-111111111111", paymentEmail: "pago@example.com", paymentType: "remuneracion_mensual", period: "2026-08", status: "aprobado" },
+    { accountNumber: "999", accountType: "Cuenta corriente", amount: 0, bankCode: "39", bankName: "ITAU", employeeId: "emp-2", employeeName: "SIN PAGO", employeeRut: "11111111-1", holderRut: "11111111-1", id: "22222222-2222-4222-8222-222222222222", paymentEmail: "cero@example.com", paymentType: "remuneracion_mensual", period: "2026-08", status: "aprobado" },
+    { accountNumber: "", accountType: "", amount: 50000, bankCode: "39", bankName: "ITAU", employeeId: "emp-3", employeeName: "BANCO INCOMPLETO", employeeRut: "22222222-2", id: "33333333-3333-4333-8333-333333333333", paymentEmail: "incompleto@example.com", paymentType: "remuneracion_mensual", period: "2026-08", status: "aprobado" }
+  ]);
+  assert.equal(preview.summary.included, 1);
+  assert.equal(preview.summary.zeroAmount, 1);
+  assert.equal(preview.summary.incompleteBank, 1);
+});
+
+test("HR TEF workbook uses PAGO sheet and exact A:K columns", () => {
+  const preview = buildHrTefPreview([
+    { accountNumber: "226552003", accountType: "Cuenta corriente", amount: 1379182, bankCode: "39", bankName: "ITAU", employeeId: "emp-1", employeeName: "BETANCOURT PAREZ JESUS", employeeRut: "25289035-1", holderRut: "25289035-1", id: "11111111-1111-4111-8111-111111111111", paymentEmail: "pago@example.com", paymentType: "remuneracion_mensual", period: "2026-08", status: "aprobado" }
+  ]);
+  const zip = new AdmZip(generateHrTefWorkbook(preview.rows));
+  const workbook = zip.getEntry("xl/workbook.xml")?.getData().toString("utf8") ?? "";
+  const sheet = zip.getEntry("xl/worksheets/sheet1.xml")?.getData().toString("utf8") ?? "";
+  assert.match(workbook, /name="PAGO"/);
+  assert.match(sheet, /<dimension ref="A1:K2"\/>/);
+  assert.match(sheet, /Cta_origen/);
+  assert.match(sheet, /71068862/);
+  assert.doesNotMatch(sheet, /<c r="L\d+"/);
 });
 
 test("HR vacation status helpers keep cancelled requests out of operational views", () => {
@@ -103,16 +171,16 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(repairMigration, /net_pay numeric/);
   assert.match(repairMigration, /create index if not exists hr_accountant_data_rows_tenant_period_idx/);
   assert.match(page, /RRHH operativo/);
-  assert.match(client, /Template Pagos JESUS/);
+  assert.match(client, /Descargar TEF Banco/);
   assert.match(client, /Habilitar pagos/);
-  assert.match(paymentRoute, /generateSantanderTemplateFromRows/);
+  assert.match(paymentRoute, /generateHrTefWorkbook/);
   assert.match(paymentRoute, /hr_payment_batches/);
-  assert.match(paymentRoute, /payment_enabled/);
-  assert.match(paymentRoute, /Honorarios/);
-  assert.match(paymentRoute, /Aguinaldo/);
-  assert.match(bankImportRoute, /parseHrBankWorkbook/);
-  assert.match(bankImportRoute, /glosa_tef/);
-  assert.match(bankImportRoute, /validation_status: valid \? "valid" : "pending"/);
+  assert.match(paymentRoute, /TEF_A_K_PAGO/);
+  assert.match(paymentRoute, /archivo_generado/);
+  assert.match(paymentRoute, /hr_payment_template_has_blocking_rows/);
+  assert.match(bankImportRoute, /parseHrBankSourceFile/);
+  assert.match(bankImportRoute, /writeMode: "preview_only"/);
+  assert.doesNotMatch(bankImportRoute, /byName|get\(normalizeName|accountTypeFromCode/);
   assert.match(bankImportParser, /glosa_tef/i);
   assert.match(bankImportParser, /0x00fd/);
   assert.match(bankMigration, /add column if not exists glosa_tef/);
@@ -150,7 +218,7 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(vacationComponents, /Vacaciones recientes/);
   assert.match(client, /Detalle \/ Auditoria/);
   assert.match(client, /Anticipos avanzados/);
-  assert.match(client, /Exportar tramo banco/);
+  assert.match(client, /hoja PAGO y columnas A:K/);
   assert.match(client, /Enviar liquidaciones pendientes pagadas/);
 });
 

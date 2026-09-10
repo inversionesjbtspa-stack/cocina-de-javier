@@ -42,6 +42,39 @@ type LegacyWorkerTab = WorkerTab | "contract" | "novelties" | "payments" | "docu
 type WorkerSort = "name" | "status" | "area" | "vacations" | "payments";
 type WorkerColumn = "fullName" | "rut" | "position" | "area" | "status" | "vacations" | "payslips" | "payments" | "bank";
 type HrPaymentItem = HrDashboardData["paymentItems"][number];
+type BankImportPreviewRow = {
+  accountNumber: string;
+  bankCode: string;
+  email: string;
+  employeeName: string | null;
+  glosaTef: string;
+  holderRut: string;
+  realOwnerName: string;
+  rowNumber: number;
+  status: string;
+};
+type TefPreviewRow = {
+  accountNumber: string;
+  amount: number;
+  bankCode: string;
+  employeeName: string;
+  glosaTef: string;
+  holderRut: string;
+  itemId: string;
+  paymentEmail: string;
+  status: string;
+  warnings: string[];
+};
+type TefPreviewSummary = {
+  duplicate: number;
+  included: number;
+  incompleteBank: number;
+  ready: number;
+  thirdPartyReview: number;
+  total: number;
+  totalAmount: number;
+  zeroAmount: number;
+};
 
 const paymentConcepts = [
   ["remuneracion_mensual", "Remuneracion mensual", false],
@@ -267,9 +300,13 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
   const [bulkPayslipPreview, setBulkPayslipPreview] = useState<Array<Record<string, string | number | boolean | null>>>([]);
   const [bulkPayslipSummary, setBulkPayslipSummary] = useState<Record<string, number> | null>(null);
   const [bulkPayslipAssignments, setBulkPayslipAssignments] = useState<Record<string, string>>({});
+  const [bankImportPreview, setBankImportPreview] = useState<BankImportPreviewRow[]>([]);
+  const [bankImportSummary, setBankImportSummary] = useState<Record<string, number> | null>(null);
   const [vacationImportPreview, setVacationImportPreview] = useState<Array<Record<string, unknown>>>([]);
   const [vacationImportSummary, setVacationImportSummary] = useState<Record<string, number> | null>(null);
   const [paymentSelection, setPaymentSelection] = useState<string[]>([]);
+  const [tefPreviewRows, setTefPreviewRows] = useState<TefPreviewRow[]>([]);
+  const [tefPreviewSummary, setTefPreviewSummary] = useState<TefPreviewSummary | null>(null);
   const [payrollEmployeeSelection, setPayrollEmployeeSelection] = useState<string[]>([]);
   const [paymentAreaFilter, setPaymentAreaFilter] = useState("");
   const [paymentPositionFilter, setPaymentPositionFilter] = useState("");
@@ -517,15 +554,16 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
   async function importBankAccounts(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
-    setMessage("Importando cuentas bancarias RRHH...");
+    setMessage("Previsualizando cuentas bancarias RRHH...");
     const response = await fetch("/api/hr/bank-import", { body: new FormData(form), method: "POST" });
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
       setMessage(payload?.error ?? "No se pudo importar cuentas bancarias.");
       return;
     }
-    setMessage(`Cuentas bancarias importadas: ${payload.imported} filas, ${payload.inserted} nuevas, ${payload.updated} actualizadas, ${payload.enabled} trabajadores habilitados, ${payload.unmatched?.length ?? 0} sin match.`);
-    form.reset();
+    setBankImportPreview(payload.preview?.rows ?? []);
+    setBankImportSummary(payload.preview?.summary ?? null);
+    setMessage(`Preview bancario listo: ${payload.preview?.summary?.ready ?? 0} listas, ${payload.preview?.summary?.thirdPartyReview ?? 0} cuentas de tercero, ${payload.preview?.summary?.unmatched ?? 0} sin trabajador.`);
   }
 
   async function previewVacationImport(event: FormEvent<HTMLFormElement>, commit = false) {
@@ -583,6 +621,34 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
     form.reset();
   }
 
+  async function previewPayroll() {
+    if (!paymentSelection.length) {
+      setMessage("Selecciona pagos aprobados antes de previsualizar.");
+      return;
+    }
+    const glosaGlobal = (document.getElementById("hr-glosa-global") as HTMLInputElement | null)?.value ?? "";
+    const response = await fetch("/api/hr/payment-template", {
+      body: JSON.stringify({
+        glosaGlobal,
+        mode: "preview",
+        paymentItemIds: paymentSelection,
+        payDate: today(),
+        selectionFilters: { area: paymentAreaFilter, position: paymentPositionFilter, sort: paymentSort },
+        trancheLabel: (document.getElementById("hr-tranche-label") as HTMLInputElement | null)?.value ?? ""
+      }),
+      headers: { "content-type": "application/json", "x-erp-request": "hr" },
+      method: "POST"
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      setMessage(payload?.error ?? "No se pudo previsualizar nomina bancaria RRHH");
+      return;
+    }
+    setTefPreviewRows(payload.preview?.rows ?? []);
+    setTefPreviewSummary(payload.preview?.summary ?? null);
+    setMessage(`Preview TEF: ${payload.preview?.summary?.included ?? 0} incluidas, ${payload.preview?.summary?.incompleteBank ?? 0} banco incompleto, total ${formatClp(payload.preview?.summary?.totalAmount ?? 0)}.`);
+  }
+
   async function generatePayroll() {
     if (!paymentSelection.length) {
       setMessage("Selecciona pagos aprobados antes de exportar.");
@@ -592,6 +658,7 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
     const response = await fetch("/api/hr/payment-template", {
       body: JSON.stringify({
         glosaGlobal,
+        mode: "export",
         paymentItemIds: paymentSelection,
         payDate: today(),
         selectionFilters: { area: paymentAreaFilter, position: paymentPositionFilter, sort: paymentSort },
@@ -602,11 +669,13 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
-      setMessage(payload?.invalid?.length ? `No exportado: ${payload.invalid.length} trabajador(es) con datos incompletos.` : payload?.error ?? "No se pudo generar nomina RRHH");
+      setTefPreviewRows(payload?.preview?.rows ?? tefPreviewRows);
+      setTefPreviewSummary(payload?.preview?.summary ?? tefPreviewSummary);
+      setMessage(payload?.error === "hr_payment_template_has_blocking_rows" ? "No exportado: existen filas duplicadas o con banco incompleto." : payload?.error ?? "No se pudo generar nomina TEF RRHH");
       return;
     }
-    download(await response.blob(), "Template Pagos JESUS - RRHH.xlsx");
-    setMessage("Nomina RRHH exportada con Template Pagos JESUS.");
+    download(await response.blob(), `Nomina bancaria RRHH ${data.period}.xlsx`);
+    setMessage("Nomina bancaria TEF RRHH exportada. Archivo generado, no pagado.");
   }
 
   async function createSelectablePayrollBatch(config: { concept: string; conceptDescription: string; glosaGlobal: string; period: string; scheduledDate: string; status: "borrador" | "pendiente_pago" | "aprobado" }) {
@@ -792,6 +861,7 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
           filteredPaymentItems={filteredPaymentItems}
           generatePayroll={generatePayroll}
           markSelectedPaid={markSelectedPaid}
+          previewPayroll={previewPayroll}
           paymentAreaFilter={paymentAreaFilter}
           payrollEmployeeSelection={payrollEmployeeSelection}
           paymentPositionFilter={paymentPositionFilter}
@@ -814,6 +884,8 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
           createSelectablePayrollBatch={createSelectablePayrollBatch}
           paymentBankFilter={paymentBankFilter}
           paymentStatusFilter={paymentStatusFilter}
+          tefPreviewRows={tefPreviewRows}
+          tefPreviewSummary={tefPreviewSummary}
         />
       ) : null}
 
@@ -823,6 +895,8 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
       {activeSection === "imports" ? (
         <ImportsSection
           backfillVacationPeriods={backfillVacationPeriods}
+          bankImportPreview={bankImportPreview}
+          bankImportSummary={bankImportSummary}
           importBankAccounts={importBankAccounts}
           importPayroll={importPayroll}
           previewVacationImport={previewVacationImport}
@@ -1250,7 +1324,10 @@ function EmployeeBankTab({ employee, onSubmit, payments }: { employee: HrEmploye
         <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.accountNumber ?? ""} name="bankAccount" placeholder="Numero cuenta" />
         <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.holderName ?? employee.fullName} name="titularCuenta" placeholder="Titular cuenta" />
         <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.holderRut ?? employee.rut} name="titularRut" placeholder="RUT titular" />
+        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.realOwnerName ?? ""} name="realOwnerName" placeholder="Propietario real de la cuenta" />
+        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.glosaTef ?? ""} name="bankGlosaTef" placeholder="Glosa TEF beneficiario" />
         <input className="rounded-md border px-3 py-2 text-sm md:col-span-2" defaultValue={employee.bankAccount?.paymentEmail ?? employee.workEmail ?? employee.personalEmail ?? ""} name="emailPayment" placeholder="Email pago" type="email" />
+        <p className="text-xs text-[#667068] md:col-span-2">Tipo de cuenta vacio queda POR REVISAR. Las cuentas de tercero se permiten con revision administrativa, no se bloquean automaticamente.</p>
         <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white md:col-span-2" type="submit">Guardar banco</button>
       </form>
       </SectionCard>
@@ -1417,6 +1494,7 @@ function PayrollSection({
   filteredPaymentItems,
   generatePayroll,
   markSelectedPaid,
+  previewPayroll,
   paymentBankFilter,
   paymentAreaFilter,
   payrollEmployeeSelection,
@@ -1437,7 +1515,9 @@ function PayrollSection({
   setPaymentStatusFilter,
   setPayrollDraft,
   setPayrollSearch,
-  submitJson
+  submitJson,
+  tefPreviewRows,
+  tefPreviewSummary
 }: {
   areas: string[];
   createSelectablePayrollBatch: (config: { concept: string; conceptDescription: string; glosaGlobal: string; period: string; scheduledDate: string; status: "borrador" | "pendiente_pago" | "aprobado" }) => void;
@@ -1446,6 +1526,7 @@ function PayrollSection({
   filteredPaymentItems: HrPaymentItem[];
   generatePayroll: () => void;
   markSelectedPaid: () => void;
+  previewPayroll: () => void;
   paymentBankFilter: string;
   paymentAreaFilter: string;
   payrollEmployeeSelection: string[];
@@ -1467,6 +1548,8 @@ function PayrollSection({
   setPayrollDraft: React.Dispatch<React.SetStateAction<Record<string, { amount: string; glosa: string }>>>;
   setPayrollSearch: (value: string) => void;
   submitJson: (event: FormEvent<HTMLFormElement>, endpoint: string, success: string) => void;
+  tefPreviewRows: TefPreviewRow[];
+  tefPreviewSummary: TefPreviewSummary | null;
 }) {
   const [concept, setConcept] = useState("remuneracion_mensual");
   const [conceptDescription, setConceptDescription] = useState("");
@@ -1501,7 +1584,8 @@ function PayrollSection({
             <p className="text-sm text-[#667068]">Seleccion multiple, exportacion banco y marcado de pagos desde una sola mesa de trabajo.</p>
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
-            <button className="rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" onClick={generatePayroll} type="button">Exportar Template Pagos JESUS</button>
+            <button className="rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" onClick={previewPayroll} type="button">Previsualizar TEF</button>
+            <button className="rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" onClick={generatePayroll} type="button">Descargar TEF Banco</button>
             <button className="inline-flex items-center justify-center gap-2 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" onClick={markSelectedPaid} type="button"><CheckCircle2 className="h-4 w-4" /> Marcar pagadas</button>
           </div>
         </div>
@@ -1511,7 +1595,7 @@ function PayrollSection({
           <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentAreaFilter(event.target.value)} value={paymentAreaFilter}><option value="">Todas las areas</option>{areas.map((area) => <option key={area} value={area}>{area}</option>)}</select>
           <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentPositionFilter(event.target.value)} value={paymentPositionFilter}><option value="">Todos los cargos</option>{positions.map((position) => <option key={position} value={position}>{position}</option>)}</select>
           <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentSort(event.target.value)} value={paymentSort}><option value="name">A-Z trabajador</option><option value="amount_desc">Mayor monto</option><option value="amount_asc">Menor monto</option><option value="status">Estado</option></select>
-          <p className="text-xs font-semibold text-[#667068] lg:col-span-5">Exportar tramo banco desde Template Pagos JESUS RRHH.</p>
+          <p className="text-xs font-semibold text-[#667068] lg:col-span-5">La nomina bancaria TEF usa hoja PAGO y columnas A:K. Generar archivo no marca pagos como pagados.</p>
         </div>
       </SectionCard>
       <SectionCard className="p-5">
@@ -1532,6 +1616,7 @@ function PayrollSection({
       </SectionCard>
       <SelectableEmployeesTable employees={selectableEmployees} draft={payrollDraft} selection={payrollEmployeeSelection} setDraft={setPayrollDraft} setSelection={setPayrollEmployeeSelection} />
       <PaymentsTable employees={employees} items={filteredPaymentItems} selection={paymentSelection} setSelection={setPaymentSelection} />
+      <TefPreviewTable rows={tefPreviewRows} summary={tefPreviewSummary} />
       <div className="grid gap-4 xl:grid-cols-3">
         <SectionCard className="p-5"><h3 className="font-semibold text-brand-900">Pago manual RRHH</h3><PaymentCreateForm data={data} submitJson={submitJson} /></SectionCard>
         <SectionCard className="p-5"><h3 className="font-semibold text-brand-900">Anticipos avanzados</h3><AdvanceForm data={data} employees={employees} submitJson={submitJson} /></SectionCard>
@@ -1615,6 +1700,42 @@ function PaymentsTable({ employees, items, selection, setSelection }: { employee
                 </tr>
               );
             })}
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
+  );
+}
+
+function TefPreviewTable({ rows, summary }: { rows: TefPreviewRow[]; summary: TefPreviewSummary | null }) {
+  if (!summary) return null;
+  return (
+    <SectionCard className="overflow-hidden">
+      <TableHeader title="Preview nomina bancaria TEF" />
+      <div className="grid gap-2 border-b border-[#dfe4dd] bg-white p-4 text-sm sm:grid-cols-5">
+        <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Filas</p><p className="font-semibold">{summary.total}</p></div>
+        <div className="rounded-md bg-emerald-50 p-3 text-emerald-800"><p className="text-xs">Incluidas</p><p className="font-semibold">{summary.included}</p></div>
+        <div className="rounded-md bg-amber-50 p-3 text-amber-800"><p className="text-xs">Banco incompleto</p><p className="font-semibold">{summary.incompleteBank}</p></div>
+        <div className="rounded-md bg-slate-50 p-3 text-slate-800"><p className="text-xs">Sin pago / duplicadas</p><p className="font-semibold">{summary.zeroAmount + summary.duplicate}</p></div>
+        <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Total confirmable</p><p className="font-semibold">{formatClp(summary.totalAmount)}</p></div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-[1080px] w-full text-left text-sm">
+          <thead className="bg-brand-50 text-xs uppercase text-[#667068]"><tr><th className="px-4 py-3">Trabajador</th><th className="px-4 py-3">RUT benef.</th><th className="px-4 py-3">Cuenta</th><th className="px-4 py-3">Banco</th><th className="px-4 py-3">Monto</th><th className="px-4 py-3">Glosa TEF</th><th className="px-4 py-3">Correo</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Revision</th></tr></thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr className="border-t" key={row.itemId}>
+                <td className="px-4 py-3 font-semibold text-brand-900">{row.employeeName}</td>
+                <td className="px-4 py-3">{row.holderRut}</td>
+                <td className="px-4 py-3">{maskAccountNumber(row.accountNumber)}</td>
+                <td className="px-4 py-3">{row.bankCode}</td>
+                <td className="px-4 py-3 font-semibold">{formatClp(row.amount)}</td>
+                <td className="px-4 py-3">{row.glosaTef}</td>
+                <td className="px-4 py-3">{row.paymentEmail || "Sin correo"}</td>
+                <td className="px-4 py-3"><Pill className={row.status === "LISTO" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}>{row.status}</Pill></td>
+                <td className="px-4 py-3">{row.warnings.length ? row.warnings.join(", ") : "-"}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -1914,6 +2035,8 @@ function SundayScheduleSection({ data, setMessage }: { data: HrDashboardData; se
 
 function ImportsSection({
   backfillVacationPeriods,
+  bankImportPreview,
+  bankImportSummary,
   importBankAccounts,
   importPayroll,
   previewVacationImport,
@@ -1921,6 +2044,8 @@ function ImportsSection({
   vacationImportSummary
 }: {
   backfillVacationPeriods: (commit?: boolean) => void;
+  bankImportPreview: BankImportPreviewRow[];
+  bankImportSummary: Record<string, number> | null;
   importBankAccounts: (event: FormEvent<HTMLFormElement>) => void;
   importPayroll: (event: FormEvent<HTMLFormElement>) => void;
   previewVacationImport: (event: FormEvent<HTMLFormElement>, commit?: boolean) => void;
@@ -1946,7 +2071,8 @@ function ImportsSection({
         <ImportStep number="2" title="Datos bancarios">
           <form className="space-y-3" onSubmit={importBankAccounts}>
             <input accept=".xls,.xlsx" className="w-full rounded-md border px-3 py-2 text-sm" name="bankFile" required type="file" />
-            <button className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" type="submit"><Upload className="h-4 w-4" /> Importar bancos</button>
+            <button className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" type="submit"><Upload className="h-4 w-4" /> Previsualizar bancos</button>
+            <p className="text-xs text-[#667068]">Asocia solo por RUT. No escribe cuentas hasta autorizacion.</p>
           </form>
         </ImportStep>
         <ImportStep number="3" title="Vacaciones persistentes">
@@ -1976,6 +2102,16 @@ function ImportsSection({
           <p className="text-sm text-[#667068]">El resultado aparece en la banda de mensajes superior para mantener la logica existente.</p>
         </ImportStep>
       </div>
+      {bankImportSummary ? (
+        <div className="mt-5 grid gap-2 text-sm sm:grid-cols-5">
+          <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Filas</p><p className="font-semibold">{bankImportSummary.total ?? 0}</p></div>
+          <div className="rounded-md bg-emerald-50 p-3 text-emerald-800"><p className="text-xs">Listas</p><p className="font-semibold">{bankImportSummary.ready ?? 0}</p></div>
+          <div className="rounded-md bg-amber-50 p-3 text-amber-800"><p className="text-xs">Terceros</p><p className="font-semibold">{bankImportSummary.thirdPartyReview ?? 0}</p></div>
+          <div className="rounded-md bg-rose-50 p-3 text-rose-800"><p className="text-xs">Sin match</p><p className="font-semibold">{bankImportSummary.unmatched ?? 0}</p></div>
+          <div className="rounded-md bg-slate-50 p-3 text-slate-800"><p className="text-xs">Duplicadas</p><p className="font-semibold">{(bankImportSummary.duplicateRuts ?? 0) + (bankImportSummary.duplicateAccounts ?? 0)}</p></div>
+        </div>
+      ) : null}
+      <BankImportPreviewTable rows={bankImportPreview} />
       {vacationImportSummary ? (
         <div className="mt-5 grid gap-2 text-sm sm:grid-cols-5">
           <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Filas</p><p className="font-semibold">{vacationImportSummary.total ?? 0}</p></div>
@@ -1987,6 +2123,35 @@ function ImportsSection({
       ) : null}
       <VacationImportPreview rows={vacationImportPreview} />
     </SectionCard>
+  );
+}
+
+function BankImportPreviewTable({ rows }: { rows: BankImportPreviewRow[] }) {
+  if (!rows.length) return null;
+  return (
+    <div className="mt-5 overflow-hidden rounded-lg border border-[#dfe4dd] bg-white">
+      <TableHeader title="Preview carga bancaria" />
+      <div className="overflow-x-auto">
+        <table className="min-w-[1120px] w-full text-left text-sm">
+          <thead className="bg-brand-50 text-xs uppercase text-[#667068]"><tr><th className="px-4 py-3">Fila</th><th className="px-4 py-3">Trabajador RUT</th><th className="px-4 py-3">Trabajador asociado</th><th className="px-4 py-3">Cuenta destino</th><th className="px-4 py-3">Banco</th><th className="px-4 py-3">Glosa TEF</th><th className="px-4 py-3">Propietario real</th><th className="px-4 py-3">Correo</th><th className="px-4 py-3">Estado</th></tr></thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr className="border-t" key={`${row.rowNumber}-${row.holderRut}-${row.accountNumber}`}>
+                <td className="px-4 py-3">{row.rowNumber}</td>
+                <td className="px-4 py-3">{row.holderRut || "Sin RUT"}</td>
+                <td className="px-4 py-3 font-semibold text-brand-900">{row.employeeName ?? "No encontrado"}</td>
+                <td className="px-4 py-3">{maskAccountNumber(row.accountNumber)}</td>
+                <td className="px-4 py-3">{row.bankCode}</td>
+                <td className="px-4 py-3">{row.glosaTef}</td>
+                <td className="px-4 py-3">{row.realOwnerName || "Sin dato"}</td>
+                <td className="px-4 py-3">{row.email || "Sin correo"}</td>
+                <td className="px-4 py-3"><Pill className={row.status === "LISTO" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}>{row.status}</Pill></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
