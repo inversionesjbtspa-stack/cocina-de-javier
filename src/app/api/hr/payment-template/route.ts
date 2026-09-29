@@ -43,6 +43,7 @@ type PaymentRow = {
       bank_name: string | null;
       payment_email: string | null;
       real_owner_name?: string | null;
+      tef_display_name?: string | null;
       validation_status: string | null;
     }>;
   } | Array<{
@@ -61,6 +62,7 @@ type PaymentRow = {
       bank_name: string | null;
       payment_email: string | null;
       real_owner_name?: string | null;
+      tef_display_name?: string | null;
       validation_status: string | null;
     }>;
   }>;
@@ -91,6 +93,7 @@ function paymentRowsForPreview(rows: PaymentRow[], glosaGlobal = ""): HrPaymentF
       paymentType: row.payment_type,
       period: row.period,
       realOwnerName: bank?.real_owner_name ?? bank?.account_holder_name ?? employee?.full_name ?? "",
+      tefDisplayName: bank?.tef_display_name ?? bank?.account_holder_name ?? employee?.full_name ?? "",
       status: row.status
     };
   });
@@ -106,7 +109,7 @@ export async function POST(request: Request) {
 
   let query = supabase
     .from("hr_payment_items")
-    .select("id,employee_id,payment_type,period,amount,glosa,status,bank_name,bank_code,account_type,account_number,payment_email,hr_employees(full_name,rut,status,payment_enabled,personal_email,work_email,hr_employee_bank_accounts(bank_name,bank_code,account_type,account_number,payment_email,account_holder_name,account_holder_rut,real_owner_name,validation_status))")
+    .select("id,employee_id,payment_type,period,amount,glosa,status,bank_name,bank_code,account_type,account_number,payment_email,hr_employees(full_name,rut,status,payment_enabled,personal_email,work_email,hr_employee_bank_accounts(bank_name,bank_code,account_type,account_number,payment_email,account_holder_name,account_holder_rut,real_owner_name,tef_display_name,validation_status))")
     .eq("tenant_id", ctx.membership.tenant_id);
   if (body.paymentItemIds.length) query = query.in("id", body.paymentItemIds);
   else if (body.period) query = query.eq("period", body.period).eq("payment_type", "remuneracion_mensual").in("status", ["aprobado", "pendiente_pago"]);
@@ -158,6 +161,8 @@ export async function POST(request: Request) {
   if (batch.data) {
     await supabase.from("hr_payment_batch_items").insert(preview.rows.filter((row) => row.status === "LISTO" || row.status === "CUENTA DE TERCERO / REVISAR").map((row) => ({
       amount: row.amount,
+      account_holder_name_snapshot: row.holderName,
+      account_number_snapshot: row.accountNumber,
       bank_code_snapshot: row.bankCode,
       batch_id: batch.data.id,
       employee_id: row.employeeId,
@@ -167,6 +172,8 @@ export async function POST(request: Request) {
       glosa_tef_snapshot: row.glosaTef,
       holder_rut_snapshot: row.holderRut,
       payment_email_snapshot: row.paymentEmail,
+      real_owner_name_snapshot: row.realOwnerName,
+      tef_display_name_snapshot: row.tefDisplayName,
       payment_item_id: row.itemId,
       payment_type: "remuneracion_mensual",
       snapshot: row,

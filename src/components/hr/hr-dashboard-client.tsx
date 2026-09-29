@@ -59,10 +59,13 @@ type TefPreviewRow = {
   bankCode: string;
   employeeName: string;
   glosaTef: string;
+  holderName: string;
   holderRut: string;
   itemId: string;
   paymentEmail: string;
+  realOwnerName: string;
   status: string;
+  tefDisplayName: string;
   warnings: string[];
 };
 type TefPreviewSummary = {
@@ -1322,12 +1325,12 @@ function EmployeeBankTab({ employee, onSubmit, payments }: { employee: HrEmploye
         <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.bankCode ?? ""} name="bankCode" placeholder="Codigo banco" />
         <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.accountType ?? ""} name="tipoCuenta" placeholder="Tipo cuenta" />
         <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.accountNumber ?? ""} name="bankAccount" placeholder="Numero cuenta" />
-        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.holderName ?? employee.fullName} name="titularCuenta" placeholder="Titular cuenta" />
-        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.holderRut ?? employee.rut} name="titularRut" placeholder="RUT titular" />
+        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.holderName ?? employee.fullName} name="titularCuenta" placeholder="Nombre beneficiario" />
+        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.holderRut ?? employee.rut} name="titularRut" placeholder="RUT beneficiario" />
+        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.glosaTef ?? employee.bankAccount?.tefDisplayName ?? ""} name="bankGlosaTef" placeholder="Nombre / Glosa TEF" />
         <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.realOwnerName ?? ""} name="realOwnerName" placeholder="Propietario real de la cuenta" />
-        <input className="rounded-md border px-3 py-2 text-sm" defaultValue={employee.bankAccount?.glosaTef ?? ""} name="bankGlosaTef" placeholder="Glosa TEF beneficiario" />
         <input className="rounded-md border px-3 py-2 text-sm md:col-span-2" defaultValue={employee.bankAccount?.paymentEmail ?? employee.workEmail ?? employee.personalEmail ?? ""} name="emailPayment" placeholder="Email pago" type="email" />
-        <p className="text-xs text-[#667068] md:col-span-2">Tipo de cuenta vacio queda POR REVISAR. Las cuentas de tercero se permiten con revision administrativa, no se bloquean automaticamente.</p>
+        <p className="text-xs text-[#667068] md:col-span-2">El nombre beneficiario identifica al titular para transferencia. La Glosa TEF es el nombre operativo que se usara en la nomina bancaria. El propietario real queda separado para auditoria.</p>
         <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white md:col-span-2" type="submit">Guardar banco</button>
       </form>
       </SectionCard>
@@ -1721,16 +1724,18 @@ function TefPreviewTable({ rows, summary }: { rows: TefPreviewRow[]; summary: Te
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-[1080px] w-full text-left text-sm">
-          <thead className="bg-brand-50 text-xs uppercase text-[#667068]"><tr><th className="px-4 py-3">Trabajador</th><th className="px-4 py-3">RUT benef.</th><th className="px-4 py-3">Cuenta</th><th className="px-4 py-3">Banco</th><th className="px-4 py-3">Monto</th><th className="px-4 py-3">Glosa TEF</th><th className="px-4 py-3">Correo</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Revision</th></tr></thead>
+          <thead className="bg-brand-50 text-xs uppercase text-[#667068]"><tr><th className="px-4 py-3">Trabajador</th><th className="px-4 py-3">Nombre beneficiario</th><th className="px-4 py-3">RUT benef.</th><th className="px-4 py-3">Cuenta</th><th className="px-4 py-3">Banco</th><th className="px-4 py-3">Monto</th><th className="px-4 py-3">Glosa TEF</th><th className="px-4 py-3">Propietario real</th><th className="px-4 py-3">Correo</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Revision</th></tr></thead>
           <tbody>
             {rows.map((row) => (
               <tr className="border-t" key={row.itemId}>
                 <td className="px-4 py-3 font-semibold text-brand-900">{row.employeeName}</td>
+                <td className="px-4 py-3">{row.holderName}</td>
                 <td className="px-4 py-3">{row.holderRut}</td>
                 <td className="px-4 py-3">{maskAccountNumber(row.accountNumber)}</td>
                 <td className="px-4 py-3">{row.bankCode}</td>
                 <td className="px-4 py-3 font-semibold">{formatClp(row.amount)}</td>
                 <td className="px-4 py-3">{row.glosaTef}</td>
+                <td className="px-4 py-3">{row.realOwnerName}</td>
                 <td className="px-4 py-3">{row.paymentEmail || "Sin correo"}</td>
                 <td className="px-4 py-3"><Pill className={row.status === "LISTO" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}>{row.status}</Pill></td>
                 <td className="px-4 py-3">{row.warnings.length ? row.warnings.join(", ") : "-"}</td>

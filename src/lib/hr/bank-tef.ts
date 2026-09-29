@@ -41,6 +41,7 @@ export type HrBankImportEmployee = {
     holderRut?: string | null;
     paymentEmail?: string | null;
     realOwnerName?: string | null;
+    tefDisplayName?: string | null;
   } | null;
   fullName: string;
   id: string;
@@ -87,6 +88,7 @@ export type HrPaymentForTef = {
   period: string;
   realOwnerName?: string | null;
   status: string;
+  tefDisplayName?: string | null;
 };
 
 export type HrTefPreviewRow = {
@@ -97,11 +99,13 @@ export type HrTefPreviewRow = {
   employeeName: string;
   glosaCorreo: string;
   glosaTef: string;
+  holderName: string;
   holderRut: string;
   itemId: string;
   paymentEmail: string;
   realOwnerName: string;
   status: "LISTO" | "BANCO INCOMPLETO" | "SIN PAGO / $0" | "CUENTA DE TERCERO / REVISAR" | "DUPLICADO";
+  tefDisplayName: string;
   warnings: string[];
 };
 
@@ -315,10 +319,15 @@ export function buildBankImportPreview(rows: HrBankSourceRow[], employees: HrBan
   return { rows: previewRows, summary };
 }
 
+function tefDisplayNameFor(payment: HrPaymentForTef) {
+  return cleanText(payment.tefDisplayName || payment.holderName || payment.employeeName).toUpperCase();
+}
+
 function glosaFor(payment: HrPaymentForTef) {
-  const [year, month] = payment.period.split("-");
+  const [, month] = payment.period.split("-");
   const monthName = monthNames[Number(month) - 1] ?? month;
-  return (payment.glosa || `PAGO REMUNERACION ${monthName} ${year}`).toUpperCase();
+  const displayName = tefDisplayNameFor(payment);
+  return `REM ${monthName} ${displayName}`.toUpperCase();
 }
 
 export function buildHrTefPreview(payments: HrPaymentForTef[], existingPaymentItemIds: string[] = []) {
@@ -331,7 +340,9 @@ export function buildHrTefPreview(payments: HrPaymentForTef[], existingPaymentIt
     if (!payment.accountNumber) warnings.push("cuenta destino");
     if (!payment.holderRut && !payment.employeeRut) warnings.push("RUT beneficiario");
     if (!payment.paymentEmail) warnings.push("correo");
-    const owner = payment.realOwnerName || payment.holderName || payment.employeeName;
+    const holderName = payment.holderName || payment.employeeName;
+    const owner = payment.realOwnerName || holderName;
+    const tefDisplayName = tefDisplayNameFor(payment);
     const thirdParty = owner && normalizePersonName(owner) !== normalizePersonName(payment.employeeName);
     let status: HrTefPreviewRow["status"] = "LISTO";
     if (Number(payment.amount) <= 0) status = "SIN PAGO / $0";
@@ -346,11 +357,13 @@ export function buildHrTefPreview(payments: HrPaymentForTef[], existingPaymentIt
       employeeName: payment.employeeName,
       glosaCorreo: glosaFor(payment),
       glosaTef: glosaFor(payment),
+      holderName,
       holderRut: normalizeRut(payment.holderRut || payment.employeeRut || ""),
       itemId: payment.id,
       paymentEmail: payment.paymentEmail ?? "",
       realOwnerName: owner,
       status,
+      tefDisplayName,
       warnings
     };
   });
@@ -379,7 +392,7 @@ export function generateHrTefWorkbook(rows: HrTefPreviewRow[]) {
       HR_TEF_CURRENCY,
       row.bankCode,
       row.holderRut,
-      row.employeeName,
+      row.tefDisplayName || row.holderName || row.employeeName,
       row.amount,
       row.glosaTef,
       row.paymentEmail,

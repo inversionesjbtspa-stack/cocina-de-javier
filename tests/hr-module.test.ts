@@ -116,6 +116,71 @@ test("HR TEF workbook uses PAGO sheet and exact A:K columns", () => {
   assert.doesNotMatch(sheet, /<c r="L\d+"/);
 });
 
+test("HR TEF keeps display name and real account owner separated", () => {
+  const preview = buildHrTefPreview([
+    {
+      accountNumber: "226552003",
+      accountType: "POR REVISAR",
+      amount: 1379182,
+      bankCode: "39",
+      bankName: "ITAU",
+      employeeId: "emp-1",
+      employeeName: "BETANCOURT PAREZ JESUS",
+      employeeRut: "25289035-1",
+      holderName: "BETANCOURT PAREZ JESUS",
+      holderRut: "25289035-1",
+      id: "11111111-1111-4111-8111-111111111111",
+      paymentEmail: "jesusdan24@hotmail.com",
+      paymentType: "remuneracion_mensual",
+      period: "2026-08",
+      realOwnerName: "BETANCOURT PAREZ JESUS",
+      status: "aprobado",
+      tefDisplayName: "JESUS BETANCOURT"
+    }
+  ]);
+  const row = preview.rows[0];
+  assert.equal(row.tefDisplayName, "JESUS BETANCOURT");
+  assert.equal(row.realOwnerName, "BETANCOURT PAREZ JESUS");
+  assert.equal(row.holderName, "BETANCOURT PAREZ JESUS");
+  assert.match(row.glosaTef, /JESUS BETANCOURT/);
+  assert.doesNotMatch(row.glosaTef, /BETANCOURT PAREZ JESUS/);
+
+  const zip = new AdmZip(generateHrTefWorkbook(preview.rows));
+  const sheet = zip.getEntry("xl/worksheets/sheet1.xml")?.getData().toString("utf8") ?? "";
+  assert.match(sheet, /JESUS BETANCOURT/);
+  assert.doesNotMatch(sheet, /BETANCOURT PAREZ JESUS/);
+});
+
+test("HR TEF does not use real account owner as transfer display name for third-party accounts", () => {
+  const preview = buildHrTefPreview([
+    {
+      accountNumber: "63824981",
+      accountType: "POR REVISAR",
+      amount: 707282,
+      bankCode: "16",
+      bankName: "BCI",
+      employeeId: "emp-2",
+      employeeName: "MEDINA KEMBERLY",
+      employeeRut: "26390515-6",
+      holderName: "MEDINA KEMBERLY",
+      holderRut: "26390515-6",
+      id: "22222222-2222-4222-8222-222222222222",
+      paymentEmail: "tercero@example.com",
+      paymentType: "remuneracion_mensual",
+      period: "2026-08",
+      realOwnerName: "MIGUEL MOLINA",
+      status: "aprobado",
+      tefDisplayName: "MEDINA KEMBERLY"
+    }
+  ]);
+  const row = preview.rows[0];
+  assert.equal(row.status, "CUENTA DE TERCERO / REVISAR");
+  assert.equal(row.realOwnerName, "MIGUEL MOLINA");
+  assert.equal(row.tefDisplayName, "MEDINA KEMBERLY");
+  assert.match(row.glosaTef, /MEDINA KEMBERLY/);
+  assert.doesNotMatch(row.glosaTef, /MIGUEL MOLINA/);
+});
+
 test("HR vacation status helpers keep cancelled requests out of operational views", () => {
   assert.equal(isCancelledVacationRequest("anulada"), true);
   assert.equal(isCancelledVacationRequest("rechazada"), true);
@@ -138,6 +203,7 @@ test("HR module exposes operational tables, storage buckets and payment template
   const bankImportRoute = await readFile("src/app/api/hr/bank-import/route.ts", "utf8");
   const bankImportParser = await readFile("src/lib/hr/bank-import-parser.ts", "utf8");
   const bankMigration = await readFile("supabase/migrations/202605150023_hr_bank_import_and_accountant_columns.sql", "utf8");
+  const bankTefMigration = await readFile("supabase/migrations/202609060001_hr_bank_tef_batches.sql", "utf8");
   const phase1Migration = await readFile("supabase/migrations/202605290001_hr_phase1_monthly_workflow.sql", "utf8");
   const phase2Migration = await readFile("supabase/migrations/202605300001_hr_phase2_workflow.sql", "utf8");
   const employeesRoute = await readFile("src/app/api/hr/employees/route.ts", "utf8");
@@ -185,6 +251,13 @@ test("HR module exposes operational tables, storage buckets and payment template
   assert.match(bankImportParser, /0x00fd/);
   assert.match(bankMigration, /add column if not exists glosa_tef/);
   assert.match(bankMigration, /add column if not exists row_number integer/);
+  assert.match(bankTefMigration, /add column if not exists tef_display_name text/);
+  assert.match(bankTefMigration, /add column if not exists real_owner_name text/);
+  assert.match(bankTefMigration, /add column if not exists tef_display_name_snapshot text/);
+  assert.match(bankTefMigration, /add column if not exists real_owner_name_snapshot text/);
+  assert.match(paymentRoute, /tef_display_name_snapshot/);
+  assert.match(paymentRoute, /real_owner_name_snapshot/);
+  assert.match(paymentRoute, /account_holder_name_snapshot/);
   assert.match(phase1Migration, /create table if not exists public\.hr_monthly_novelties/);
   assert.match(phase1Migration, /hr_monthly_novelties_unique_idx/);
   assert.match(phase1Migration, /add column if not exists document_date/);

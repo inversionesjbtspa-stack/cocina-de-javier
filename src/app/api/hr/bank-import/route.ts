@@ -16,6 +16,7 @@ type EmployeeRow = {
     account_holder_rut: string | null;
     payment_email: string | null;
     real_owner_name?: string | null;
+    tef_display_name?: string | null;
   }>;
 };
 
@@ -31,7 +32,7 @@ export async function POST(request: Request) {
   const supabase = createAdminClient();
   const { data: employees } = await supabase
     .from("hr_employees")
-    .select("id,rut,full_name,status,hr_employee_bank_accounts(id,account_number,bank_code,glosa_tef,account_holder_name,account_holder_rut,payment_email,real_owner_name)")
+    .select("id,rut,full_name,status,hr_employee_bank_accounts(id,account_number,bank_code,glosa_tef,tef_display_name,account_holder_name,account_holder_rut,payment_email,real_owner_name)")
     .eq("tenant_id", ctx.membership.tenant_id);
 
   const employeeRows = ((employees ?? []) as EmployeeRow[]).map((employee) => {
@@ -44,11 +45,12 @@ export async function POST(request: Request) {
       bankAccount: bank ? {
         accountNumber: bank.account_number,
         bankCode: bank.bank_code,
-        glosaTef: bank.glosa_tef,
+        glosaTef: bank.tef_display_name ?? bank.glosa_tef,
         holderName: bank.account_holder_name,
         holderRut: bank.account_holder_rut,
         paymentEmail: bank.payment_email,
-        realOwnerName: bank.real_owner_name
+        realOwnerName: bank.real_owner_name,
+        tefDisplayName: bank.tef_display_name ?? bank.glosa_tef
       } : null
     };
   });
@@ -75,7 +77,7 @@ export async function POST(request: Request) {
       .eq("is_primary", true)
       .maybeSingle();
     const payload = {
-      account_holder_name: row.holderName || row.employeeName,
+      account_holder_name: row.realOwnerName || row.holderName || row.employeeName,
       account_holder_rut: row.holderRut,
       account_number: row.accountNumber,
       account_type: null,
@@ -86,6 +88,7 @@ export async function POST(request: Request) {
       is_primary: true,
       payment_email: row.email || null,
       real_owner_name: row.realOwnerName || row.employeeName,
+      tef_display_name: row.glosaTef || row.holderName || row.employeeName,
       review_status: "POR_REVISAR_TIPO_CUENTA",
       source_file: file.name,
       tenant_id: ctx.membership.tenant_id,

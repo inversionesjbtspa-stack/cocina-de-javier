@@ -96,6 +96,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       bank_code: body.bankCode ?? bank?.bank_code ?? null,
       bank_name: body.bankName ?? bank?.bank_name ?? null,
       glosa_tef: body.bankGlosaTef ?? bank?.glosa_tef ?? null,
+      tef_display_name: body.bankGlosaTef ?? bank?.tef_display_name ?? bank?.glosa_tef ?? null,
       employee_id: id,
       payment_email: body.emailPayment ?? bank?.payment_email ?? before.data.work_email ?? before.data.personal_email ?? null,
       real_owner_name: body.realOwnerName ?? bank?.real_owner_name ?? body.titularCuenta ?? before.data.full_name,

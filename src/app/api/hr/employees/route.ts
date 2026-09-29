@@ -10,6 +10,7 @@ const employeeSchema = z.object({
   area: z.string().trim().max(120).optional().default(""),
   bankAccount: z.string().trim().max(80).optional().default(""),
   bankCode: z.string().trim().max(40).optional().default(""),
+  bankGlosaTef: z.string().trim().max(120).optional().default(""),
   bankName: z.string().trim().max(160).optional().default(""),
   birthDate: z.string().trim().optional().default(""),
   commune: z.string().trim().max(120).optional().default(""),
@@ -31,6 +32,7 @@ const employeeSchema = z.object({
   status: z.enum(["activo", "inactivo", "finiquitado", "suspendido"]).default("activo"),
   titularCuenta: z.string().trim().max(240).optional().default(""),
   titularRut: z.string().trim().max(14).optional().default(""),
+  realOwnerName: z.string().trim().max(160).optional().default(""),
   tipoCuenta: z.string().trim().max(80).optional().default(""),
   unemploymentInsurance: z.coerce.boolean().optional().default(true),
   workEmail: z.string().trim().email().or(z.literal("")).optional().default(""),
@@ -94,8 +96,11 @@ export async function POST(request: Request) {
       bank_name: body.bankName || null,
       created_by: ctx.user.id,
       employee_id: employee.id,
+      glosa_tef: body.bankGlosaTef || null,
       payment_email: body.emailPayment || body.workEmail || body.personalEmail || null,
+      real_owner_name: body.realOwnerName || body.titularCuenta || body.fullName,
       tenant_id: ctx.membership.tenant_id,
+      tef_display_name: body.bankGlosaTef || body.titularCuenta || body.fullName,
       validation_status: body.bankName && body.bankCode && body.bankAccount ? "validated" : "pending"
     });
   }

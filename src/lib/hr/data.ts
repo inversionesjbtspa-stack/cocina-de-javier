@@ -14,6 +14,7 @@ export type HrBankAccount = {
   paymentEmail: string;
   realOwnerName?: string;
   reviewStatus?: string;
+  tefDisplayName?: string;
   holderName: string;
   holderRut: string;
   validationStatus: string;
@@ -303,6 +304,7 @@ type RawEmployee = {
     real_owner_name?: string | null;
     review_status?: string | null;
     glosa_tef?: string | null;
+    tef_display_name?: string | null;
     account_holder_name: string | null;
     account_holder_rut: string | null;
     validation_status: string;
@@ -316,13 +318,14 @@ function mapEmployee(row: RawEmployee): HrEmployee {
     accountType: bank.account_type ?? "",
     bankCode: bank.bank_code ?? "",
     bankName: bank.bank_name ?? "",
-    glosaTef: bank.glosa_tef ?? "",
+    glosaTef: bank.tef_display_name ?? bank.glosa_tef ?? "",
     holderName: bank.account_holder_name ?? row.full_name,
     holderRut: bank.account_holder_rut ?? row.rut,
     id: bank.id,
     paymentEmail: bank.payment_email ?? "",
     realOwnerName: bank.real_owner_name ?? "",
     reviewStatus: bank.review_status ?? "",
+    tefDisplayName: bank.tef_display_name ?? bank.glosa_tef ?? "",
     validationStatus: bank.validation_status
   } : null;
   const alerts = [];
@@ -418,7 +421,7 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
   const [{ data: employeeRows }, { data: payslipRows }, { data: vacationRows }, { data: paymentRows }, { data: batchRows }, { data: accountantRows }, { data: noveltyRows }, { data: finiquitoRows }, { data: honorarioRows }, { data: vacationLedgerRows }, { data: vacationPeriodRows }, { data: vacationMovementRows }, { data: progressiveRows }, { data: monthlyDaysOffRows }] = await Promise.all([
     supabase
       .from("hr_employees")
-      .select("*,hr_employee_bank_accounts(id,bank_name,bank_code,account_type,account_number,payment_email,account_holder_name,account_holder_rut,real_owner_name,review_status,glosa_tef,validation_status)")
+      .select("*,hr_employee_bank_accounts(id,bank_name,bank_code,account_type,account_number,payment_email,account_holder_name,account_holder_rut,real_owner_name,review_status,glosa_tef,tef_display_name,validation_status)")
       .eq("tenant_id", ctx.tenantId)
       .order("full_name", { ascending: true }),
     supabase

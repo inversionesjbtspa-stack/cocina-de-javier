@@ -1,7 +1,11 @@
 alter table public.hr_employee_bank_accounts
+  add column if not exists glosa_tef text,
   add column if not exists real_owner_name text,
+  add column if not exists tef_display_name text,
   add column if not exists review_status text,
-  add column if not exists reviewed_at timestamptz;
+  add column if not exists reviewed_at timestamptz,
+  add column if not exists source_file text,
+  add column if not exists imported_at timestamptz;
 
 alter table public.hr_payment_batch_items
   add column if not exists snapshot jsonb not null default '{}'::jsonb,
@@ -9,11 +13,18 @@ alter table public.hr_payment_batch_items
   add column if not exists holder_rut_snapshot text,
   add column if not exists bank_code_snapshot text,
   add column if not exists payment_email_snapshot text,
+  add column if not exists account_number_snapshot text,
+  add column if not exists account_holder_name_snapshot text,
+  add column if not exists tef_display_name_snapshot text,
+  add column if not exists real_owner_name_snapshot text,
   add column if not exists glosa_tef_snapshot text,
   add column if not exists glosa_correo_snapshot text;
 
 create index if not exists hr_employee_bank_accounts_review_status_idx
 on public.hr_employee_bank_accounts(tenant_id, review_status);
+
+create index if not exists hr_employee_bank_accounts_tef_display_name_idx
+on public.hr_employee_bank_accounts(tenant_id, tef_display_name);
 
 create index if not exists hr_payment_batch_items_snapshot_gin_idx
 on public.hr_payment_batch_items using gin(snapshot);
