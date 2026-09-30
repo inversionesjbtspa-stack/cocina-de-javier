@@ -3,6 +3,7 @@ import { hasSupabaseAdminConfig } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHrServerContext } from "@/lib/hr/security";
 import { accruedVacationDays, currentPeriod } from "@/lib/hr/utils";
+import { isProductiveHrEmployee } from "@/lib/hr/employee-filters";
 
 export type HrBankAccount = {
   id: string;
@@ -208,6 +209,7 @@ export type HrAccountantDataRow = {
   rut: string;
   costCenter: string | null;
   absences: number;
+  advanceAguinaldo?: number;
   licenses: number;
   overtimeHours: number;
   productionBonus: number;
@@ -512,7 +514,8 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
   ]);
 
   const employees = ((employeeRows ?? []) as RawEmployee[]).map(mapEmployee);
-  const activeEmployees = employees.filter((employee) => employee.status === "activo");
+  const productiveEmployees = employees.filter(isProductiveHrEmployee);
+  const activeEmployees = productiveEmployees.filter((employee) => employee.status === "activo");
   const payslips = (payslipRows ?? []).map((row) => ({
     createdAt: row.created_at,
     employeeId: row.employee_id,
@@ -583,6 +586,7 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
   }));
   const accountantDataRows = (accountantRows ?? []).map((row) => ({
     absences: Number(row.absences ?? 0),
+    advanceAguinaldo: Number(row.advance_aguinaldo_amount ?? 0),
     advances: Number(row.advances_amount ?? 0),
     aguinaldo: Number(row.aguinaldo_amount ?? 0),
     cashAllowance: Number(row.cash_allowance_amount ?? 0),
@@ -699,9 +703,9 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
     employees,
     kpis: {
       activeEmployees: activeEmployees.length,
-      advancesAmount: paymentItems.filter((item) => item.paymentType === "anticipo").reduce((sum, item) => sum + item.amount, 0),
-      bonusesAmount: paymentItems.filter((item) => item.paymentType.includes("bono")).reduce((sum, item) => sum + item.amount, 0),
-      employeesWithoutBank: employees.filter((employee) => !employee.bankAccount?.accountNumber).length,
+      advancesAmount: paymentItems.filter((item) => item.paymentType === "anticipo" && productiveEmployees.some((employee) => employee.id === item.employeeId)).reduce((sum, item) => sum + item.amount, 0),
+      bonusesAmount: paymentItems.filter((item) => item.paymentType.includes("bono") && productiveEmployees.some((employee) => employee.id === item.employeeId)).reduce((sum, item) => sum + item.amount, 0),
+      employeesWithoutBank: activeEmployees.filter((employee) => !employee.bankAccount?.accountNumber).length,
       monthPaymentAmount,
       netPayrollAmount: payslips.reduce((sum, payslip) => sum + payslip.netAmount, 0),
       paymentEnabled: employees.filter((employee) => employee.status === "activo" && employee.paymentEnabled).length,
