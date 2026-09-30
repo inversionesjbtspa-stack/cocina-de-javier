@@ -93,9 +93,9 @@ test("HR bank import does not match by name when RUT is missing or wrong", () =>
 
 test("HR TEF preview excludes zero amounts and incomplete bank data", () => {
   const preview = buildHrTefPreview([
-    { accountNumber: "226552003", accountType: "Cuenta corriente", amount: 100000, bankCode: "39", bankName: "ITAU", employeeId: "emp-1", employeeName: "BETANCOURT PAREZ JESUS", employeeRut: "25289035-1", holderRut: "25289035-1", id: "11111111-1111-4111-8111-111111111111", paymentEmail: "pago@example.com", paymentType: "remuneracion_mensual", period: "2026-08", status: "aprobado" },
-    { accountNumber: "999", accountType: "Cuenta corriente", amount: 0, bankCode: "39", bankName: "ITAU", employeeId: "emp-2", employeeName: "SIN PAGO", employeeRut: "11111111-1", holderRut: "11111111-1", id: "22222222-2222-4222-8222-222222222222", paymentEmail: "cero@example.com", paymentType: "remuneracion_mensual", period: "2026-08", status: "aprobado" },
-    { accountNumber: "", accountType: "", amount: 50000, bankCode: "39", bankName: "ITAU", employeeId: "emp-3", employeeName: "BANCO INCOMPLETO", employeeRut: "22222222-2", id: "33333333-3333-4333-8333-333333333333", paymentEmail: "incompleto@example.com", paymentType: "remuneracion_mensual", period: "2026-08", status: "aprobado" }
+    { accountNumber: "226552003", accountType: "Cuenta corriente", amount: 100000, bankCode: "39", bankName: "ITAU", employeeId: "emp-1", employeeName: "BETANCOURT PAREZ JESUS", employeeRut: "25289035-1", holderRut: "25289035-1", id: "11111111-1111-4111-8111-111111111111", paymentEmail: "pago@example.com", paymentType: "remuneracion_mensual", period: "2026-08", status: "aprobado", tefDisplayName: "JESUS BETANCOURT" },
+    { accountNumber: "999", accountType: "Cuenta corriente", amount: 0, bankCode: "39", bankName: "ITAU", employeeId: "emp-2", employeeName: "SIN PAGO", employeeRut: "11111111-1", holderRut: "11111111-1", id: "22222222-2222-4222-8222-222222222222", paymentEmail: "cero@example.com", paymentType: "remuneracion_mensual", period: "2026-08", status: "aprobado", tefDisplayName: "SIN PAGO" },
+    { accountNumber: "", accountType: "", amount: 50000, bankCode: "39", bankName: "ITAU", employeeId: "emp-3", employeeName: "BANCO INCOMPLETO", employeeRut: "22222222-2", id: "33333333-3333-4333-8333-333333333333", paymentEmail: "incompleto@example.com", paymentType: "remuneracion_mensual", period: "2026-08", status: "aprobado", tefDisplayName: "BANCO INCOMPLETO" }
   ]);
   assert.equal(preview.summary.included, 1);
   assert.equal(preview.summary.zeroAmount, 1);
@@ -104,7 +104,7 @@ test("HR TEF preview excludes zero amounts and incomplete bank data", () => {
 
 test("HR TEF workbook uses PAGO sheet and exact A:K columns", () => {
   const preview = buildHrTefPreview([
-    { accountNumber: "226552003", accountType: "Cuenta corriente", amount: 1379182, bankCode: "39", bankName: "ITAU", employeeId: "emp-1", employeeName: "BETANCOURT PAREZ JESUS", employeeRut: "25289035-1", holderRut: "25289035-1", id: "11111111-1111-4111-8111-111111111111", paymentEmail: "pago@example.com", paymentType: "remuneracion_mensual", period: "2026-08", status: "aprobado" }
+    { accountNumber: "226552003", accountType: "Cuenta corriente", amount: 1379182, bankCode: "39", bankName: "ITAU", employeeId: "emp-1", employeeName: "BETANCOURT PAREZ JESUS", employeeRut: "25289035-1", holderRut: "25289035-1", id: "11111111-1111-4111-8111-111111111111", paymentEmail: "pago@example.com", paymentType: "remuneracion_mensual", period: "2026-08", status: "aprobado", tefDisplayName: "JESUS BETANCOURT" }
   ]);
   const zip = new AdmZip(generateHrTefWorkbook(preview.rows));
   const workbook = zip.getEntry("xl/workbook.xml")?.getData().toString("utf8") ?? "";
@@ -995,30 +995,43 @@ test("HR salary rows include every active worker and isolate novelty logic", () 
   const employees = [
     { area: "Cocina", bankAccount: null, baseSalary: 0, birthDate: null, commune: null, contractType: "indefinido", costCenter: "COC", familyAllowances: 0, fullName: "Activa Con Fila", healthPlan: null, healthSystem: null, hireDate: null, id: "emp-a", nationality: null, paymentAlerts: [], paymentEnabled: true, personalEmail: null, phone: null, position: null, rut: "11.111.111-1", status: "activo", unemploymentInsurance: false, workEmail: null, workSchedule: null, address: null, afp: null },
     { area: "Salon", bankAccount: null, baseSalary: 0, birthDate: null, commune: null, contractType: "indefinido", costCenter: "SAL", familyAllowances: 0, fullName: "Activa Sin Fila", healthPlan: null, healthSystem: null, hireDate: null, id: "emp-b", nationality: null, paymentAlerts: [], paymentEnabled: true, personalEmail: null, phone: null, position: null, rut: "22.222.222-2", status: "activo", unemploymentInsurance: false, workEmail: null, workSchedule: null, address: null, afp: null },
+    { area: "QA", bankAccount: null, baseSalary: 0, birthDate: null, commune: null, contractType: "indefinido", costCenter: "QA", familyAllowances: 0, fullName: "CODEX VALIDACION RRHH DEMO", healthPlan: null, healthSystem: null, hireDate: null, id: "emp-codex", nationality: null, paymentAlerts: [], paymentEnabled: true, personalEmail: null, phone: null, position: null, rut: "44.444.444-4", status: "activo", unemploymentInsurance: false, workEmail: null, workSchedule: null, address: null, afp: null },
     { area: "Admin", bankAccount: null, baseSalary: 0, birthDate: null, commune: null, contractType: "indefinido", costCenter: "ADM", familyAllowances: 0, fullName: "Inactiva", healthPlan: null, healthSystem: null, hireDate: null, id: "emp-c", nationality: null, paymentAlerts: [], paymentEnabled: false, personalEmail: null, phone: null, position: null, rut: "33.333.333-3", status: "inactivo", unemploymentInsurance: false, workEmail: null, workSchedule: null, address: null, afp: null }
   ];
   const rows = buildSalaryRows({
     accountantRows: [{ absences: 1, advances: 0, aguinaldo: 0, cashAllowance: 0, ccafLoan: 0, compensatoryBonus: 0, companyLoan: 0, costCenter: "COC", employeeId: "emp-a", fullName: "Activa Con Fila", id: "row-a", licenses: 0, movilization: 0, observations: null, overtimeHours: 0, period: "2026-06", phoneAllowance: 0, productionBonus: 0, reason: null, responsibilityBonus: 0, rut: "11.111.111-1", sundaySurcharge: 0 }],
     employees,
-    paymentItems: [{ amount: 5000, employeeId: "emp-b", employeeName: "Activa Sin Fila", glosa: null, id: "pay-b", paymentType: "anticipo", payslipId: null, period: "2026-06", scheduledDate: null, sourceId: null, sourceType: null, status: "aprobado" }],
+    paymentItems: [
+      { amount: 5000, employeeId: "emp-b", employeeName: "Activa Sin Fila", glosa: null, id: "pay-b1", paymentType: "anticipo", payslipId: null, period: "2026-06", scheduledDate: null, sourceId: "adv-1", sourceType: "ADVANCE", status: "aprobado" },
+      { amount: 7000, employeeId: "emp-b", employeeName: "Activa Sin Fila", glosa: null, id: "pay-b2", paymentType: "anticipo", payslipId: null, period: "2026-06", scheduledDate: null, sourceId: "adv-2", sourceType: "ADVANCE", status: "pagado" },
+      { amount: 50000, employeeId: "emp-b", employeeName: "Activa Sin Fila", glosa: null, id: "pay-b3", paymentType: "aguinaldo", payslipId: null, period: "2026-06", scheduledDate: null, sourceId: "agui-1", sourceType: "PAYROLL_BATCH", status: "aprobado" },
+      { amount: 70000, employeeId: "emp-b", employeeName: "Activa Sin Fila", glosa: null, id: "pay-b4", paymentType: "bono_compensatorio", payslipId: null, period: "2026-06", scheduledDate: null, sourceId: "bonus-1", sourceType: "PAYROLL_BATCH", status: "aprobado" },
+      { amount: 999999, employeeId: "emp-b", employeeName: "Activa Sin Fila", glosa: null, id: "pay-b5", paymentType: "anticipo", payslipId: null, period: "2026-06", scheduledDate: null, sourceId: null, sourceType: null, status: "anulado" },
+      { amount: 123456, employeeId: "emp-codex", employeeName: "CODEX VALIDACION RRHH DEMO", glosa: null, id: "pay-codex", paymentType: "anticipo", payslipId: null, period: "2026-06", scheduledDate: null, sourceId: null, sourceType: null, status: "aprobado" }
+    ],
     period: "2026-06"
   });
   assert.deepEqual(rows.map((row) => row.employee.id), ["emp-a", "emp-b"]);
-  assert.equal(rows.find((row) => row.employee.id === "emp-b")?.advances, 5000);
+  assert.equal(rows.find((row) => row.employee.id === "emp-b")?.advances, 12000);
+  assert.equal(rows.find((row) => row.employee.id === "emp-b")?.aguinaldo, 50000);
+  assert.equal(rows.find((row) => row.employee.id === "emp-b")?.compensatoryBonus, 70000);
+  assert.equal(rows.find((row) => row.employee.id === "emp-b")?.salarySources.length, 4);
   assert.equal(salaryRowHasNovelty(rows[0]), true);
-  assert.equal(salaryRowHasNovelty({ ...rows[1], advances: 0 }), false);
+  assert.equal(salaryRowHasNovelty({ ...rows[1], advances: 0, aguinaldo: 0, compensatoryBonus: 0 }), false);
 });
 
 test("HR accountant export preserves the accountant template workbook shape", () => {
   assert.equal(SALARY_TEMPLATE.mainSheetName, "LIBRO REMUNERACIONES");
   assert.equal(SALARY_EXPORT_COLUMNS.fullName, "A");
   assert.equal(SALARY_EXPORT_COLUMNS.ccafLoan, "T");
+  assert.equal(SALARY_EXPORT_COLUMNS.advanceAguinaldo, "V");
   assert.ok(existsSync("src/templates/rrhh/datos-sueldos-contador.xlsx"));
 
   const buffer = generateAccountantWorkbook([
     {
       absences: 1,
       advances: 15000,
+      advanceAguinaldo: 12000,
       aguinaldo: 10000,
       baseSalary: 500000,
       cashAllowance: 2000,
@@ -1051,7 +1064,28 @@ test("HR accountant export preserves the accountant template workbook shape", ()
   for (const sheetName of SALARY_PRESERVED_SHEETS) assert.match(workbook, new RegExp(sheetName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(sheet, /<dimension ref="A1:V7"/);
   assert.match(sheet, /<c r="A6"/);
+  assert.match(sheet, /<c r="V6"/);
   assert.match(sheet, /SUM\(I6:I6\)/);
+});
+
+test("HR monthly salary UI exposes only four main modules and hides technical errors", async () => {
+  const client = await readFile("src/components/hr/hr-dashboard-client.tsx", "utf8");
+  const batchRoute = await readFile("src/app/api/hr/payments/batch/route.ts", "utf8");
+  const paymentTemplateRoute = await readFile("src/app/api/hr/payment-template/route.ts", "utf8");
+
+  assert.match(client, /label: "Trabajadores"/);
+  assert.match(client, /label: "Nominas"/);
+  assert.match(client, /label: "Datos Sueldos"/);
+  assert.match(client, /label: "Liquidaciones"/);
+  assert.doesNotMatch(client, /id: "schedules", label: "Programacion"/);
+  assert.doesNotMatch(client, /id: "imports", label: "Importaciones"/);
+  assert.doesNotMatch(client, /id: "dashboard", label: "Dashboard"/);
+  assert.match(client, /Hay filas de nomina que requieren revision/);
+  assert.match(client, /SALARY_COLUMN_DEFINITIONS/);
+  assert.match(client, /Exportar para contador/);
+  assert.match(client, /isProductiveHrEmployee/);
+  assert.match(batchRoute, /trabajador tecnico excluido/);
+  assert.match(paymentTemplateRoute, /isTechnicalValidationEmployee/);
 });
 
 test("HR payslip classifier matches a PDF-like file by RUT without writing storage", () => {

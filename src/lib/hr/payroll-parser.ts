@@ -56,6 +56,7 @@ export type AccountantRow = {
   phoneAllowance: number;
   cashAllowance: number;
   advances: number;
+  advanceAguinaldo?: number;
   companyLoan: number;
   ccafLoan: number;
   discounts: number;
@@ -324,7 +325,8 @@ export function parseAccountantWorkbook(buffer: Buffer): AccountantRow[] {
       const lateAdvanceAguinaldoIndex = map.find([/^ANTICIPO AGUINALDO$/], 2);
       rows.push({
         absences: num(rowByHeader(cells, absencesIndex)),
-        advances: num(rowByHeader(cells, advancesIndex)) + num(rowByHeader(cells, advanceAguinaldoIndex)) + num(rowByHeader(cells, lateAdvanceAguinaldoIndex)),
+        advanceAguinaldo: num(rowByHeader(cells, advanceAguinaldoIndex)) + num(rowByHeader(cells, lateAdvanceAguinaldoIndex)),
+        advances: num(rowByHeader(cells, advancesIndex)),
         aguinaldo: num(rowByHeader(cells, firstAguinaldoIndex)) + num(rowByHeader(cells, secondAguinaldoIndex)) + num(rowByHeader(cells, lateAguinaldoIndex)),
         baseSalary: 0,
         cashAllowance: num(rowByHeader(cells, cashIndex)),
@@ -454,6 +456,7 @@ function accountantRowXml(rowNumber: number, row: AccountantRow, styles: Record<
     inlineCell(col.companyLoan, rowNumber, row.companyLoan, styles[col.companyLoan]) +
     inlineCell(col.ccafLoan, rowNumber, row.ccafLoan, styles[col.ccafLoan]) +
     inlineCell(col.aguinaldo, rowNumber, row.aguinaldo, styles[col.aguinaldo]) +
+    inlineCell(col.advanceAguinaldo, rowNumber, row.advanceAguinaldo ?? 0, styles[col.advanceAguinaldo]) +
     "</row>";
 }
 

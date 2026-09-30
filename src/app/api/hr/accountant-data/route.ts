@@ -3,6 +3,7 @@ import pg from "pg";
 import { hrAccountantRowSchema, type HrAccountantRowInput } from "@/lib/hr/accountant-data-schema";
 import { requireHrContext } from "@/lib/hr/auth";
 import { generateAccountantWorkbook, type AccountantRow } from "@/lib/hr/payroll-parser";
+import { isProductiveHrEmployee } from "@/lib/hr/employee-filters";
 import { normalizeRut } from "@/lib/hr/utils";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -42,6 +43,59 @@ function textValue(value: unknown, fallback = "") {
 
 function numberValue(value: unknown) {
   return Number(value ?? 0);
+}
+
+const salaryPaymentMap: Record<string, keyof Pick<AccountantRow, "advanceAguinaldo" | "advances" | "aguinaldo" | "ccafLoan" | "compensatoryBonus" | "companyLoan" | "productionBonus" | "responsibilityBonus" | "sundaySurcharge"> | null> = {
+  anticipo: "advances",
+  anticipo_aguinaldo: "advanceAguinaldo",
+  aguinaldo: "aguinaldo",
+  bono_compensatorio: "compensatoryBonus",
+  bono_produccion: "productionBonus",
+  bono_responsabilidad: "responsibilityBonus",
+  prestamo_caja: "ccafLoan",
+  prestamo_ccaf: "ccafLoan",
+  prestamo_empresa: "companyLoan",
+  prestamo_trabajador: "ccafLoan",
+  recargo_domingo: "sundaySurcharge"
+};
+
+const validSalaryPaymentStatuses = new Set(["aprobado", "pendiente_pago", "incluido_en_nomina", "en_nomina", "pagado"]);
+
+function salaryAutomaticTotals(paymentItems: Array<Record<string, unknown>>, employeeId: string) {
+  const totals = {
+    advanceAguinaldo: 0,
+    advances: 0,
+    aguinaldo: 0,
+    ccafLoan: 0,
+    compensatoryBonus: 0,
+    companyLoan: 0,
+    productionBonus: 0,
+    responsibilityBonus: 0,
+    sundaySurcharge: 0
+  };
+  const seen = new Set<string>();
+  for (const item of paymentItems) {
+    if (String(item.employee_id) !== employeeId || !validSalaryPaymentStatuses.has(String(item.status))) continue;
+    const field = salaryPaymentMap[String(item.payment_type)] ?? null;
+    if (!field) continue;
+    const key = `${item.id}:${field}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    totals[field] += numberValue(item.amount);
+  }
+  return totals;
+}
+
+function automaticOrManual(manual: unknown, automatic: number) {
+  return automatic || numberValue(manual);
+}
+
+const monthNames = ["ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"];
+
+function accountantFilename(period: string) {
+  const [year, month] = period.split("-");
+  const label = monthNames[Number(month) - 1] ?? month;
+  return `DATOS SUELDOS ${label} ${year}.xlsx`;
 }
 
 function rawValue(value: unknown): Record<string, string | number> {
@@ -125,7 +179,7 @@ export async function GET(request: Request) {
       isSchemaCacheStale
         ? "Ejecuta en Supabase SQL Editor: notify pgrst, 'reload schema';. Para evitar depender del cache REST, configura DATABASE_URL o SUPABASE_DB_URL como variable server-side en Vercel."
         : referencesTable
-          ? `Error tecnico: ${error.message}`
+          ? "No se pudo leer la tabla mensual de Datos Sueldos. Revisa la configuracion de Supabase y vuelve a intentar."
           : "Revisa la carga del periodo y vuelve a intentar. Si persiste, valida permisos RLS y columnas RRHH.",
       isSchemaCacheStale ? 503 : 422
     );
@@ -140,25 +194,25 @@ export async function GET(request: Request) {
       .order("full_name", { ascending: true }),
     supabase
       .from("hr_payment_items")
-      .select("employee_id,period,payment_type,amount,status")
+      .select("id,employee_id,period,payment_type,amount,status,source_type,source_id")
       .eq("tenant_id", ctx.membership.tenant_id)
       .eq("period", period)
   ]);
 
   const dataByEmployee = new Map((data ?? []).filter((row) => row.employee_id).map((row) => [String(row.employee_id), row]));
-  const rows: AccountantRow[] = (activeEmployees ?? []).map((employee) => {
+  const rows: AccountantRow[] = (activeEmployees ?? []).filter((employee) => isProductiveHrEmployee({ fullName: employee.full_name, rut: employee.rut })).map((employee) => {
     const row = dataByEmployee.get(employee.id) ?? {};
-    const advances = numberValue(row.advances_amount ?? row.advances)
-      || (paymentItems ?? []).filter((item) => item.employee_id === employee.id && item.payment_type === "anticipo").reduce((sum, item) => sum + numberValue(item.amount), 0);
+    const automatic = salaryAutomaticTotals((paymentItems ?? []) as Array<Record<string, unknown>>, employee.id);
     return {
     absences: numberValue(row.absences),
-    advances,
-    aguinaldo: numberValue(row.aguinaldo_amount ?? row.aguinaldo),
+    advanceAguinaldo: automatic.advanceAguinaldo,
+    advances: automaticOrManual(row.advances_amount ?? row.advances, automatic.advances),
+    aguinaldo: automaticOrManual(row.aguinaldo_amount ?? row.aguinaldo, automatic.aguinaldo),
     baseSalary: numberValue(row.base_salary),
     cashAllowance: numberValue(row.cash_allowance_amount),
-    ccafLoan: numberValue(row.ccaf_loan_amount),
-    compensatoryBonus: numberValue(row.compensatory_bonus_amount ?? row.compensatory_bonus),
-    companyLoan: numberValue(row.company_loan_amount),
+    ccafLoan: automaticOrManual(row.ccaf_loan_amount, automatic.ccafLoan),
+    compensatoryBonus: automaticOrManual(row.compensatory_bonus_amount ?? row.compensatory_bonus, automatic.compensatoryBonus),
+    companyLoan: automaticOrManual(row.company_loan_amount, automatic.companyLoan),
     costCenter: textValue(row.cost_center),
     discounts: numberValue(row.discounts),
     fullName: textValue(row.full_name ?? row.employee_name, employee.full_name),
@@ -168,14 +222,14 @@ export async function GET(request: Request) {
     overtimeHours: numberValue(row.overtime_hours),
     phoneAllowance: numberValue(row.phone_allowance_amount),
     position: textValue(row.position),
-    productionBonus: numberValue(row.production_bonus_amount),
+    productionBonus: automaticOrManual(row.production_bonus_amount, automatic.productionBonus),
     raw: rawValue(row.raw_row),
     reason: textValue(row.reason),
-    responsibilityBonus: numberValue(row.responsibility_bonus_amount),
+    responsibilityBonus: automaticOrManual(row.responsibility_bonus_amount, automatic.responsibilityBonus),
     rowNumber: numberValue(row.row_number),
     rut: textValue(row.rut, employee.rut),
     sheetName: textValue(row.sheet_name, "LIBRO REMUNERACIONES"),
-    sundaySurcharge: numberValue(row.sunday_surcharge_amount)
+    sundaySurcharge: automaticOrManual(row.sunday_surcharge_amount, automatic.sundaySurcharge)
     };
   });
   if (!rows.length) {
@@ -193,7 +247,7 @@ export async function GET(request: Request) {
   });
   return new NextResponse(buffer, {
     headers: {
-      "Content-Disposition": `attachment; filename="Datos sueldos ${period}.xlsx"`,
+      "Content-Disposition": `attachment; filename="${accountantFilename(period)}"`,
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "X-HR-Accountant-Rows": String(rows.length)
     }
