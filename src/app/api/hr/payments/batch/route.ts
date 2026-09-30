@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
+import { isTechnicalValidationEmployee } from "@/lib/hr/employee-filters";
 import { validatePaymentBatchEmployee } from "@/lib/hr/payment-batch";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -60,7 +61,13 @@ export async function POST(request: Request) {
 
   const employeeById = new Map((employees.data ?? []).map((employee) => [employee.id, employee]));
   const invalid = body.items
-    .map((item) => validatePaymentBatchEmployee(employeeById.get(item.employeeId), item.employeeId))
+    .map((item) => {
+      const employee = employeeById.get(item.employeeId);
+      if (isTechnicalValidationEmployee({ fullName: employee?.full_name })) {
+        return { alerts: ["trabajador tecnico excluido de operaciones productivas"], employeeId: item.employeeId, employeeName: employee?.full_name ?? "Trabajador" };
+      }
+      return validatePaymentBatchEmployee(employee, item.employeeId);
+    })
     .filter((item) => item !== null);
   if (invalid.length) {
     return NextResponse.json({ ok: false, error: "hr_payment_batch_invalid_rows", invalid }, { status: 422 });

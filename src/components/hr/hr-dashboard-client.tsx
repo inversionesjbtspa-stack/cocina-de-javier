@@ -10,7 +10,6 @@ import {
   Eye,
   FileText,
   Landmark,
-  LayoutDashboard,
   Search,
   SlidersHorizontal,
   TableProperties,
@@ -22,7 +21,9 @@ import {
 } from "lucide-react";
 import { formatClp } from "@/lib/dte/purchases-data";
 import type { HrDashboardData, HrEmployee } from "@/lib/hr/data";
+import { isProductiveHrEmployee } from "@/lib/hr/employee-filters";
 import { buildSalaryRows, salaryRowHasNovelty } from "@/lib/hr/salary-data";
+import { SALARY_COLUMN_DEFINITIONS } from "@/lib/hr/salary-export-map";
 import { isCancelledVacationRequest, isOperationalVacationRequest } from "@/lib/hr/vacation-domain";
 import { EmployeeSummary } from "@/components/hr/employee-summary";
 import {
@@ -103,10 +104,7 @@ const sections: Array<{ icon: typeof Users; id: HrSection; label: string }> = [
   { icon: Users, id: "workers", label: "Trabajadores" },
   { icon: WalletCards, id: "payroll", label: "Nominas" },
   { icon: TableProperties, id: "salary", label: "Datos Sueldos" },
-  { icon: FileText, id: "payslips", label: "Liquidaciones" },
-  { icon: CalendarDays, id: "schedules", label: "Programacion" },
-  { icon: Upload, id: "imports", label: "Importaciones" },
-  { icon: LayoutDashboard, id: "dashboard", label: "Dashboard" }
+  { icon: FileText, id: "payslips", label: "Liquidaciones" }
 ];
 
 const workerTabs: Array<{ id: WorkerTab; label: string }> = [
@@ -253,6 +251,15 @@ function hrErrorMessage(error?: string) {
   return "No se pudo clasificar carga masiva.";
 }
 
+function hrPayrollBatchErrorMessage(payload: Record<string, unknown> | null) {
+  if (payload?.error === "hr_payment_batch_invalid_rows") return "Hay filas de nomina que requieren revision antes de crear el lote.";
+  if (payload?.error === "hr_payment_concept_invalid") return "El concepto de nomina seleccionado no esta disponible.";
+  if (payload?.error === "hr_payment_concept_description_required") return "Este concepto requiere una descripcion antes de crear el lote.";
+  if (payload?.error === "hr_payment_batch_validation_failed") return "Revisa periodo, concepto, trabajadores y montos antes de crear el lote.";
+  if (payload?.error === "hr_payment_duplicates_need_confirmation") return "Existen pagos del mismo concepto y periodo que requieren confirmacion.";
+  return "No se pudo crear el lote.";
+}
+
 function bulkPayslipCommitMessage(payload: Record<string, unknown>) {
   const confirmed = Number(payload.confirmed ?? payload.saved ?? 0);
   const payments = Number(payload.createdPayrollRows ?? payload.paymentsCreated ?? 0);
@@ -317,7 +324,9 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
   const [message, setMessage] = useState<string | null>(null);
 
   const selectedEmployee = employees.find((employee) => employee.id === selectedEmployeeId) ?? employees[0] ?? null;
-  const payablePaymentItems = data.paymentItems.filter((item) => ["aprobado", "pendiente_pago"].includes(item.status));
+  const productiveEmployees = useMemo(() => employees.filter(isProductiveHrEmployee), [employees]);
+  const productiveEmployeeIds = useMemo(() => new Set(productiveEmployees.map((employee) => employee.id)), [productiveEmployees]);
+  const payablePaymentItems = data.paymentItems.filter((item) => ["aprobado", "pendiente_pago"].includes(item.status) && productiveEmployeeIds.has(item.employeeId));
   const employeeById = useMemo(() => new Map(employees.map((employee) => [employee.id, employee])), [employees]);
 
   const kpis = [
@@ -440,6 +449,7 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
 
   const selectablePayrollEmployees = useMemo(() => employees
     .filter((employee) => employee.status === "activo")
+    .filter(isProductiveHrEmployee)
     .filter((employee) => {
       const search = payrollSearch.trim().toLowerCase();
       const bankStatus = employee.paymentAlerts.length ? "incompleto" : "completo";
@@ -719,11 +729,11 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
           method: "POST"
         });
         const retryPayload = await retry.json().catch(() => null);
-        setMessage(retry.ok ? `Lote creado: ${retryPayload.created} pago(s).` : retryPayload?.error ?? "No se pudo crear el lote.");
+        setMessage(retry.ok ? `Lote creado: ${retryPayload.created} pago(s).` : hrPayrollBatchErrorMessage(retryPayload));
       }
       return;
     }
-    setMessage(response.ok ? `Lote creado: ${payload.created} pago(s).` : payload?.error ?? "No se pudo crear el lote.");
+    setMessage(response.ok ? `Lote creado: ${payload.created} pago(s).` : hrPayrollBatchErrorMessage(payload));
   }
 
   async function previewBulkPayslips(event: FormEvent<HTMLFormElement>, commit = false) {
@@ -1763,12 +1773,20 @@ function formHasChanges(form: HTMLFormElement) {
 
 function SalaryDataSection({ data, onSave, setMessage }: { data: HrDashboardData; onSave: (event: FormEvent<HTMLFormElement>) => void; setMessage: (message: string | null) => void }) {
   const [search, setSearch] = useState("");
+  const [area, setArea] = useState("");
+  const [position, setPosition] = useState("");
   const [onlyChanges, setOnlyChanges] = useState(false);
+  const [previewReady, setPreviewReady] = useState(false);
+  const areas = useMemo(() => Array.from(new Set(data.employees.map((employee) => employee.area).filter(Boolean) as string[])).sort(), [data.employees]);
+  const positions = useMemo(() => Array.from(new Set(data.employees.map((employee) => employee.position).filter(Boolean) as string[])).sort(), [data.employees]);
   const salaryRows = buildSalaryRows(data)
     .filter((row) => {
-      const text = `${row.employee.fullName} ${row.employee.rut} ${row.employee.area ?? ""} ${row.costCenter}`.toLowerCase();
+      const text = `${row.employee.fullName} ${row.employee.rut} ${row.employee.area ?? ""} ${row.employee.position ?? ""} ${row.costCenter}`.toLowerCase();
       const hasChanges = salaryRowHasNovelty(row);
-      return (!search || text.includes(search.toLowerCase())) && (!onlyChanges || hasChanges);
+      return (!search || text.includes(search.toLowerCase()))
+        && (!area || row.employee.area === area)
+        && (!position || row.employee.position === position)
+        && (!onlyChanges || hasChanges);
     });
   async function saveAllChangedRows() {
     const forms = Array.from(document.querySelectorAll<HTMLFormElement>('form[id^="salary-"]'));
@@ -1790,76 +1808,117 @@ function SalaryDataSection({ data, onSave, setMessage }: { data: HrDashboardData
     bonuses: acc.bonuses + row.productionBonus + row.compensatoryBonus + row.responsibilityBonus + row.aguinaldo,
     loans: acc.loans + row.companyLoan + row.ccafLoan,
     movilization: acc.movilization + row.movilization,
-    phone: acc.phone + row.phoneAllowance
-  }), { advances: 0, bonuses: 0, loans: 0, movilization: 0, phone: 0 });
+    pending: acc.pending + (row.salarySources.length ? 0 : Number(!salaryRowHasNovelty(row)))
+  }), { advances: 0, bonuses: 0, loans: 0, movilization: 0, pending: 0 });
+  const automaticConcepts = salaryRows.reduce((sum, row) => sum + row.salarySources.length, 0);
   return (
     <div className="space-y-4">
       <SectionCard className="p-5">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="text-lg font-semibold text-brand-900">Datos Sueldos</h2>
-            <p className="mt-1 text-sm text-[#667068]">Grilla mensual por trabajador activo. Periodo interno {data.period}.</p>
+            <p className="mt-1 text-sm text-[#667068]">Planilla mensual acumulativa del contador. Periodo {data.period}. Contrato Excel: LIBRO REMUNERACIONES, fila 5, trabajadores desde fila 6, columnas A:V.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button className="rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white" onClick={saveAllChangedRows} type="button">Guardar todos los cambios</button>
-            <a className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" href={`/api/hr/accountant-data?period=${data.period}`}>Exportar Excel contador</a>
+            <button className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" onClick={() => { setPreviewReady(true); setMessage(`Preview Datos Sueldos ${data.period}: ${salaryRows.length} trabajador(es), ${automaticConcepts} concepto(s) automatico(s).`); }} type="button">Previsualizar</button>
+            <a aria-disabled={!previewReady} className={`rounded-md border px-3 py-2 text-sm font-semibold ${previewReady ? "border-brand-700 text-brand-700" : "pointer-events-none border-slate-200 text-slate-400"}`} href={previewReady ? `/api/hr/accountant-data?period=${data.period}` : "#"}>Exportar para contador</a>
           </div>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-4">
+        <div className="mt-4 grid gap-3 md:grid-cols-5">
           <input className="rounded-md border px-3 py-2 text-sm md:col-span-2" onChange={(event) => setSearch(event.target.value)} placeholder="Filtrar por nombre, RUT, area o centro de costo" value={search} />
+          <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setArea(event.target.value)} value={area}>
+            <option value="">Todas las areas</option>
+            {areas.map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
+          <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPosition(event.target.value)} value={position}>
+            <option value="">Todos los cargos</option>
+            {positions.map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
           <label className="flex items-center gap-2 text-sm"><input checked={onlyChanges} onChange={(event) => setOnlyChanges(event.target.checked)} type="checkbox" /> Solo filas con novedades</label>
-          <button className="rounded-md border border-[#dfe4dd] px-3 py-2 text-sm font-semibold text-[#4e5a52]" onClick={() => window.confirm("Copiar datos del mes anterior queda reservado para ejecucion confirmada en backend.")} type="button">Copiar mes anterior</button>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-5">
           <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Bonos</p><p className="font-semibold">{formatClp(totals.bonuses)}</p></div>
           <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Anticipos</p><p className="font-semibold">{formatClp(totals.advances)}</p></div>
           <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Prestamos</p><p className="font-semibold">{formatClp(totals.loans)}</p></div>
           <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Movilizacion</p><p className="font-semibold">{formatClp(totals.movilization)}</p></div>
-          <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Telefono</p><p className="font-semibold">{formatClp(totals.phone)}</p></div>
+          <div className="rounded-md bg-brand-50 p-3"><p className="text-xs text-[#667068]">Conceptos automaticos</p><p className="font-semibold">{automaticConcepts}</p></div>
         </div>
+        {previewReady ? (
+          <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+            Preview listo: campos opcionales vacios no bloquean exportacion. Revisa manuales pendientes antes de descargar el Excel del contador.
+          </div>
+        ) : null}
       </SectionCard>
       <SectionCard className="overflow-hidden">
-        <SimpleTable headers={["Trabajador", "C. costo", "Inas.", "Motivo", "Lic.", "HE", "Aguinaldo", "B. prod.", "B. comp.", "B. resp.", "Rec. dom.", "Mov.", "Tel.", "Caja", "Anticipos", "P. emp.", "P. caja", "Obs.", "Guardar"]}>
+        <div className="overflow-x-auto">
+          <table className="min-w-[1900px] w-full text-left text-xs">
+            <thead className="bg-brand-50 uppercase text-[#667068]">
+              <tr>
+                <th className="sticky left-0 z-10 bg-brand-50 px-3 py-2">A NOMBRE</th>
+                <th className="sticky left-[220px] z-10 bg-brand-50 px-3 py-2">B RUT</th>
+                {SALARY_COLUMN_DEFINITIONS.slice(2).map((column) => (
+                  <th className="px-3 py-2" key={column.column}>{column.column} {column.header}</th>
+                ))}
+                <th className="px-3 py-2">Origen</th>
+                <th className="px-3 py-2">Guardar</th>
+              </tr>
+            </thead>
+            <tbody>
           {salaryRows.map((row) => <SalaryGridRow key={row.employee.id} data={data} onSave={onSave} row={row} />)}
-          {!salaryRows.length ? <tr><td className="px-4 py-8 text-center text-sm text-[#667068]" colSpan={19}>Sin trabajadores para los filtros actuales.</td></tr> : null}
-        </SimpleTable>
-      </SectionCard>
-      <SectionCard className="p-5">
-        <h3 className="font-semibold text-brand-900">Editor rapido de fila adicional</h3>
-        <AccountantRowForm data={data} onSubmit={onSave} />
+              {!salaryRows.length ? <tr><td className="px-4 py-8 text-center text-sm text-[#667068]" colSpan={24}>Sin trabajadores para los filtros actuales.</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
       </SectionCard>
     </div>
   );
 }
 
-function SalaryGridRow({ data, onSave, row }: { data: HrDashboardData; onSave: (event: FormEvent<HTMLFormElement>) => void; row: { absences: number; advances: number; aguinaldo: number; cashAllowance: number; ccafLoan: number; compensatoryBonus: number; companyLoan: number; costCenter: string; employee: HrEmployee; licenses: number; movilization: number; observations: string | null; overtimeHours: number; phoneAllowance: number; productionBonus: number; reason: string | null; responsibilityBonus: number; sundaySurcharge: number } }) {
+function SalaryGridRow({ data, onSave, row }: { data: HrDashboardData; onSave: (event: FormEvent<HTMLFormElement>) => void; row: { absences: number; advanceAguinaldo: number; advances: number; aguinaldo: number; cashAllowance: number; ccafLoan: number; compensatoryBonus: number; companyLoan: number; costCenter: string; employee: HrEmployee; licenses: number; movilization: number; observations: string | null; overtimeHours: number; phoneAllowance: number; productionBonus: number; reason: string | null; responsibilityBonus: number; salarySources: Array<{ concept: string }>; sundaySurcharge: number } }) {
   const input = "w-24 rounded border px-2 py-1 text-xs";
+  const readonly = "w-24 rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600";
   const formId = `salary-${row.employee.id}`;
+  const sourceLabel = row.salarySources.length ? `${row.salarySources.length} automatico(s)` : "Manual";
+  const automaticConcepts = new Set(row.salarySources.map((source) => source.concept));
+  const inputProps = (name: string, value: string | number, editable = true) => ({
+    className: editable ? input : readonly,
+    defaultValue: value,
+    form: formId,
+    name,
+    readOnly: !editable
+  });
   return (
     <tr className="border-t align-top">
-      <td className="px-4 py-3 font-semibold text-brand-900">{row.employee.fullName}</td>
-      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.costCenter} name="costCenter" /></td>
-      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.absences} name="absences" type="number" step="0.01" /></td>
-      <td className="px-4 py-3"><input className="w-36 rounded border px-2 py-1 text-xs" form={formId} defaultValue={row.reason ?? ""} name="reason" /></td>
-      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.licenses} name="licenses" type="number" step="0.01" /></td>
-      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.overtimeHours} name="overtimeHours" type="number" step="0.01" /></td>
-      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.aguinaldo} name="aguinaldo" type="number" /></td>
-      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.productionBonus} name="productionBonus" type="number" /></td>
-      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.compensatoryBonus} name="compensatoryBonus" type="number" /></td>
-      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.responsibilityBonus} name="responsibilityBonus" type="number" /></td>
-      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.sundaySurcharge} name="sundaySurcharge" type="number" /></td>
-      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.movilization} name="movilization" type="number" /></td>
-      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.phoneAllowance} name="phoneAllowance" type="number" /></td>
-      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.cashAllowance} name="cashAllowance" type="number" /></td>
-      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.advances} name="advances" type="number" /></td>
-      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.companyLoan} name="companyLoan" type="number" /></td>
-      <td className="px-4 py-3"><input className={input} form={formId} defaultValue={row.ccafLoan} name="ccafLoan" type="number" /></td>
-      <td className="px-4 py-3"><input className="w-44 rounded border px-2 py-1 text-xs" form={formId} defaultValue={row.observations ?? ""} name="observations" /></td>
-      <td className="px-4 py-3">
+      <td className="sticky left-0 z-10 min-w-[220px] bg-white px-3 py-3 font-semibold text-brand-900">{row.employee.fullName}</td>
+      <td className="sticky left-[220px] z-10 min-w-[130px] bg-white px-3 py-3">{row.employee.rut}</td>
+      <td className="px-3 py-3"><input {...inputProps("costCenter", row.costCenter)} /></td>
+      <td className="px-3 py-3"><input {...inputProps("absences", row.absences)} step="0.01" type="number" /></td>
+      <td className="px-3 py-3"><input className="w-36 rounded border px-2 py-1 text-xs" form={formId} defaultValue={row.reason ?? ""} name="reason" /></td>
+      <td className="px-3 py-3"><input {...inputProps("overtimeHours", row.overtimeHours)} step="0.01" type="number" /></td>
+      <td className="px-3 py-3"><input className={readonly} readOnly value="" /></td>
+      <td className="px-3 py-3"><input className={readonly} readOnly value="" /></td>
+      <td className="px-3 py-3"><input {...inputProps("productionBonus", row.productionBonus, !automaticConcepts.has("productionBonus"))} type="number" /></td>
+      <td className="px-3 py-3"><input className={readonly} readOnly value="" /></td>
+      <td className="px-3 py-3"><input {...inputProps("compensatoryBonus", row.compensatoryBonus, !automaticConcepts.has("compensatoryBonus"))} type="number" /></td>
+      <td className="px-3 py-3"><input {...inputProps("sundaySurcharge", row.sundaySurcharge, !automaticConcepts.has("sundaySurcharge"))} type="number" /></td>
+      <td className="px-3 py-3"><input {...inputProps("responsibilityBonus", row.responsibilityBonus, !automaticConcepts.has("responsibilityBonus"))} type="number" /></td>
+      <td className="px-3 py-3"><input {...inputProps("movilization", row.movilization)} type="number" /></td>
+      <td className="px-3 py-3"><input {...inputProps("phoneAllowance", row.phoneAllowance)} type="number" /></td>
+      <td className="px-3 py-3"><input {...inputProps("cashAllowance", row.cashAllowance)} type="number" /></td>
+      <td className="px-3 py-3"><input {...inputProps("advances", row.advances, !automaticConcepts.has("advances"))} type="number" /></td>
+      <td className="px-3 py-3"><input className={readonly} readOnly value="" /></td>
+      <td className="px-3 py-3"><input {...inputProps("companyLoan", row.companyLoan, !automaticConcepts.has("companyLoan"))} type="number" /></td>
+      <td className="px-3 py-3"><input {...inputProps("ccafLoan", row.ccafLoan, !automaticConcepts.has("ccafLoan"))} type="number" /></td>
+      <td className="px-3 py-3"><input {...inputProps("aguinaldo", row.aguinaldo, !automaticConcepts.has("aguinaldo"))} type="number" /></td>
+      <td className="px-3 py-3"><input className={readonly} readOnly value={row.advanceAguinaldo || ""} /></td>
+      <td className="px-3 py-3 text-[11px] text-[#667068]">{sourceLabel}</td>
+      <td className="px-3 py-3">
         <form id={formId} onSubmit={onSave}>
           <input name="period" type="hidden" value={data.period} />
           <input name="rut" type="hidden" value={row.employee.rut} />
           <input name="fullName" type="hidden" value={row.employee.fullName} />
+          <input name="advanceAguinaldo" type="hidden" value={row.advanceAguinaldo} />
           <button className="rounded-md bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white" type="submit">Guardar</button>
         </form>
       </td>
@@ -2189,29 +2248,6 @@ function ImportStep({ children, number, title }: { children: React.ReactNode; nu
       </div>
       {children}
     </div>
-  );
-}
-
-function AccountantRowForm({ data, onSubmit }: { data: HrDashboardData; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  return (
-    <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={onSubmit}>
-      <input className="rounded-md border px-3 py-2 text-sm" defaultValue={data.period} name="period" type="month" />
-      <input className="rounded-md border px-3 py-2 text-sm" name="rut" placeholder="RUT" required />
-      <input className="rounded-md border px-3 py-2 text-sm md:col-span-2" name="fullName" placeholder="Trabajador" required />
-      <input className="rounded-md border px-3 py-2 text-sm" name="costCenter" placeholder="C. costo" />
-      <input className="rounded-md border px-3 py-2 text-sm" name="absences" placeholder="Inasistencias" type="number" step="0.01" />
-      <input className="rounded-md border px-3 py-2 text-sm" name="licenses" placeholder="Licencias" type="number" step="0.01" />
-      <input className="rounded-md border px-3 py-2 text-sm" name="overtimeHours" placeholder="Horas extras" type="number" step="0.01" />
-      <input className="rounded-md border px-3 py-2 text-sm" name="productionBonus" placeholder="Bono produccion" type="number" />
-      <input className="rounded-md border px-3 py-2 text-sm" name="compensatoryBonus" placeholder="Bono compensatorio" type="number" />
-      <input className="rounded-md border px-3 py-2 text-sm" name="responsibilityBonus" placeholder="Bono responsabilidad" type="number" />
-      <input className="rounded-md border px-3 py-2 text-sm" name="aguinaldo" placeholder="Aguinaldo" type="number" />
-      <input className="rounded-md border px-3 py-2 text-sm" name="advances" placeholder="Anticipos" type="number" />
-      <input className="rounded-md border px-3 py-2 text-sm" name="companyLoan" placeholder="Prestamo empresa" type="number" />
-      <input className="rounded-md border px-3 py-2 text-sm" name="ccafLoan" placeholder="Prestamo caja" type="number" />
-      <input className="rounded-md border px-3 py-2 text-sm md:col-span-2" name="observations" placeholder="Observaciones" />
-      <button className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white md:col-span-2" type="submit">Guardar fila</button>
-    </form>
   );
 }
 

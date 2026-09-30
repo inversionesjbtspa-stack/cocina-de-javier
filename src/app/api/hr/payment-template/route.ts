@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
 import { buildHrTefPreview, generateHrTefWorkbook, type HrPaymentForTef } from "@/lib/hr/bank-tef";
+import { isTechnicalValidationEmployee } from "@/lib/hr/employee-filters";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const schema = z.object({
@@ -73,7 +74,10 @@ function employeeFrom(row: PaymentRow) {
 }
 
 function paymentRowsForPreview(rows: PaymentRow[], glosaGlobal = ""): HrPaymentForTef[] {
-  return rows.map((row) => {
+  return rows.filter((row) => {
+    const employee = employeeFrom(row);
+    return !isTechnicalValidationEmployee({ fullName: employee?.full_name, rut: employee?.rut });
+  }).map((row) => {
     const employee = employeeFrom(row);
     const bank = employee?.hr_employee_bank_accounts?.[0];
     return {
