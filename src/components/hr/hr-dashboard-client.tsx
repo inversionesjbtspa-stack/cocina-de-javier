@@ -79,6 +79,8 @@ type TefPreviewSummary = {
   totalAmount: number;
   zeroAmount: number;
 };
+type PayrollBatchResult = { created?: number; ok: boolean };
+type PayrollWorkflowType = "remuneracion" | "anticipo" | "aguinaldo" | "bono" | "otro";
 
 const paymentConcepts = [
   ["remuneracion_mensual", "Remuneracion mensual", false],
@@ -691,7 +693,7 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
     setMessage("Nomina bancaria TEF RRHH exportada. Archivo generado, no pagado.");
   }
 
-  async function createSelectablePayrollBatch(config: { concept: string; conceptDescription: string; glosaGlobal: string; period: string; scheduledDate: string; status: "borrador" | "pendiente_pago" | "aprobado" }) {
+  async function createSelectablePayrollBatch(config: { concept: string; conceptDescription: string; glosaGlobal: string; period: string; scheduledDate: string; status: "borrador" | "pendiente_pago" | "aprobado" }): Promise<PayrollBatchResult> {
     const items = payrollEmployeeSelection.map((employeeId) => ({
       amount: Number(payrollDraft[employeeId]?.amount ?? 0),
       employeeId,
@@ -699,12 +701,12 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
     })).filter((item) => item.amount > 0);
     if (!items.length) {
       setMessage("Selecciona trabajadores e ingresa montos mayores a cero.");
-      return;
+      return { ok: false };
     }
     const concept = paymentConcepts.find(([code]) => code === config.concept);
     if (concept?.[2] && !config.conceptDescription.trim()) {
       setMessage("El concepto seleccionado requiere descripcion.");
-      return;
+      return { ok: false };
     }
     const response = await fetch("/api/hr/payments/batch", {
       body: JSON.stringify({
@@ -729,11 +731,13 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
           method: "POST"
         });
         const retryPayload = await retry.json().catch(() => null);
-        setMessage(retry.ok ? `Lote creado: ${retryPayload.created} pago(s).` : hrPayrollBatchErrorMessage(retryPayload));
+        setMessage(retry.ok ? `Nomina creada: ${retryPayload.created} pago(s).` : hrPayrollBatchErrorMessage(retryPayload));
+        return retry.ok ? { created: retryPayload.created, ok: true } : { ok: false };
       }
-      return;
+      return { ok: false };
     }
-    setMessage(response.ok ? `Lote creado: ${payload.created} pago(s).` : hrPayrollBatchErrorMessage(payload));
+    setMessage(response.ok ? `Nomina creada: ${payload.created} pago(s).` : hrPayrollBatchErrorMessage(payload));
+    return response.ok ? { created: payload.created, ok: true } : { ok: false };
   }
 
   async function previewBulkPayslips(event: FormEvent<HTMLFormElement>, commit = false) {
@@ -768,6 +772,7 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
       setMessage("Selecciona pagos para marcarlos como pagados.");
       return;
     }
+    if (!window.confirm("Confirma que el banco proceso correctamente los pagos de esta nomina.")) return;
     const results = await Promise.all(paymentSelection.map((id) => fetch(`/api/hr/payments/${id}`, {
       body: JSON.stringify({ paymentDate: today(), status: "pagado" }),
       headers: { "content-type": "application/json" },
@@ -1533,7 +1538,7 @@ function PayrollSection({
   tefPreviewSummary
 }: {
   areas: string[];
-  createSelectablePayrollBatch: (config: { concept: string; conceptDescription: string; glosaGlobal: string; period: string; scheduledDate: string; status: "borrador" | "pendiente_pago" | "aprobado" }) => void;
+  createSelectablePayrollBatch: (config: { concept: string; conceptDescription: string; glosaGlobal: string; period: string; scheduledDate: string; status: "borrador" | "pendiente_pago" | "aprobado" }) => Promise<PayrollBatchResult>;
   data: HrDashboardData;
   employees: HrEmployee[];
   filteredPaymentItems: HrPaymentItem[];
@@ -1564,13 +1569,42 @@ function PayrollSection({
   tefPreviewRows: TefPreviewRow[];
   tefPreviewSummary: TefPreviewSummary | null;
 }) {
-  const [concept, setConcept] = useState("remuneracion_mensual");
+  const payrollTypes: Array<{ description: string; id: PayrollWorkflowType; label: string }> = [
+    { description: "Pago mensual segun liquidaciones confirmadas.", id: "remuneracion", label: "REMUNERACION" },
+    { description: "Pago anticipado que se registrara automaticamente en Datos Sueldos.", id: "anticipo", label: "ANTICIPO" },
+    { description: "Pago extraordinario para uno o varios trabajadores.", id: "aguinaldo", label: "AGUINALDO" },
+    { description: "Pago de bono individual o masivo.", id: "bono", label: "BONO" },
+    { description: "Otro concepto de pago extraordinario.", id: "otro", label: "OTRO" }
+  ];
+  const [selectedType, setSelectedType] = useState<PayrollWorkflowType | null>(null);
+  const [createdPayroll, setCreatedPayroll] = useState<{ bankPending: number; bankReady: number; count: number; label: string; period: string; total: number; type: PayrollWorkflowType } | null>(null);
   const [conceptDescription, setConceptDescription] = useState("");
   const [glosaGlobal, setGlosaGlobal] = useState("");
   const [period, setPeriod] = useState(data.period);
   const [scheduledDate, setScheduledDate] = useState(today());
   const [commonAmount, setCommonAmount] = useState("");
-  const selectedFilteredIds = selectableEmployees.map((employee) => employee.id);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const concept = selectedType === "remuneracion" ? "remuneracion_mensual"
+    : selectedType === "anticipo" ? "anticipo"
+      : selectedType === "aguinaldo" ? "aguinaldo"
+        : selectedType === "bono" ? "otro_bono"
+          : selectedType === "otro" ? "otro_concepto"
+            : "remuneracion_mensual";
+  const typeLabel = payrollTypes.find((type) => type.id === selectedType)?.label ?? "";
+  const defaultConceptDescription = selectedType === "bono" ? "Bono" : selectedType === "otro" ? "Otro concepto" : "";
+  const periodLabel = formatPayrollPeriod(period);
+  const generatedTrancheLabel = selectedType ? `${typeLabel} ${periodLabel}` : "";
+  const generatedGlosa = selectedType ? `${typeLabel} ${periodLabel}` : "";
+  const selectedFilteredIds = selectableEmployees
+    .filter((employee) => payrollRowState(employee, data.paymentItems, period, selectedType, payrollDraft).selectable)
+    .map((employee) => employee.id);
+  const visibleRows = selectableEmployees.map((employee) => payrollRowState(employee, data.paymentItems, period, selectedType, payrollDraft));
+  const selectedRows = visibleRows.filter((row) => payrollEmployeeSelection.includes(row.employee.id));
+  const withAmount = selectedRows.filter((row) => Number(payrollDraft[row.employee.id]?.amount ?? row.amount ?? 0) > 0).length;
+  const total = selectedRows.reduce((sum, row) => sum + Number(payrollDraft[row.employee.id]?.amount ?? row.amount ?? 0), 0);
+  const bankReady = selectedRows.filter((row) => row.employee.paymentAlerts.length === 0).length;
+  const bankPending = selectedRows.length - bankReady;
+  const tefUnlocked = Boolean(createdPayroll) || paymentSelection.length > 0;
   const selectAllFiltered = () => setPayrollEmployeeSelection((current) => Array.from(new Set([...current, ...selectedFilteredIds])));
   const changePayrollPeriod = (value: string) => {
     setPeriod(value);
@@ -1581,54 +1615,218 @@ function PayrollSection({
     window.location.assign(`${window.location.pathname}?${params.toString()}`);
   };
   const applyCommonAmount = () => {
-    if (!commonAmount) return;
+    if (!commonAmount || selectedType === "remuneracion") return;
     setPayrollDraft((current) => {
       const next = { ...current };
       for (const id of payrollEmployeeSelection) next[id] = { amount: commonAmount, glosa: next[id]?.glosa ?? "" };
       return next;
     });
   };
+  const selectPayrollType = (type: PayrollWorkflowType) => {
+    setSelectedType(type);
+    setCreatedPayroll(null);
+    setPayrollEmployeeSelection([]);
+    setCommonAmount("");
+    setConceptDescription(type === "bono" ? "Bono" : type === "otro" ? "Otro concepto" : "");
+    if (type === "remuneracion") {
+      setPayrollDraft((current) => {
+        const next = { ...current };
+        for (const item of data.paymentItems.filter((item) => item.paymentType === "remuneracion_mensual" && item.period === period && item.amount > 0)) {
+          next[item.employeeId] = { amount: String(item.amount), glosa: item.glosa ?? "" };
+        }
+        return next;
+      });
+    }
+  };
+  const clearSelection = () => setPayrollEmployeeSelection([]);
+  const selectEveryVisible = () => setPayrollEmployeeSelection(selectedFilteredIds);
+  const createGuidedPayroll = async () => {
+    if (!selectedType) return;
+    const conceptText = selectedType === "bono" || selectedType === "otro" ? (conceptDescription.trim() || defaultConceptDescription) : "";
+    const result = await createSelectablePayrollBatch({
+      concept,
+      conceptDescription: conceptText,
+      glosaGlobal: glosaGlobal || generatedGlosa,
+      period,
+      scheduledDate,
+      status: "aprobado"
+    });
+    if (!result.ok) return;
+    setCreatedPayroll({
+      bankPending,
+      bankReady,
+      count: result.created ?? selectedRows.length,
+      label: typeLabel,
+      period,
+      total,
+      type: selectedType
+    });
+  };
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="hr-payroll-guided-flow">
+      <SectionCard className="p-5">
+        <div>
+          <h2 className="text-xl font-semibold text-brand-900">NOMINAS</h2>
+          <p className="mt-1 max-w-3xl text-sm text-[#667068]">Crea pagos de remuneraciones, anticipos, aguinaldos, bonos u otros conceptos y genera el archivo bancario cuando corresponda.</p>
+        </div>
+        <div className="mt-5 rounded-lg border border-[#dfe4dd] bg-brand-50 p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase text-brand-700">GENERAR NOMINA</p>
+              <h3 className="text-lg font-semibold text-brand-900">PASO 1 DE 4 · TIPO DE NOMINA</h3>
+            </div>
+            {selectedType ? <Pill className="border-brand-200 bg-white text-brand-800">{typeLabel}</Pill> : <Pill className="border-amber-200 bg-amber-50 text-amber-800">Selecciona un tipo</Pill>}
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-5">
+            {payrollTypes.map((type) => (
+              <button
+                className={`rounded-lg border p-4 text-left transition ${selectedType === type.id ? "border-brand-700 bg-white shadow-sm" : "border-[#dfe4dd] bg-white/70 hover:border-brand-300"}`}
+                key={type.id}
+                onClick={() => selectPayrollType(type.id)}
+                type="button"
+              >
+                <span className="block text-sm font-bold text-brand-900">{type.label}</span>
+                <span className="mt-2 block text-xs leading-5 text-[#667068]">{type.description}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </SectionCard>
+
+      {selectedType ? (
+        <>
+          <SectionCard className="p-5">
+            <div className="flex flex-col gap-1">
+              <p className="text-xs font-semibold uppercase text-brand-700">PASO 2 DE 4</p>
+              <h3 className="text-lg font-semibold text-brand-900">DATOS DE LA NOMINA</h3>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-4">
+              <label className="text-sm font-semibold text-brand-900">
+                Periodo
+                <input className="mt-1 w-full rounded-md border px-3 py-2 text-sm" onChange={(event) => changePayrollPeriod(event.target.value)} type="month" value={period} />
+              </label>
+              <label className="text-sm font-semibold text-brand-900">
+                Fecha
+                <input className="mt-1 w-full rounded-md border px-3 py-2 text-sm" onChange={(event) => setScheduledDate(event.target.value)} type="date" value={scheduledDate} />
+              </label>
+              <div className="rounded-md bg-brand-50 p-3 text-sm">
+                <p className="text-xs text-[#667068]">Nombre interno</p>
+                <p className="font-semibold text-brand-900">{generatedTrancheLabel}</p>
+              </div>
+              <div className="rounded-md bg-brand-50 p-3 text-sm">
+                <p className="text-xs text-[#667068]">Glosa global</p>
+                <p className="font-semibold text-brand-900">{glosaGlobal || generatedGlosa}</p>
+              </div>
+            </div>
+            {(selectedType === "bono" || selectedType === "otro") ? (
+              <label className="mt-4 block text-sm font-semibold text-brand-900">
+                Concepto
+                <input className="mt-1 w-full rounded-md border px-3 py-2 text-sm" onChange={(event) => setConceptDescription(event.target.value)} placeholder={selectedType === "bono" ? "Bono desempeno" : "Asignacion especial"} value={conceptDescription} />
+              </label>
+            ) : null}
+            {selectedType === "otro" ? <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Este concepto puede requerir clasificacion manual si no existe una equivalencia canonica en Datos Sueldos.</p> : null}
+            {selectedType !== "remuneracion" ? (
+              <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">
+                <input className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setCommonAmount(event.target.value)} placeholder="Monto comun" type="number" value={commonAmount} />
+                <button className="rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" onClick={applyCommonAmount} type="button">APLICAR A SELECCIONADOS</button>
+              </div>
+            ) : <p className="mt-4 rounded-md bg-brand-50 px-3 py-2 text-sm text-[#667068]">REMUNERACION usa exclusivamente liquidaciones confirmadas del periodo. No se muestra monto comun y no reutiliza montos de otros meses.</p>}
+            <button className="mt-4 text-sm font-semibold text-brand-700" onClick={() => setAdvancedOpen((current) => !current)} type="button">Opciones avanzadas</button>
+            {advancedOpen ? (
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <input className="rounded-md border px-3 py-2 text-sm" id="hr-tranche-label" placeholder="Nombre tramo" defaultValue={generatedTrancheLabel} />
+                <input className="rounded-md border px-3 py-2 text-sm" id="hr-glosa-global" onChange={(event) => setGlosaGlobal(event.target.value)} placeholder="Glosa global nomina" value={glosaGlobal} />
+              </div>
+            ) : (
+              <div className="hidden">
+                <input id="hr-tranche-label" readOnly value={generatedTrancheLabel} />
+                <input id="hr-glosa-global" readOnly value={glosaGlobal || generatedGlosa} />
+              </div>
+            )}
+          </SectionCard>
+
+          <SectionCard className="p-5">
+            <div className="flex flex-col gap-1">
+              <p className="text-xs font-semibold uppercase text-brand-700">PASO 3 DE 4</p>
+              <h3 className="text-lg font-semibold text-brand-900">SELECCIONAR TRABAJADORES</h3>
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-5">
+              <input className="rounded-md border px-3 py-2 text-sm lg:col-span-2" onChange={(event) => setPayrollSearch(event.target.value)} placeholder="Buscar trabajador / RUT" value={payrollSearch} />
+              <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentAreaFilter(event.target.value)} value={paymentAreaFilter}><option value="">Todas las areas</option>{areas.map((area) => <option key={area} value={area}>{area}</option>)}</select>
+              <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentPositionFilter(event.target.value)} value={paymentPositionFilter}><option value="">Todos los cargos</option>{positions.map((position) => <option key={position} value={position}>{position}</option>)}</select>
+              <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentStatusFilter(event.target.value)} value={paymentStatusFilter}><option value="">Estado: todos</option><option value="habilitado">Habilitado</option><option value="inhabilitado">Inhabilitado</option></select>
+              <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentBankFilter(event.target.value)} value={paymentBankFilter}><option value="">Banco: todos</option><option value="completo">Banco listo</option><option value="incompleto">Banco pendiente</option></select>
+              <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentSort(event.target.value)} value={paymentSort}><option value="name">A-Z trabajador</option><option value="amount_desc">Mayor monto</option><option value="amount_asc">Menor monto</option><option value="status">Estado</option></select>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" onClick={selectEveryVisible} type="button">Seleccionar todo</button>
+              <button className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" onClick={selectAllFiltered} type="button">Seleccionar filtrados</button>
+              <button className="rounded-md border border-[#dfe4dd] px-3 py-2 text-sm font-semibold text-[#667068]" onClick={clearSelection} type="button">Deseleccionar todo</button>
+            </div>
+            <PayrollEmployeeWorkflowTable draft={payrollDraft} rows={visibleRows} selectedType={selectedType} selection={payrollEmployeeSelection} setDraft={setPayrollDraft} setSelection={setPayrollEmployeeSelection} />
+          </SectionCard>
+
+          <SectionCard className="p-5">
+            <div className="flex flex-col gap-1">
+              <p className="text-xs font-semibold uppercase text-brand-700">PASO 4 DE 4</p>
+              <h3 className="text-lg font-semibold text-brand-900">REVISAR NOMINA</h3>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+              <KpiTile label="Tipo" value={typeLabel} />
+              <KpiTile label="Periodo" value={periodLabel} />
+              <KpiTile label="Trabajadores" value={String(payrollEmployeeSelection.length)} />
+              <KpiTile label="Con monto" value={String(withAmount)} />
+              <KpiTile label="Total nomina" value={formatClp(total)} />
+              <KpiTile label="Banco pendiente" value={String(bankPending)} />
+            </div>
+            <div className="mt-4 rounded-md bg-brand-50 p-3 text-sm text-[#667068]">
+              Banco listo: <strong className="text-brand-900">{bankReady}</strong> · Banco pendiente: <strong className="text-brand-900">{bankPending}</strong>. La nomina puede crearse aunque existan datos bancarios pendientes; TEF validara esos casos antes de exportar.
+            </div>
+            <button className="mt-4 rounded-md bg-brand-700 px-5 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#9aa69d]" disabled={!payrollEmployeeSelection.length || !withAmount} onClick={createGuidedPayroll} type="button">CREAR NOMINA</button>
+          </SectionCard>
+
+          {createdPayroll ? (
+            <SectionCard className="p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase text-emerald-700">NOMINA CREADA</p>
+                  <h3 className="text-lg font-semibold text-brand-900">{createdPayroll.label} · {formatPayrollPeriod(createdPayroll.period)}</h3>
+                  <p className="mt-1 text-sm text-[#667068]">{createdPayroll.count} trabajador(es), total {formatClp(createdPayroll.total)}, estado CREADA.</p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <button className="rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" onClick={previewPayroll} type="button">PREVISUALIZAR TEF</button>
+                  <button className="rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" onClick={generatePayroll} type="button">DESCARGAR TEF BANCO</button>
+                  <button className="inline-flex items-center justify-center gap-2 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" onClick={markSelectedPaid} type="button"><CheckCircle2 className="h-4 w-4" /> MARCAR PAGADAS</button>
+                </div>
+              </div>
+            </SectionCard>
+          ) : (
+            <SectionCard className="p-5">
+              <h3 className="font-semibold text-brand-900">Acciones bancarias</h3>
+              <p className="mt-1 text-sm text-[#667068]">Primero crea una nomina.</p>
+              <p className="mt-1 text-xs text-[#667068]">La nomina bancaria TEF usa hoja PAGO y columnas A:K.</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <button className="rounded-md border px-4 py-2 text-sm font-semibold text-[#9aa69d]" disabled title="Primero crea una nomina." type="button">PREVISUALIZAR TEF</button>
+                <button className="rounded-md border px-4 py-2 text-sm font-semibold text-[#9aa69d]" disabled title="Primero crea una nomina." type="button">DESCARGAR TEF BANCO</button>
+                <button className="rounded-md border px-4 py-2 text-sm font-semibold text-[#9aa69d]" disabled title="Primero crea una nomina." type="button">MARCAR PAGADAS</button>
+              </div>
+            </SectionCard>
+          )}
+        </>
+      ) : null}
+
       <SectionCard className="p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-brand-900">Nominas</h2>
-            <p className="text-sm text-[#667068]">Seleccion multiple, exportacion banco y marcado de pagos desde una sola mesa de trabajo.</p>
+            <h3 className="text-lg font-semibold text-brand-900">NOMINAS RECIENTES</h3>
+            <p className="text-sm text-[#667068]">Historial operativo de lotes creados y pagos disponibles para TEF.</p>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <button className="rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" onClick={previewPayroll} type="button">Previsualizar TEF</button>
-            <button className="rounded-md border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700" onClick={generatePayroll} type="button">Descargar TEF Banco</button>
-            <button className="inline-flex items-center justify-center gap-2 rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white" onClick={markSelectedPaid} type="button"><CheckCircle2 className="h-4 w-4" /> Marcar pagadas</button>
-          </div>
+          {tefUnlocked ? null : <Pill className="border-[#dfe4dd] bg-white text-[#667068]">TEF aparece despues de crear</Pill>}
         </div>
-        <div className="mt-4 grid gap-3 lg:grid-cols-5">
-          <input className="rounded-md border px-3 py-2 text-sm" id="hr-tranche-label" placeholder="Nombre tramo" />
-          <input className="rounded-md border px-3 py-2 text-sm lg:col-span-2" id="hr-glosa-global" onChange={(event) => setGlosaGlobal(event.target.value)} placeholder="Glosa global nomina" value={glosaGlobal} />
-          <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentAreaFilter(event.target.value)} value={paymentAreaFilter}><option value="">Todas las areas</option>{areas.map((area) => <option key={area} value={area}>{area}</option>)}</select>
-          <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentPositionFilter(event.target.value)} value={paymentPositionFilter}><option value="">Todos los cargos</option>{positions.map((position) => <option key={position} value={position}>{position}</option>)}</select>
-          <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentSort(event.target.value)} value={paymentSort}><option value="name">A-Z trabajador</option><option value="amount_desc">Mayor monto</option><option value="amount_asc">Menor monto</option><option value="status">Estado</option></select>
-          <p className="text-xs font-semibold text-[#667068] lg:col-span-5">La nomina bancaria TEF usa hoja PAGO y columnas A:K. Generar archivo no marca pagos como pagados.</p>
-        </div>
+        <RecentPayrollBatches batches={data.paymentBatches} />
       </SectionCard>
-      <SectionCard className="p-5">
-        <div className="grid gap-3 lg:grid-cols-6">
-          <input className="rounded-md border px-3 py-2 text-sm lg:col-span-2" onChange={(event) => setPayrollSearch(event.target.value)} placeholder="Buscar trabajador o RUT" value={payrollSearch} />
-          <input className="rounded-md border px-3 py-2 text-sm" onChange={(event) => changePayrollPeriod(event.target.value)} type="month" value={period} />
-          <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setConcept(event.target.value)} value={concept}>{paymentConcepts.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select>
-          <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentBankFilter(event.target.value)} value={paymentBankFilter}><option value="">Banco: todos</option><option value="completo">Banco completo</option><option value="incompleto">Banco incompleto</option></select>
-          <select className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setPaymentStatusFilter(event.target.value)} value={paymentStatusFilter}><option value="">Pago: todos</option><option value="habilitado">Habilitado</option><option value="inhabilitado">Inhabilitado</option></select>
-          {paymentConcepts.find(([code]) => code === concept)?.[2] ? <input className="rounded-md border px-3 py-2 text-sm lg:col-span-2" onChange={(event) => setConceptDescription(event.target.value)} placeholder="Descripcion obligatoria" value={conceptDescription} /> : null}
-          <input className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setScheduledDate(event.target.value)} type="date" value={scheduledDate} />
-          <input className="rounded-md border px-3 py-2 text-sm" onChange={(event) => setCommonAmount(event.target.value)} placeholder="Monto comun" type="number" value={commonAmount} />
-          <button className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" onClick={selectAllFiltered} type="button">Seleccionar filtrados</button>
-          <button className="rounded-md border border-brand-700 px-3 py-2 text-sm font-semibold text-brand-700" onClick={applyCommonAmount} type="button">Aplicar monto</button>
-          <button className="rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white" onClick={() => createSelectablePayrollBatch({ concept, conceptDescription, glosaGlobal, period, scheduledDate, status: "aprobado" })} type="button">Crear lote</button>
-        </div>
-        <p className="mt-3 text-xs text-[#667068]">Los trabajadores con banco incompleto pueden editarse, pero no quedan aptos para nomina bancaria hasta completar sus datos.</p>
-      </SectionCard>
-      <SelectableEmployeesTable employees={selectableEmployees} draft={payrollDraft} selection={payrollEmployeeSelection} setDraft={setPayrollDraft} setSelection={setPayrollEmployeeSelection} />
-      <PaymentsTable employees={employees} items={filteredPaymentItems} selection={paymentSelection} setSelection={setPaymentSelection} />
+
+      {tefUnlocked ? <PaymentsTable employees={employees} items={filteredPaymentItems} selection={paymentSelection} setSelection={setPaymentSelection} /> : null}
       <TefPreviewTable rows={tefPreviewRows} summary={tefPreviewSummary} />
       <div className="grid gap-4 xl:grid-cols-3">
         <SectionCard className="p-5"><h3 className="font-semibold text-brand-900">Pago manual RRHH</h3><PaymentCreateForm data={data} submitJson={submitJson} /></SectionCard>
@@ -1639,52 +1837,147 @@ function PayrollSection({
   );
 }
 
-function SelectableEmployeesTable({
+function PayrollEmployeeWorkflowTable({
   draft,
-  employees,
+  rows,
+  selectedType,
   selection,
   setDraft,
   setSelection
 }: {
   draft: Record<string, { amount: string; glosa: string }>;
-  employees: HrEmployee[];
+  rows: Array<ReturnType<typeof payrollRowState>>;
+  selectedType: PayrollWorkflowType | null;
   selection: string[];
   setDraft: React.Dispatch<React.SetStateAction<Record<string, { amount: string; glosa: string }>>>;
   setSelection: React.Dispatch<React.SetStateAction<string[]>>;
 }) {
   return (
-    <SectionCard className="overflow-hidden">
-      <TableHeader title="Nueva nomina: colaboradores seleccionables" />
+    <div className="mt-4 overflow-hidden rounded-lg border border-[#dfe4dd]">
       <div className="overflow-x-auto">
-        <table className="min-w-[1280px] w-full text-left text-sm">
-          <thead className="bg-brand-50 text-xs uppercase text-[#667068]">
-            <tr><th className="px-4 py-3">Sel.</th><th className="px-4 py-3">Trabajador</th><th className="px-4 py-3">RUT</th><th className="px-4 py-3">Cargo</th><th className="px-4 py-3">Area</th><th className="px-4 py-3">Banco</th><th className="px-4 py-3">Estado bancario</th><th className="px-4 py-3">Monto</th><th className="px-4 py-3">Glosa individual</th><th className="px-4 py-3">Estado</th></tr>
-          </thead>
+        <table className="min-w-[900px] w-full text-left text-sm">
+          <thead className="bg-brand-50 text-xs uppercase text-[#667068]"><tr><th className="px-4 py-3">Sel</th><th className="px-4 py-3">Trabajador</th><th className="px-4 py-3">RUT</th><th className="px-4 py-3">Cargo</th><th className="px-4 py-3">Area</th><th className="px-4 py-3">Monto</th><th className="px-4 py-3">Estado</th></tr></thead>
           <tbody>
-            {employees.map((employee) => {
+            {rows.map((row) => {
+              const employee = row.employee;
               const selected = selection.includes(employee.id);
-              const bankReady = employee.paymentAlerts.length === 0;
+              const amountValue = draft[employee.id]?.amount ?? (row.amount ? String(row.amount) : "");
               return (
                 <tr className="border-t" key={employee.id}>
-                  <td className="px-4 py-3"><input checked={selected} onChange={() => setSelection((current) => current.includes(employee.id) ? current.filter((id) => id !== employee.id) : [...current, employee.id])} type="checkbox" /></td>
+                  <td className="px-4 py-3"><input checked={selected} disabled={!row.selectable} onChange={() => setSelection((current) => current.includes(employee.id) ? current.filter((id) => id !== employee.id) : [...current, employee.id])} type="checkbox" /></td>
                   <td className="px-4 py-3 font-semibold text-brand-900">{employee.fullName}</td>
                   <td className="px-4 py-3">{employee.rut}</td>
                   <td className="px-4 py-3">{employee.position || "Sin cargo"}</td>
                   <td className="px-4 py-3">{employee.area || "Sin area"}</td>
-                  <td className="px-4 py-3">{employee.bankAccount?.bankName || "Sin banco"}</td>
-                  <td className="px-4 py-3"><Pill className={bankReady ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}>{bankReady ? "Completo" : `Revisar: ${employee.paymentAlerts.join(", ")}`}</Pill></td>
-                  <td className="px-4 py-3"><input className="w-28 rounded-md border px-2 py-1 text-sm" onChange={(event) => setDraft((current) => ({ ...current, [employee.id]: { amount: event.target.value, glosa: current[employee.id]?.glosa ?? "" } }))} type="number" value={draft[employee.id]?.amount ?? ""} /></td>
-                  <td className="px-4 py-3"><input className="w-56 rounded-md border px-2 py-1 text-sm" onChange={(event) => setDraft((current) => ({ ...current, [employee.id]: { amount: current[employee.id]?.amount ?? "", glosa: event.target.value } }))} value={draft[employee.id]?.glosa ?? ""} /></td>
-                  <td className="px-4 py-3">{employee.paymentEnabled ? "Habilitado" : "Inhabilitado"}</td>
+                  <td className="px-4 py-3">
+                    <input
+                      className="w-32 rounded-md border px-2 py-1 text-sm disabled:bg-slate-50"
+                      disabled={selectedType === "remuneracion" || !row.selectable}
+                      onChange={(event) => setDraft((current) => ({ ...current, [employee.id]: { amount: event.target.value, glosa: current[employee.id]?.glosa ?? "" } }))}
+                      type="number"
+                      value={amountValue}
+                    />
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-col gap-1">
+                      <Pill className={row.status === "LISTO" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : row.status === "BANCO PENDIENTE" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-800"}>{row.status}</Pill>
+                      <span className="text-xs text-[#667068]">{row.bankLabel}</span>
+                      {row.reason ? <span className="text-xs text-[#667068]">{row.reason}</span> : null}
+                    </div>
+                  </td>
                 </tr>
               );
             })}
-            {!employees.length ? <tr><td className="px-4 py-8 text-center text-sm text-[#667068]" colSpan={10}>Sin colaboradores activos para los filtros actuales.</td></tr> : null}
+            {!rows.length ? <tr><td className="px-4 py-8 text-center text-sm text-[#667068]" colSpan={7}>Sin colaboradores activos para los filtros actuales.</td></tr> : null}
           </tbody>
         </table>
       </div>
-    </SectionCard>
+    </div>
   );
+}
+
+function KpiTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-brand-50 p-3">
+      <p className="text-xs text-[#667068]">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-brand-900">{value}</p>
+    </div>
+  );
+}
+
+function RecentPayrollBatches({ batches }: { batches: HrDashboardData["paymentBatches"] }) {
+  const recent = [...batches].sort((a, b) => String(b.generatedAt ?? "").localeCompare(String(a.generatedAt ?? ""))).slice(0, 6);
+  return (
+    <div className="mt-4 overflow-hidden rounded-lg border border-[#dfe4dd]">
+      <div className="overflow-x-auto">
+        <table className="min-w-[760px] w-full text-left text-sm">
+          <thead className="bg-brand-50 text-xs uppercase text-[#667068]"><tr><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Tipo</th><th className="px-4 py-3">Periodo</th><th className="px-4 py-3">Trabajadores</th><th className="px-4 py-3">Monto</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Accion</th></tr></thead>
+          <tbody>
+            {recent.map((batch) => (
+              <tr className="border-t" key={batch.id}>
+                <td className="px-4 py-3">{formatDate(batch.generatedAt)}</td>
+                <td className="px-4 py-3 font-semibold text-brand-900">{payrollTypeLabel(batch.paymentType)}</td>
+                <td className="px-4 py-3">{formatPayrollPeriod(batch.period)}</td>
+                <td className="px-4 py-3">{batch.totalEmployees}</td>
+                <td className="px-4 py-3 font-semibold">{formatClp(batch.totalAmount)}</td>
+                <td className="px-4 py-3"><Pill className={statusClass(batch.status)}>{batch.status}</Pill></td>
+                <td className="px-4 py-3"><span className="text-xs font-semibold text-brand-700">VER</span></td>
+              </tr>
+            ))}
+            {!recent.length ? <tr><td className="px-4 py-8 text-center text-sm text-[#667068]" colSpan={7}>Sin nominas recientes.</td></tr> : null}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function payrollRowState(employee: HrEmployee, paymentItems: HrPaymentItem[], period: string, selectedType: PayrollWorkflowType | null, draft: Record<string, { amount: string; glosa: string }>) {
+  const payrollItem = paymentItems.find((item) => item.employeeId === employee.id && item.paymentType === "remuneracion_mensual" && item.period === period && item.amount > 0);
+  const bankReady = employee.paymentAlerts.length === 0;
+  const paymentDisabled = !employee.paymentEnabled;
+  if (selectedType === "remuneracion" && !payrollItem) {
+    return {
+      amount: 0,
+      bankLabel: bankReady ? "✓ Banco listo" : "⚠ Banco pendiente",
+      employee,
+      reason: `Trabajador activo sin liquidacion para ${formatPayrollPeriod(period)}.`,
+      selectable: false,
+      status: "SIN LIQUIDACION"
+    };
+  }
+  const amount = selectedType === "remuneracion" ? Number(payrollItem?.amount ?? 0) : Number(draft[employee.id]?.amount ?? 0);
+  return {
+    amount,
+    bankLabel: bankReady ? "✓ Banco listo" : "⚠ Banco pendiente",
+    employee,
+    reason: paymentDisabled ? "Pagos inhabilitados en ficha." : (!bankReady ? employee.paymentAlerts.join(", ") : ""),
+    selectable: true,
+    status: paymentDisabled ? "REVISAR" : bankReady ? "LISTO" : "BANCO PENDIENTE"
+  };
+}
+
+function payrollTypeLabel(type: string | null) {
+  if (type === "remuneracion_mensual") return "Remuneracion";
+  if (type === "anticipo") return "Anticipo";
+  if (type === "aguinaldo") return "Aguinaldo";
+  if (type?.includes("bono")) return "Bono";
+  if (type) return "Otro";
+  return "Nomina";
+}
+
+function formatPayrollPeriod(period: string) {
+  if (!/^\d{4}-\d{2}$/.test(period)) return period;
+  const [year, month] = period.split("-");
+  const date = new Date(Number(year), Number(month) - 1, 1);
+  return new Intl.DateTimeFormat("es-CL", { month: "long", year: "numeric" }).format(date);
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("es-CL").format(date);
 }
 
 function PaymentsTable({ employees, items, selection, setSelection }: { employees: HrEmployee[]; items: HrPaymentItem[]; selection: string[]; setSelection: React.Dispatch<React.SetStateAction<string[]>> }) {
