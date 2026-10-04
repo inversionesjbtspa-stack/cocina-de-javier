@@ -22,6 +22,7 @@ import {
 import { formatClp } from "@/lib/dte/purchases-data";
 import type { HrDashboardData, HrEmployee } from "@/lib/hr/data";
 import { isProductiveHrEmployee } from "@/lib/hr/employee-filters";
+import { getBankTefReadiness } from "@/lib/hr/payment-batch";
 import { buildSalaryRows, salaryRowHasNovelty } from "@/lib/hr/salary-data";
 import { SALARY_COLUMN_DEFINITIONS } from "@/lib/hr/salary-export-map";
 import { isCancelledVacationRequest, isOperationalVacationRequest } from "@/lib/hr/vacation-domain";
@@ -79,7 +80,7 @@ type TefPreviewSummary = {
   totalAmount: number;
   zeroAmount: number;
 };
-type PayrollBatchResult = { created?: number; ok: boolean };
+type PayrollBatchResult = { created?: number; ok: boolean; paymentItemIds?: string[] };
 type PayrollWorkflowType = "remuneracion" | "anticipo" | "aguinaldo" | "bono" | "otro";
 
 const paymentConcepts = [
@@ -695,7 +696,7 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
 
   async function createSelectablePayrollBatch(config: { concept: string; conceptDescription: string; glosaGlobal: string; period: string; scheduledDate: string; status: "borrador" | "pendiente_pago" | "aprobado" }): Promise<PayrollBatchResult> {
     const items = payrollEmployeeSelection.map((employeeId) => ({
-      amount: Number(payrollDraft[employeeId]?.amount ?? 0),
+      amount: Number(payrollDraft[employeeId]?.amount ?? data.paymentItems.find((item) => item.employeeId === employeeId && item.paymentType === config.concept && item.period === config.period && item.amount > 0)?.amount ?? 0),
       employeeId,
       glosa: payrollDraft[employeeId]?.glosa ?? ""
     })).filter((item) => item.amount > 0);
@@ -732,12 +733,20 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
         });
         const retryPayload = await retry.json().catch(() => null);
         setMessage(retry.ok ? `Nomina creada: ${retryPayload.created} pago(s).` : hrPayrollBatchErrorMessage(retryPayload));
-        return retry.ok ? { created: retryPayload.created, ok: true } : { ok: false };
+        if (retry.ok) {
+          setPaymentSelection(retryPayload.paymentItemIds ?? []);
+          router.refresh();
+        }
+        return retry.ok ? { created: retryPayload.created, ok: true, paymentItemIds: retryPayload.paymentItemIds ?? [] } : { ok: false };
       }
       return { ok: false };
     }
     setMessage(response.ok ? `Nomina creada: ${payload.created} pago(s).` : hrPayrollBatchErrorMessage(payload));
-    return response.ok ? { created: payload.created, ok: true } : { ok: false };
+    if (response.ok) {
+      setPaymentSelection(payload.paymentItemIds ?? []);
+      router.refresh();
+    }
+    return response.ok ? { created: payload.created, ok: true, paymentItemIds: payload.paymentItemIds ?? [] } : { ok: false };
   }
 
   async function previewBulkPayslips(event: FormEvent<HTMLFormElement>, commit = false) {
@@ -1584,6 +1593,7 @@ function PayrollSection({
   const [scheduledDate, setScheduledDate] = useState(today());
   const [commonAmount, setCommonAmount] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [creatingPayroll, setCreatingPayroll] = useState(false);
   const concept = selectedType === "remuneracion" ? "remuneracion_mensual"
     : selectedType === "anticipo" ? "anticipo"
       : selectedType === "aguinaldo" ? "aguinaldo"
@@ -1602,7 +1612,7 @@ function PayrollSection({
   const selectedRows = visibleRows.filter((row) => payrollEmployeeSelection.includes(row.employee.id));
   const withAmount = selectedRows.filter((row) => Number(payrollDraft[row.employee.id]?.amount ?? row.amount ?? 0) > 0).length;
   const total = selectedRows.reduce((sum, row) => sum + Number(payrollDraft[row.employee.id]?.amount ?? row.amount ?? 0), 0);
-  const bankReady = selectedRows.filter((row) => row.employee.paymentAlerts.length === 0).length;
+  const bankReady = selectedRows.filter((row) => row.bankReadiness.status === "LISTO").length;
   const bankPending = selectedRows.length - bankReady;
   const tefUnlocked = Boolean(createdPayroll) || paymentSelection.length > 0;
   const selectAllFiltered = () => setPayrollEmployeeSelection((current) => Array.from(new Set([...current, ...selectedFilteredIds])));
@@ -1641,26 +1651,31 @@ function PayrollSection({
   const clearSelection = () => setPayrollEmployeeSelection([]);
   const selectEveryVisible = () => setPayrollEmployeeSelection(selectedFilteredIds);
   const createGuidedPayroll = async () => {
-    if (!selectedType) return;
+    if (!selectedType || creatingPayroll) return;
+    setCreatingPayroll(true);
     const conceptText = selectedType === "bono" || selectedType === "otro" ? (conceptDescription.trim() || defaultConceptDescription) : "";
-    const result = await createSelectablePayrollBatch({
-      concept,
-      conceptDescription: conceptText,
-      glosaGlobal: glosaGlobal || generatedGlosa,
-      period,
-      scheduledDate,
-      status: "aprobado"
-    });
-    if (!result.ok) return;
-    setCreatedPayroll({
-      bankPending,
-      bankReady,
-      count: result.created ?? selectedRows.length,
-      label: typeLabel,
-      period,
-      total,
-      type: selectedType
-    });
+    try {
+      const result = await createSelectablePayrollBatch({
+        concept,
+        conceptDescription: conceptText,
+        glosaGlobal: glosaGlobal || generatedGlosa,
+        period,
+        scheduledDate,
+        status: "aprobado"
+      });
+      if (!result.ok) return;
+      setCreatedPayroll({
+        bankPending,
+        bankReady,
+        count: result.created ?? selectedRows.length,
+        label: typeLabel,
+        period,
+        total,
+        type: selectedType
+      });
+    } finally {
+      setCreatingPayroll(false);
+    }
   };
   return (
     <div className="space-y-4" data-testid="hr-payroll-guided-flow">
@@ -1782,7 +1797,7 @@ function PayrollSection({
             <div className="mt-4 rounded-md bg-brand-50 p-3 text-sm text-[#667068]">
               Banco listo: <strong className="text-brand-900">{bankReady}</strong> · Banco pendiente: <strong className="text-brand-900">{bankPending}</strong>. La nomina puede crearse aunque existan datos bancarios pendientes; TEF validara esos casos antes de exportar.
             </div>
-            <button className="mt-4 rounded-md bg-brand-700 px-5 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#9aa69d]" disabled={!payrollEmployeeSelection.length || !withAmount} onClick={createGuidedPayroll} type="button">CREAR NOMINA</button>
+            <button className="mt-4 rounded-md bg-brand-700 px-5 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#9aa69d]" disabled={creatingPayroll || !payrollEmployeeSelection.length || !withAmount} onClick={createGuidedPayroll} type="button">{creatingPayroll ? "CREANDO..." : "CREAR NOMINA"}</button>
           </SectionCard>
 
           {createdPayroll ? (
@@ -1852,10 +1867,11 @@ function PayrollEmployeeWorkflowTable({
   setDraft: React.Dispatch<React.SetStateAction<Record<string, { amount: string; glosa: string }>>>;
   setSelection: React.Dispatch<React.SetStateAction<string[]>>;
 }) {
+  const toggle = (employeeId: string) => setSelection((current) => current.includes(employeeId) ? current.filter((id) => id !== employeeId) : [...current, employeeId]);
   return (
     <div className="mt-4 overflow-hidden rounded-lg border border-[#dfe4dd]">
-      <div className="overflow-x-auto">
-        <table className="min-w-[900px] w-full text-left text-sm">
+      <div className="hidden md:block">
+        <table className="w-full text-left text-sm">
           <thead className="bg-brand-50 text-xs uppercase text-[#667068]"><tr><th className="px-4 py-3">Sel</th><th className="px-4 py-3">Trabajador</th><th className="px-4 py-3">RUT</th><th className="px-4 py-3">Cargo</th><th className="px-4 py-3">Area</th><th className="px-4 py-3">Monto</th><th className="px-4 py-3">Estado</th></tr></thead>
           <tbody>
             {rows.map((row) => {
@@ -1864,7 +1880,7 @@ function PayrollEmployeeWorkflowTable({
               const amountValue = draft[employee.id]?.amount ?? (row.amount ? String(row.amount) : "");
               return (
                 <tr className="border-t" key={employee.id}>
-                  <td className="px-4 py-3"><input checked={selected} disabled={!row.selectable} onChange={() => setSelection((current) => current.includes(employee.id) ? current.filter((id) => id !== employee.id) : [...current, employee.id])} type="checkbox" /></td>
+                  <td className="px-4 py-3"><input checked={selected} disabled={!row.selectable} onChange={() => toggle(employee.id)} type="checkbox" /></td>
                   <td className="px-4 py-3 font-semibold text-brand-900">{employee.fullName}</td>
                   <td className="px-4 py-3">{employee.rut}</td>
                   <td className="px-4 py-3">{employee.position || "Sin cargo"}</td>
@@ -1892,6 +1908,41 @@ function PayrollEmployeeWorkflowTable({
           </tbody>
         </table>
       </div>
+      <div className="divide-y md:hidden">
+        {rows.map((row) => {
+          const employee = row.employee;
+          const selected = selection.includes(employee.id);
+          const amountValue = draft[employee.id]?.amount ?? (row.amount ? String(row.amount) : "");
+          return (
+            <div className="space-y-3 p-4" key={employee.id}>
+              <div className="flex items-start gap-3">
+                <input checked={selected} className="mt-1" disabled={!row.selectable} onChange={() => toggle(employee.id)} type="checkbox" />
+                <div className="min-w-0 flex-1">
+                  <p className="break-words text-sm font-semibold text-brand-900">{employee.fullName}</p>
+                  <p className="text-xs text-[#667068]">{employee.rut}</p>
+                  <p className="text-xs text-[#667068]">{employee.position || "Sin cargo"} · {employee.area || "Sin area"}</p>
+                </div>
+                <Pill className={row.status === "LISTO" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : row.status === "BANCO PENDIENTE" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-800"}>{row.status}</Pill>
+              </div>
+              <label className="block text-xs font-semibold uppercase text-[#667068]">
+                Monto
+                <input
+                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm disabled:bg-slate-50"
+                  disabled={selectedType === "remuneracion" || !row.selectable}
+                  onChange={(event) => setDraft((current) => ({ ...current, [employee.id]: { amount: event.target.value, glosa: current[employee.id]?.glosa ?? "" } }))}
+                  type="number"
+                  value={amountValue}
+                />
+              </label>
+              <div className="text-xs text-[#667068]">
+                <p>{row.bankLabel}</p>
+                {row.reason ? <p>{row.reason}</p> : null}
+              </div>
+            </div>
+          );
+        })}
+        {!rows.length ? <div className="px-4 py-8 text-center text-sm text-[#667068]">Sin colaboradores activos para los filtros actuales.</div> : null}
+      </div>
     </div>
   );
 }
@@ -1909,8 +1960,8 @@ function RecentPayrollBatches({ batches }: { batches: HrDashboardData["paymentBa
   const recent = [...batches].sort((a, b) => String(b.generatedAt ?? "").localeCompare(String(a.generatedAt ?? ""))).slice(0, 6);
   return (
     <div className="mt-4 overflow-hidden rounded-lg border border-[#dfe4dd]">
-      <div className="overflow-x-auto">
-        <table className="min-w-[760px] w-full text-left text-sm">
+      <div className="hidden md:block">
+        <table className="w-full text-left text-sm">
           <thead className="bg-brand-50 text-xs uppercase text-[#667068]"><tr><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Tipo</th><th className="px-4 py-3">Periodo</th><th className="px-4 py-3">Trabajadores</th><th className="px-4 py-3">Monto</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Accion</th></tr></thead>
           <tbody>
             {recent.map((batch) => (
@@ -1928,17 +1979,62 @@ function RecentPayrollBatches({ batches }: { batches: HrDashboardData["paymentBa
           </tbody>
         </table>
       </div>
+      <div className="divide-y md:hidden">
+        {recent.map((batch) => (
+          <div className="space-y-3 p-4" key={batch.id}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-brand-900">{payrollTypeLabel(batch.paymentType)} · {formatPayrollPeriod(batch.period)}</p>
+                <p className="text-xs text-[#667068]">{formatDate(batch.generatedAt)}</p>
+              </div>
+              <Pill className={statusClass(batch.status)}>{batch.status}</Pill>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <KpiTile label="Trabajadores" value={String(batch.totalEmployees)} />
+              <KpiTile label="Monto" value={formatClp(batch.totalAmount)} />
+            </div>
+            <span className="text-xs font-semibold text-brand-700">VER</span>
+          </div>
+        ))}
+        {!recent.length ? <div className="px-4 py-8 text-center text-sm text-[#667068]">Sin nominas recientes.</div> : null}
+      </div>
     </div>
   );
 }
 
+function bankTefReadinessForEmployee(employee: HrEmployee) {
+  return getBankTefReadiness({
+    full_name: employee.fullName,
+    hr_employee_bank_accounts: employee.bankAccount ? [{
+      account_holder_name: employee.bankAccount.holderName,
+      account_holder_rut: employee.bankAccount.holderRut,
+      account_number: employee.bankAccount.accountNumber,
+      account_type: employee.bankAccount.accountType,
+      bank_code: employee.bankAccount.bankCode,
+      bank_name: employee.bankAccount.bankName,
+      payment_email: employee.bankAccount.paymentEmail,
+      real_owner_name: employee.bankAccount.realOwnerName,
+      tef_display_name: employee.bankAccount.tefDisplayName || employee.bankAccount.glosaTef,
+      validation_status: employee.bankAccount.validationStatus
+    }] : [],
+    id: employee.id,
+    payment_enabled: employee.paymentEnabled,
+    personal_email: employee.personalEmail,
+    rut: employee.rut,
+    status: employee.status,
+    work_email: employee.workEmail
+  });
+}
+
 function payrollRowState(employee: HrEmployee, paymentItems: HrPaymentItem[], period: string, selectedType: PayrollWorkflowType | null, draft: Record<string, { amount: string; glosa: string }>) {
   const payrollItem = paymentItems.find((item) => item.employeeId === employee.id && item.paymentType === "remuneracion_mensual" && item.period === period && item.amount > 0);
-  const bankReady = employee.paymentAlerts.length === 0;
-  const paymentDisabled = !employee.paymentEnabled;
+  const bankReadiness = bankTefReadinessForEmployee(employee);
+  const bankReady = bankReadiness.status === "LISTO";
+  const bankNotes = [...bankReadiness.blockers, ...bankReadiness.warnings].join(", ");
   if (selectedType === "remuneracion" && !payrollItem) {
     return {
       amount: 0,
+      bankReadiness,
       bankLabel: bankReady ? "✓ Banco listo" : "⚠ Banco pendiente",
       employee,
       reason: `Trabajador activo sin liquidacion para ${formatPayrollPeriod(period)}.`,
@@ -1949,11 +2045,12 @@ function payrollRowState(employee: HrEmployee, paymentItems: HrPaymentItem[], pe
   const amount = selectedType === "remuneracion" ? Number(payrollItem?.amount ?? 0) : Number(draft[employee.id]?.amount ?? 0);
   return {
     amount,
+    bankReadiness,
     bankLabel: bankReady ? "✓ Banco listo" : "⚠ Banco pendiente",
     employee,
-    reason: paymentDisabled ? "Pagos inhabilitados en ficha." : (!bankReady ? employee.paymentAlerts.join(", ") : ""),
+    reason: bankNotes,
     selectable: true,
-    status: paymentDisabled ? "REVISAR" : bankReady ? "LISTO" : "BANCO PENDIENTE"
+    status: bankReady ? "LISTO" : "BANCO PENDIENTE"
   };
 }
 

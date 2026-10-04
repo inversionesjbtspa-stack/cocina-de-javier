@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
 import { isTechnicalValidationEmployee } from "@/lib/hr/employee-filters";
-import { validatePaymentBatchEmployee } from "@/lib/hr/payment-batch";
+import { validatePayrollBatchEmployeeForCreation } from "@/lib/hr/payment-batch";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const itemSchema = z.object({
@@ -55,7 +55,7 @@ export async function POST(request: Request) {
 
   const employees = await supabase
     .from("hr_employees")
-    .select("id,full_name,rut,status,payment_enabled,personal_email,work_email,hr_employee_bank_accounts(bank_name,bank_code,account_type,account_number,payment_email,account_holder_rut,validation_status)")
+    .select("id,full_name,rut,status,payment_enabled,personal_email,work_email,hr_employee_bank_accounts(bank_name,bank_code,account_type,account_number,payment_email,account_holder_name,account_holder_rut,real_owner_name,tef_display_name,validation_status)")
     .eq("tenant_id", ctx.membership.tenant_id)
     .in("id", body.items.map((item) => item.employeeId));
 
@@ -66,7 +66,7 @@ export async function POST(request: Request) {
       if (isTechnicalValidationEmployee({ fullName: employee?.full_name })) {
         return { alerts: ["trabajador tecnico excluido de operaciones productivas"], employeeId: item.employeeId, employeeName: employee?.full_name ?? "Trabajador" };
       }
-      return validatePaymentBatchEmployee(employee, item.employeeId);
+      return validatePayrollBatchEmployeeForCreation(employee, item.employeeId);
     })
     .filter((item) => item !== null);
   if (invalid.length) {
@@ -111,6 +111,14 @@ export async function POST(request: Request) {
     p_glosa_global: body.glosaGlobal || null
   });
   if (created.error) return NextResponse.json({ ok: false, error: created.error.message }, { status: 422 });
+  const batchId = typeof created.data === "object" && created.data && "id" in created.data ? String(created.data.id) : null;
+  const batch = batchId ? await supabase
+    .from("hr_payment_batches")
+    .select("id,metadata")
+    .eq("tenant_id", ctx.membership.tenant_id)
+    .eq("id", batchId)
+    .maybeSingle() : { data: null };
+  const paymentItemIds = Array.isArray(batch.data?.metadata?.payment_item_ids) ? batch.data.metadata.payment_item_ids : [];
 
-  return NextResponse.json({ ok: true, batch: created.data, created: rows.length, invalid: [] });
+  return NextResponse.json({ ok: true, batch: batch.data ?? created.data, created: rows.length, invalid: [], paymentItemIds });
 }

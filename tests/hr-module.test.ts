@@ -9,7 +9,7 @@ import test from "node:test";
 import { buildPayslipPayrollImportItems, summarizePayslipPayrollImport } from "../src/lib/hr/payslip-payroll-import.ts";
 import { buildBankImportPreview, buildHrTefPreview, generateHrTefWorkbook, parseHrBankSourceFile } from "../src/lib/hr/bank-tef.ts";
 import { extractPayslipsFromPdf, generateAccountantWorkbook, parseAccountantWorkbook, payslipPaymentGlosa } from "../src/lib/hr/payroll-parser.ts";
-import { validatePaymentBatchEmployee } from "../src/lib/hr/payment-batch.ts";
+import { getBankTefReadiness, validatePaymentBatchEmployee, validatePayrollBatchEmployeeForCreation } from "../src/lib/hr/payment-batch.ts";
 import { buildSalaryRows, salaryRowHasNovelty } from "../src/lib/hr/salary-data.ts";
 import { SALARY_EXPORT_COLUMNS, SALARY_PRESERVED_SHEETS, SALARY_TEMPLATE } from "../src/lib/hr/salary-export-map.ts";
 import { sanitizePayslipFilename, validatePayslipUploadBatch, validatePayslipUploadFile } from "../src/lib/hr/payslip-upload-policy.ts";
@@ -100,6 +100,16 @@ test("HR TEF preview excludes zero amounts and incomplete bank data", () => {
   assert.equal(preview.summary.included, 1);
   assert.equal(preview.summary.zeroAmount, 1);
   assert.equal(preview.summary.incompleteBank, 1);
+});
+
+test("HR TEF readiness treats pending account type as non-blocking warning", () => {
+  const preview = buildHrTefPreview([
+    { accountNumber: "226552003", accountType: "", amount: 100000, bankCode: "39", bankName: "ITAU", employeeId: "emp-1", employeeName: "BETANCOURT PAREZ JESUS", employeeRut: "25289035-1", holderRut: "25289035-1", id: "11111111-1111-4111-8111-111111111111", paymentEmail: "jesusdan24@hotmail.com", paymentType: "anticipo", period: "2026-10", realOwnerName: "BETANCOURT PAREZ JESUS", status: "aprobado", tefDisplayName: "JESUS BETANCOURT" }
+  ]);
+  assert.equal(preview.summary.included, 1);
+  assert.equal(preview.summary.incompleteBank, 0);
+  assert.equal(preview.rows[0].status, "LISTO");
+  assert.ok(preview.rows[0].warnings.includes("tipo cuenta pendiente"));
 });
 
 test("HR TEF workbook uses PAGO sheet and exact A:K columns", () => {
@@ -953,9 +963,12 @@ test("HR mass payroll workflow exposes migrations, routes and UI controls", asyn
   assert.match(bulkPayslipsRoute, /payslip_id: insert\.data\.id/);
   assert.match(automationMigration, /hr_payment_items_payslip_import_payslip_uidx/);
   assert.match(paymentBatchRoute, /hr_payment_duplicates_need_confirmation/);
-  assert.match(paymentBatchRoute, /validatePaymentBatchEmployee/);
+  assert.match(paymentBatchRoute, /validatePayrollBatchEmployeeForCreation/);
   assert.match(paymentBatchRoute, /hr_create_payment_batch/);
   assert.match(paymentBatchRoute, /selectable_payroll_batch/);
+  assert.match(paymentBatchRoute, /paymentItemIds/);
+  assert.match(client, /CREANDO\.\.\./);
+  assert.match(client, /md:hidden/);
   assert.match(hardeningMigration, /hr_create_payment_batch/);
   assert.match(hardeningMigration, /hr_upsert_accountant_data_rows/);
   assert.match(hardeningMigration, /hr_salary_data_audit/);
@@ -974,25 +987,35 @@ test("HR authorization roles and tenant guards are explicit", async () => {
   assert.doesNotMatch(security, /tenantId.*default/i);
 });
 
-test("HR payment batch validation blocks invalid bank or cross-tenant employee payloads before insert", () => {
-  assert.deepEqual(validatePaymentBatchEmployee(undefined, "missing")?.alerts, ["trabajador inexistente o fuera del tenant", "banco", "codigo banco", "tipo cuenta", "numero cuenta", "banco no validado", "rut titular", "email pago"]);
+test("HR payment batch creation is separated from canonical TEF readiness", () => {
+  assert.deepEqual(validatePayrollBatchEmployeeForCreation(undefined, "missing")?.alerts, ["trabajador inexistente o fuera del tenant"]);
   const invalid = validatePaymentBatchEmployee({
     full_name: "Demo",
     hr_employee_bank_accounts: [{ account_number: "", account_type: "", bank_code: "", bank_name: "", payment_email: "", validation_status: "pending" }],
     id: "emp-1",
-    payment_enabled: true,
+    payment_enabled: false,
     status: "activo"
   }, "emp-1");
-  assert.ok(invalid?.alerts.includes("banco"));
-  assert.ok(invalid?.alerts.includes("banco no validado"));
+  assert.ok(invalid?.alerts.includes("cuenta destino"));
+  assert.ok(invalid?.alerts.includes("codigo banco"));
   const valid = validatePaymentBatchEmployee({
     full_name: "Demo",
-    hr_employee_bank_accounts: [{ account_holder_rut: "11.111.111-1", account_number: "123", account_type: "corriente", bank_code: "001", bank_name: "Banco", payment_email: "pago@example.com", validation_status: "validated" }],
+    hr_employee_bank_accounts: [{ account_holder_name: "Demo", account_holder_rut: "11.111.111-1", account_number: "123", account_type: "", bank_code: "001", bank_name: "Banco", payment_email: "pago@example.com", validation_status: "pending" }],
     id: "emp-1",
-    payment_enabled: true,
+    payment_enabled: false,
     status: "activo"
   }, "emp-1");
   assert.equal(valid, null);
+  const readiness = getBankTefReadiness({
+    full_name: "BETANCOURT PAREZ JESUS",
+    hr_employee_bank_accounts: [{ account_holder_name: "BETANCOURT PAREZ JESUS", account_holder_rut: "25289035-1", account_number: "226552003", account_type: "", bank_code: "39", bank_name: "ITAU", payment_email: "jesusdan24@hotmail.com", tef_display_name: "JESUS BETANCOURT", validation_status: "pending" }],
+    id: "jesus",
+    payment_enabled: false,
+    status: "activo"
+  });
+  assert.equal(readiness.status, "LISTO");
+  assert.deepEqual(readiness.blockers, []);
+  assert.ok(readiness.warnings.includes("tipo cuenta pendiente"));
 });
 
 test("HR bulk payslip upload policy rejects unsafe files before classification", () => {

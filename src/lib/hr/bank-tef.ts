@@ -1,5 +1,6 @@
 import AdmZip from "adm-zip";
 import { mapBankName } from "../payments/bank-mappings.ts";
+import { getBankTefReadiness } from "./payment-batch.ts";
 import { normalizeRut } from "./utils.ts";
 import { parseHrBankWorkbook } from "./bank-import-parser.ts";
 
@@ -333,21 +334,35 @@ function glosaFor(payment: HrPaymentForTef) {
 export function buildHrTefPreview(payments: HrPaymentForTef[], existingPaymentItemIds: string[] = []) {
   const activeIds = new Set(existingPaymentItemIds);
   const rows: HrTefPreviewRow[] = payments.map((payment) => {
-    const warnings = [];
-    if (!payment.bankName) warnings.push("banco");
-    if (!payment.bankCode) warnings.push("codigo banco");
-    if (!payment.accountType) warnings.push("tipo cuenta");
-    if (!payment.accountNumber) warnings.push("cuenta destino");
-    if (!payment.holderRut && !payment.employeeRut) warnings.push("RUT beneficiario");
-    if (!payment.paymentEmail) warnings.push("correo");
     const holderName = payment.holderName || payment.employeeName;
     const owner = payment.realOwnerName || holderName;
     const tefDisplayName = tefDisplayNameFor(payment);
+    const readiness = getBankTefReadiness({
+      full_name: payment.employeeName,
+      hr_employee_bank_accounts: [{
+        account_holder_name: holderName,
+        account_holder_rut: payment.holderRut || payment.employeeRut || "",
+        account_number: payment.accountNumber ?? "",
+        account_type: payment.accountType ?? "",
+        bank_code: payment.bankCode ?? "",
+        bank_name: payment.bankName ?? "",
+        payment_email: payment.paymentEmail ?? "",
+        real_owner_name: owner,
+        tef_display_name: tefDisplayName,
+        validation_status: "validated"
+      }],
+      id: payment.employeeId,
+      payment_enabled: true,
+      personal_email: null,
+      status: "activo",
+      work_email: null
+    });
+    const warnings = [...readiness.blockers, ...readiness.warnings];
     const thirdParty = owner && normalizePersonName(owner) !== normalizePersonName(payment.employeeName);
     let status: HrTefPreviewRow["status"] = "LISTO";
     if (Number(payment.amount) <= 0) status = "SIN PAGO / $0";
     else if (activeIds.has(payment.id)) status = "DUPLICADO";
-    else if (warnings.length) status = "BANCO INCOMPLETO";
+    else if (readiness.blockers.length) status = "BANCO INCOMPLETO";
     else if (thirdParty) status = "CUENTA DE TERCERO / REVISAR";
     return {
       accountNumber: payment.accountNumber ?? "",
