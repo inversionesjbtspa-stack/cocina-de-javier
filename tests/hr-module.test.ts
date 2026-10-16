@@ -598,8 +598,8 @@ test("HR vacation preview supports the reproduced August 2026 inclusive range", 
   assert.equal(preview.nonBusiness.saturdays, 1);
   assert.equal(preview.nonBusiness.sundays, 1);
   assert.equal(preview.holidaysApplied.length, 0);
-  assert.equal(preview.totalAvailable, 25);
-  assert.equal(preview.totalAfterRequest, 22);
+  assert.equal(preview.totalAvailable, 10);
+  assert.equal(preview.totalAfterRequest, 7);
   assert.equal(preview.remainingDays, 0);
   assert.equal(preview.valid, true);
   assert.equal(preview.allocations[0].days, 3);

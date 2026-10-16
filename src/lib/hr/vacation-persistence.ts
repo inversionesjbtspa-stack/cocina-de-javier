@@ -4,6 +4,7 @@ import {
   compareIsoDate,
   generateContractPeriods,
   isoFromUtcDate,
+  vacationPeriodIsVested,
   type VacationPeriod
 } from "./vacation-domain.ts";
 
@@ -23,6 +24,8 @@ export type VacationPeriodRowLike = {
   continuous_block_required?: number | string | null;
   continuous_block_used?: number | string | null;
   status?: string | null;
+  earned_on?: string | null;
+  certified_opening_balance_id?: string | null;
 };
 
 export type VacationMovementLike = {
@@ -97,6 +100,8 @@ export function previewVacationPeriodBackfill(input: {
 
 export function toVacationPeriod(row: VacationPeriodRowLike): VacationPeriod {
   return {
+    earnedOn: row.earned_on ?? undefined,
+    openingBalanceId: row.certified_opening_balance_id ?? undefined,
     advanceDays: num(row.advance_days),
     availableBalance: num(row.available_balance),
     baseDays: num(row.base_days ?? 15),
@@ -121,8 +126,8 @@ export function calculateVacationBalanceAt(input: {
 }): VacationBalanceBreakdown {
   const asOf = input.asOf ?? isoFromUtcDate(new Date());
   const periods = input.periods
-    .filter((period) => compareIsoDate(period.period_start, asOf) <= 0)
-    .map(toVacationPeriod);
+    .map(toVacationPeriod)
+    .filter(period => vacationPeriodIsVested(period, asOf));
   const accrued = periods.reduce((sum, period) => sum + period.baseDays + (period.progressiveDays ?? 0) + (period.positiveAdjustments ?? 0), 0);
   const progressive = periods.reduce((sum, period) => sum + (period.progressiveDays ?? 0), 0);
   const used = periods.reduce((sum, period) => sum + (period.usedDays ?? 0), 0);

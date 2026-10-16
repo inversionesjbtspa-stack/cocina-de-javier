@@ -57,6 +57,8 @@ export type ProgressiveVacationCalculation = {
   totalRecognizedYears: number;
 };
 export type VacationPeriod = {
+  earnedOn?: string;
+  openingBalanceId?: string;
   advanceDays?: number;
   availableBalance?: number;
   baseDays: number;
@@ -97,6 +99,7 @@ export type AdvanceVacationInput = {
   requestedDays: number;
 };
 export type VacationPreviewInput = {
+  annualEntitlementOverride?: number;
   advanceAuthorized?: boolean;
   agreementAccepted?: boolean;
   asOf?: string;
@@ -238,6 +241,10 @@ export function calculatePeriodBalance(period: VacationPeriod) {
   const earned = period.baseDays + (period.progressiveDays ?? 0) + (period.positiveAdjustments ?? 0);
   const deductions = (period.negativeAdjustments ?? 0) + (period.usedDays ?? 0) + (period.reservedDays ?? 0) + (period.advanceDays ?? 0);
   return Math.round((earned - deductions) * 1000000) / 1000000;
+}
+
+export function vacationPeriodIsVested(period: Pick<VacationPeriod, "periodStart" | "periodEnd" | "earnedOn">, asOf: string) {
+  return period.earnedOn ? period.earnedOn <= asOf : period.periodEnd < asOf;
 }
 
 function holidayMatches(holiday: Holiday, regionCode?: string | null, communeCode?: string | null) {
@@ -599,14 +606,14 @@ export function calculateVacationPreview(input: VacationPreviewInput) {
   const asOf = input.asOf ?? input.startDate;
   const normalizedSchedule = normalizeVacationSchedule(input.schedule);
   const progressiveDays = input.hireDate ? calculateProgressiveDays(input.hireDate, asOf, input.progressiveRecords) : 0;
-  const annualEntitlement = calculateAnnualEntitlement({ progressiveDays });
+  const annualEntitlement = input.annualEntitlementOverride ?? calculateAnnualEntitlement({ progressiveDays });
   const generatedPeriods = generateContractPeriods(input.hireDate, asOf, 1).map((period) => ({
     ...period,
     availableBalance: period.status === "closed" ? BASE_ANNUAL_ENTITLEMENT + progressiveDays : period.availableBalance,
     baseDays: BASE_ANNUAL_ENTITLEMENT,
     progressiveDays
   }));
-  const periods = input.periods?.length ? input.periods : generatedPeriods;
+  const periods = (input.periods ?? generatedPeriods).filter(period => vacationPeriodIsVested(period, asOf));
   const endDate = input.requestedBusinessDays ? calculateVacationEndDate(input.startDate, input.requestedBusinessDays, input.holidays, input.regionCode, null, normalizedSchedule, input.manualNonWorkingDays) : input.endDate ?? input.startDate;
   const legalDays = calculateLegalVacationDays({
     endDate,

@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import AdmZip from "adm-zip";
 import { normalizeRut } from "./utils.ts";
+import { parseVacationDays } from "./vacation-days.ts";
+export { parseVacationDays } from "./vacation-days.ts";
 
 export type VacationImportKind = "balances" | "used_vacations" | "movements";
 export type VacationImportStatus = "LISTO" | "DUPLICADO" | "TRABAJADOR NO ENCONTRADO" | "PERIODO NO RESUELTO" | "DATOS INVALIDOS" | "REVISAR";
@@ -52,7 +54,7 @@ type ParsedRow = {
 
 const HEADER_ALIASES = {
   rut: ["rut", "run", "rut trabajador", "run trabajador", "rut empleado", "rut colaborador"],
-  balance: ["saldo", "saldo vacaciones", "dias disponibles", "dias vacaciones", "saldo disponible"],
+  balance: ["saldo", "saldo vacaciones", "dias disponibles", "dias vacaciones", "saldo disponible", "vacaciones"],
   cutoffDate: ["fecha corte", "corte", "saldo al", "fecha saldo"],
   startDate: ["desde", "fecha inicio", "inicio", "start"],
   endDate: ["hasta", "fecha termino", "termino", "fin", "end"],
@@ -90,13 +92,6 @@ function parseDate(value: string | undefined) {
   const slash = clean.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
   if (slash) return `${slash[3]}-${slash[2].padStart(2, "0")}-${slash[1].padStart(2, "0")}`;
   return null;
-}
-
-function parseNumber(value: string | undefined) {
-  const clean = String(value ?? "").trim().replace(/\./g, "").replace(",", ".");
-  if (!clean) return null;
-  const parsed = Number(clean);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function csvSplit(line: string) {
@@ -222,8 +217,8 @@ export function previewVacationImport(input: {
   const rows = input.parsedRows.map((row) => {
     const rut = normalizeRut(getMappedValue(row.values, "rut", input.mapping));
     const employee = rut ? employeesByRut.get(rut) ?? null : null;
-    const balance = parseNumber(getMappedValue(row.values, "balance", input.mapping));
-    const days = parseNumber(getMappedValue(row.values, "days", input.mapping));
+    const balance = parseVacationDays(getMappedValue(row.values, "balance", input.mapping));
+    const days = parseVacationDays(getMappedValue(row.values, "days", input.mapping));
     const cutoffDate = parseDate(getMappedValue(row.values, "cutoffDate", input.mapping));
     const startDate = parseDate(getMappedValue(row.values, "startDate", input.mapping));
     const date = parseDate(getMappedValue(row.values, "date", input.mapping));
