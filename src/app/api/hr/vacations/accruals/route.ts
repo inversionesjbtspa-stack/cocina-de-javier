@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { activeCertifiedVacationState, loadCertifiedVacationStates } from "@/lib/hr/vacation-certified-server";
 
 const schema = z.object({
   days: z.coerce.number(),
@@ -45,6 +46,9 @@ export async function POST(request: Request) {
   if (!employee || employee.tenant_id !== ctx.membership.tenant_id) return NextResponse.json({ ok: false, error: "employee_not_in_tenant" }, { status: 404 });
   if (employee.status && employee.status !== "activo") {
     return NextResponse.json({ ok: false, error: "employee_not_active" }, { status: 422 });
+  }
+  if (activeCertifiedVacationState(await loadCertifiedVacationStates(supabase, ctx.membership.tenant_id), body.employeeId)) {
+    return NextResponse.json({ ok: false, error: "certified_balance_requires_audited_adjustment" }, { status: 409 });
   }
   const balance = await supabase.from("hr_vacation_balances").select("*").eq("tenant_id", ctx.membership.tenant_id).eq("employee_id", body.employeeId).maybeSingle();
   const current = Number(balance.data?.pending_days ?? balance.data?.initial_balance ?? 0);

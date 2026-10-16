@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import type { HrDashboardData, HrEmployee } from "@/lib/hr/data";
-import { isCancelledVacationRequest, isOperationalVacationRequest } from "@/lib/hr/vacation-domain";
+import { isCancelledVacationRequest, isOperationalVacationRequest, vacationPeriodIsVested } from "@/lib/hr/vacation-domain";
+import { certifiedVacationSummary, vacationToday } from "@/lib/hr/vacation-certified";
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -32,7 +33,27 @@ function formatDays(value: number | null | undefined) {
 }
 
 export function VacationSummary({ employee, periods }: { employee: HrEmployee; periods: HrDashboardData["vacationPeriods"] }) {
-  const available = periods.reduce((sum, period) => sum + period.availableBalance, 0);
+  const asOf = vacationToday();
+  const certified = employee.certifiedVacationOpening ? certifiedVacationSummary(employee.certifiedVacationOpening, periods.map(p => ({ ...p, status: p.status as "open" | "closed" | "future" })), asOf) : null;
+  if (certified?.isActive && employee.certifiedVacationOpening) return (
+    <div className="rounded-lg border border-brand-100 bg-brand-50 p-4">
+      <p className="text-xs font-semibold uppercase text-[#667068]">Saldo disponible</p>
+      <p className="mt-1 text-3xl font-semibold text-brand-900">{formatDays(certified.available)}</p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <MiniMetric label={`Saldo certificado al ${formatDate(employee.certifiedVacationOpening.effectiveCutoffDate)}`} value={formatDays(certified.opening)} />
+        <MiniMetric label="Devengados despues del corte" value={formatDays(certified.accrued)} />
+        <MiniMetric label="Utilizados despues del corte" value={formatDays(certified.used)} />
+        <MiniMetric label="Reservados" value={formatDays(certified.reserved)} />
+        <MiniMetric label="Feriado base" value="15 dias" />
+        <MiniMetric label="Feriado progresivo" value={formatDays(certified.annual - 15)} />
+        <MiniMetric label="Derecho anual actual" value={formatDays(certified.annual)} />
+        <MiniMetric label="Proxima anualidad" value={formatDate(certified.nextAnniversary)} />
+      </div>
+      {certified.opening < 0 ? <p className="mt-2 text-xs text-amber-800">SALDO NEGATIVO CERTIFICADO</p> : null}
+      {employee.certifiedVacationOpening.internalAlert ? <p className="mt-2 text-xs text-amber-800">{employee.certifiedVacationOpening.internalAlert}</p> : null}
+    </div>
+  );
+  const available = periods.filter(period => vacationPeriodIsVested(period, asOf)).reduce((sum, period) => sum + period.availableBalance, 0);
   const reserved = periods.reduce((sum, period) => sum + period.reservedDays, 0);
   const advance = periods.reduce((sum, period) => sum + period.advanceDays, 0);
   const progressive = periods.reduce((sum, period) => sum + period.progressiveDays, 0);
@@ -72,14 +93,14 @@ export function VacationPeriodsTable({ periods }: { periods: HrDashboardData["va
         <tbody>
           {periods.map((period) => (
             <tr className="border-t" key={period.id}>
-              <td className="px-4 py-3">{period.periodStart} / {period.periodEnd}</td>
+              <td className="px-4 py-3">{period.openingBalanceId && period.baseDays === 0 ? "SALDO CERTIFICADO PRE-CORTE" : period.openingBalanceId ? "Anualidad devengada" : null}{period.openingBalanceId ? <br /> : null}{period.periodStart} / {period.periodEnd}</td>
               <td className="px-4 py-3">{period.baseDays}</td>
               <td className="px-4 py-3">{period.progressiveDays}</td>
               <td className="px-4 py-3">{period.baseDays + period.progressiveDays}</td>
               <td className="px-4 py-3">{period.usedDays}</td>
               <td className="px-4 py-3">{period.reservedDays}</td>
               <td className="px-4 py-3">{period.advanceDays}</td>
-              <td className="px-4 py-3 font-semibold">{period.availableBalance}</td>
+              <td className="px-4 py-3 font-semibold">{vacationPeriodIsVested(period, vacationToday()) ? period.availableBalance : 0}</td>
               <td className="px-4 py-3">{period.status}</td>
             </tr>
           ))}

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { activeCertifiedVacationState, loadCertifiedVacationStates } from "@/lib/hr/vacation-certified-server";
 
 export const runtime = "nodejs";
 
@@ -32,6 +33,9 @@ export async function POST(request: Request) {
     .eq("id", body.employeeId)
     .maybeSingle();
   if (!employee) return NextResponse.json({ ok: false, error: "employee_not_found" }, { status: 404 });
+  if (activeCertifiedVacationState(await loadCertifiedVacationStates(supabase, ctx.membership.tenant_id), body.employeeId)) {
+    return NextResponse.json({ ok: false, error: "certified_entitlement_requires_audited_change" }, { status: 409 });
+  }
 
   const { data, error } = await supabase.from("hr_vacation_progressive_records").insert({
     accreditation_date: body.accreditationDate,

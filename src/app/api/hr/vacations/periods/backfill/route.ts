@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
 import { previewVacationPeriodBackfill } from "@/lib/hr/vacation-persistence";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { activeCertifiedVacationState, loadCertifiedVacationStates } from "@/lib/hr/vacation-certified-server";
 
 export const runtime = "nodejs";
 
@@ -59,7 +60,8 @@ export async function POST(request: Request) {
     periodByEmployee.set(period.employee_id, current);
   }
 
-  const previews = ((employees ?? []) as EmployeeRow[]).map((employee) => {
+  const certifiedStates = await loadCertifiedVacationStates(supabase, ctx.membership.tenant_id);
+  const previews = ((employees ?? []) as EmployeeRow[]).filter(employee => !activeCertifiedVacationState(certifiedStates, employee.id)).map((employee) => {
     const preview = previewVacationPeriodBackfill({
       asOf: body.asOf,
       employeeId: employee.id,

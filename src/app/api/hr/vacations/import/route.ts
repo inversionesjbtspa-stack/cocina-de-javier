@@ -10,6 +10,7 @@ import {
 import { requireHrContext } from "@/lib/hr/auth";
 import { normalizeRut } from "@/lib/hr/utils";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { activeCertifiedVacationState, loadCertifiedVacationStates } from "@/lib/hr/vacation-certified-server";
 
 export const runtime = "nodejs";
 
@@ -163,6 +164,10 @@ export async function POST(request: Request) {
   if (mode === "preview") return NextResponse.json({ ok: true, mode, preview });
 
   const readyRows = preview.rows.filter((row) => row.status === "LISTO");
+  const certifiedStates = await loadCertifiedVacationStates(supabase, ctx.membership.tenant_id);
+  if (readyRows.some(row => row.employeeId && activeCertifiedVacationState(certifiedStates, row.employeeId))) {
+    return NextResponse.json({ ok: false, error: "certified_balance_requires_audited_adjustment", preview }, { status: 409 });
+  }
   const batch = await supabase.from("hr_vacation_import_batches").upsert({
     created_by: ctx.user.id,
     duplicate_rows: preview.summary.duplicates,

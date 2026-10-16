@@ -6,6 +6,8 @@ import { resolveEmployeeWorkingCalendar } from "@/lib/hr/vacation-calendar-serve
 import { assertEmployeeInTenant, buildFallbackPeriods, buildVacationSnapshot, ensureVacationPeriodsForEmployee, mapPeriodRow, mapProgressiveRecord, persistVacationReceiptForRequest, safeVacationHolidays, type VacationReceiptPersistenceClient } from "@/lib/hr/vacation-server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { activeCertifiedVacationState, loadCertifiedVacationStates } from "@/lib/hr/vacation-certified-server";
+import { certifiedAnnualEntitlement, vacationToday } from "@/lib/hr/vacation-certified";
 
 export const runtime = "nodejs";
 
@@ -108,10 +110,12 @@ export async function POST(request: Request) {
   if (manualClosed.error) return NextResponse.json({ ok: false, error: manualClosed.error }, { status: 422 });
   const progressiveRecords = (progressiveRows ?? []).map((row) => mapProgressiveRecord(row as Record<string, unknown>));
   const calendarStatusByYear = Object.fromEntries((calendarRows ?? []).map((row) => [String(row.calendar_year), String(row.verification_status) as HolidayCalendarStatus]));
-  const ensured = periodRows?.length
+  const asOf = vacationToday();
+  const certified = activeCertifiedVacationState(await loadCertifiedVacationStates(supabase, ctx.membership.tenant_id), body.employeeId, asOf);
+  const ensured = certified ? { periods: certified.periods, usedFallback: false } : periodRows?.length
     ? { periods: periodRows.map((row) => mapPeriodRow(row as Record<string, unknown>)), usedFallback: false }
-    : await ensureVacationPeriodsForEmployee({ asOf: body.startDate, employee: employeeRow, progressiveRecords, supabase, userId: ctx.user.id });
-  const periods = ensured.periods.length ? ensured.periods : buildFallbackPeriods(employeeRow, body.startDate);
+    : await ensureVacationPeriodsForEmployee({ asOf, employee: employeeRow, progressiveRecords, supabase, userId: ctx.user.id });
+  const periods = ensured.periods.length ? ensured.periods : buildFallbackPeriods(employeeRow, asOf);
   const workingCalendar = await resolveEmployeeWorkingCalendar({
     employeeId: body.employeeId,
     employeeSchedule: employeeRow.work_schedule,
@@ -123,6 +127,8 @@ export async function POST(request: Request) {
     toDate: previewEnd
   });
   const preview = calculateVacationPreview({
+    asOf,
+    annualEntitlementOverride: certified ? certifiedAnnualEntitlement(certified.opening, asOf) : undefined,
     advanceAuthorized: body.advanceAuthorized,
     agreementAccepted: body.fractionationAgreement,
     calendarStatusByYear,

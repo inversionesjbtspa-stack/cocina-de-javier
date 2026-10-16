@@ -37,6 +37,8 @@ export function mapHolidayRow(row: Record<string, unknown>): Holiday {
 
 export function mapPeriodRow(row: Record<string, unknown>): VacationPeriod {
   return {
+    earnedOn: row.earned_on ? String(row.earned_on) : undefined,
+    openingBalanceId: row.certified_opening_balance_id ? String(row.certified_opening_balance_id) : undefined,
     advanceDays: Number(row.advance_days ?? 0),
     availableBalance: Number(row.available_balance ?? 0),
     baseDays: Number(row.base_days ?? 15),

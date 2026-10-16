@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireHrContext } from "@/lib/hr/auth";
 import { buildVacationExcelXml } from "@/lib/hr/vacation-export";
-import { calculateProjectedProportional } from "@/lib/hr/vacation-domain";
+import { calculateProjectedProportional, vacationPeriodIsVested } from "@/lib/hr/vacation-domain";
+import { activeCertifiedVacationState, loadCertifiedVacationStates } from "@/lib/hr/vacation-certified-server";
+import { certifiedAnnualEntitlement, vacationToday } from "@/lib/hr/vacation-certified";
 import { buildFallbackPeriods, mapPeriodRow } from "@/lib/hr/vacation-server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -28,13 +30,24 @@ export async function GET() {
     rut: employee.rut,
     status: employee.status
   }));
-  const periods = periodsResult.data?.length
+  const asOf = vacationToday();
+  const states = await loadCertifiedVacationStates(supabase, ctx.membership.tenant_id);
+  const legacyPeriods = periodsResult.data?.length
     ? periodsResult.data.map((row) => mapPeriodRow(row as Record<string, unknown>))
-    : (employeesResult.data ?? []).flatMap((employee) => buildFallbackPeriods(employee, new Date().toISOString().slice(0, 10)));
+    : (employeesResult.data ?? []).flatMap((employee) => buildFallbackPeriods(employee, asOf));
+  const periods = legacyPeriods.filter(p => !activeCertifiedVacationState(states, p.employeeId ?? "", asOf))
+    .map(p => ({ ...p, availableBalance: vacationPeriodIsVested(p, asOf) ? p.availableBalance : 0 }));
+  for (const employee of employees) {
+    const certified = activeCertifiedVacationState(states, employee.id, asOf);
+    if (certified) periods.push(...certified.periods.map(p => ({ ...p, availableBalance: p.availableBalance ?? 0 })));
+  }
   const projected = new Map<string, number>();
   periods.forEach((period) => {
     if (period.employeeId) projected.set(period.employeeId, calculateProjectedProportional((period.baseDays ?? 15) + (period.progressiveDays ?? 0)));
   });
+  for (const state of states) {
+    if (state.opening.effectiveCutoffDate <= asOf) projected.set(state.opening.employeeId, calculateProjectedProportional(certifiedAnnualEntitlement(state.opening, asOf)));
+  }
   const xml = buildVacationExcelXml({
     employees,
     movements: (movementsResult.data ?? []).map((movement) => ({

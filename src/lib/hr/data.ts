@@ -4,6 +4,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireHrServerContext } from "@/lib/hr/security";
 import { accruedVacationDays, currentPeriod } from "@/lib/hr/utils";
 import { isProductiveHrEmployee } from "@/lib/hr/employee-filters";
+import { vacationPeriodIsVested } from "./vacation-domain";
+import { activeCertifiedVacationState, loadCertifiedVacationStates } from "./vacation-certified-server";
+import { vacationToday, type CertifiedOpeningBalance } from "./vacation-certified";
 
 export type HrBankAccount = {
   id: string;
@@ -22,6 +25,7 @@ export type HrBankAccount = {
 };
 
 export type HrEmployee = {
+  certifiedVacationOpening?: CertifiedOpeningBalance;
   id: string;
   rut: string;
   fullName: string;
@@ -155,6 +159,8 @@ export type HrVacationMovement = {
 };
 
 export type HrVacationPeriod = {
+  earnedOn?: string;
+  openingBalanceId?: string;
   id: string;
   employeeId: string;
   periodStart: string;
@@ -487,7 +493,7 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
     ,
     supabase
       .from("hr_vacation_periods")
-      .select("id,employee_id,period_start,period_end,base_days,progressive_days,positive_adjustments,negative_adjustments,used_days,reserved_days,advance_days,available_balance,continuous_block_required,continuous_block_used,status")
+      .select("*")
       .eq("tenant_id", ctx.tenantId)
       .order("period_start", { ascending: true })
     ,
@@ -513,7 +519,9 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
       .lte("off_date", periodEnd)
   ]);
 
-  const employees = ((employeeRows ?? []) as RawEmployee[]).map(mapEmployee);
+  const certifiedStates = await loadCertifiedVacationStates(supabase, ctx.tenantId);
+  const employees = ((employeeRows ?? []) as RawEmployee[]).map(row => ({ ...mapEmployee(row),
+    certifiedVacationOpening: certifiedStates.find(state => state.opening.employeeId === row.id)?.opening }));
   const productiveEmployees = employees.filter(isProductiveHrEmployee);
   const activeEmployees = productiveEmployees.filter((employee) => employee.status === "activo");
   const payslips = (payslipRows ?? []).map((row) => ({
@@ -647,9 +655,11 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
     movementType: row.movement_type,
     period: row.period
   }));
-  const vacationPeriods = (vacationPeriodRows ?? []).map((row) => ({
+  const vacationPeriods: HrVacationPeriod[] = (vacationPeriodRows ?? []).filter(row => !activeCertifiedVacationState(certifiedStates, row.employee_id)).map((row) => ({
+    earnedOn: row.earned_on ?? undefined,
+    openingBalanceId: row.certified_opening_balance_id ?? undefined,
     advanceDays: Number(row.advance_days ?? 0),
-    availableBalance: Number(row.available_balance ?? 0),
+    availableBalance: vacationPeriodIsVested({periodStart:row.period_start,periodEnd:row.period_end,earnedOn:row.earned_on??undefined},vacationToday()) ? Number(row.available_balance ?? 0) : 0,
     baseDays: Number(row.base_days ?? 15),
     continuousBlockRequired: Number(row.continuous_block_required ?? 10),
     continuousBlockUsed: Number(row.continuous_block_used ?? 0),
@@ -664,6 +674,15 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
     status: row.status,
     usedDays: Number(row.used_days ?? 0)
   }));
+  for (const employee of employees) {
+    const state = activeCertifiedVacationState(certifiedStates, employee.id, vacationToday());
+    if (!state) continue;
+    for (const period of state.periods) vacationPeriods.push({ ...period, id: period.id!, employeeId: employee.id,
+      availableBalance: period.availableBalance ?? 0, progressiveDays: period.progressiveDays ?? 0,
+      positiveAdjustments: period.positiveAdjustments ?? 0, negativeAdjustments: period.negativeAdjustments ?? 0,
+      usedDays: period.usedDays ?? 0, reservedDays: period.reservedDays ?? 0, advanceDays: period.advanceDays ?? 0,
+      continuousBlockRequired: period.continuousBlockRequired ?? 10, continuousBlockUsed: period.continuousBlockUsed ?? 0, status: period.status ?? "open" });
+  }
   const vacationMovements = (vacationMovementRows ?? []).map((row) => ({
     createdAt: row.created_at,
     days: Number(row.days ?? 0),

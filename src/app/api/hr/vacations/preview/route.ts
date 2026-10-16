@@ -3,7 +3,9 @@ import { z } from "zod";
 import { requireHrContext } from "@/lib/hr/auth";
 import { calculateVacationPreview, holidayForDate, localWeekday, yearsInRange, type Holiday, type HolidayCalendarStatus } from "@/lib/hr/vacation-domain";
 import { resolveEmployeeWorkingCalendar } from "@/lib/hr/vacation-calendar-server";
-import { assertEmployeeInTenant, buildFallbackPeriods, ensureVacationPeriodsForEmployee, mapPeriodRow, mapProgressiveRecord, safeVacationHolidays } from "@/lib/hr/vacation-server";
+import { assertEmployeeInTenant, buildFallbackPeriods, mapPeriodRow, mapProgressiveRecord, safeVacationHolidays } from "@/lib/hr/vacation-server";
+import { activeCertifiedVacationState, loadCertifiedVacationStates } from "@/lib/hr/vacation-certified-server";
+import { certifiedAnnualEntitlement, vacationToday } from "@/lib/hr/vacation-certified";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -73,10 +75,10 @@ export async function POST(request: Request) {
 
     const progressiveRecords = (progressiveRows ?? []).map((row) => mapProgressiveRecord(row as Record<string, unknown>));
     const calendarStatusByYear = Object.fromEntries((calendarRows ?? []).map((row) => [String(row.calendar_year), String(row.verification_status) as HolidayCalendarStatus]));
-    const ensured = periodRows?.length
-      ? { periods: periodRows.map((row) => mapPeriodRow(row as Record<string, unknown>)), usedFallback: false }
-      : await ensureVacationPeriodsForEmployee({ asOf: body.startDate, employee: employeeRow, progressiveRecords, supabase, userId: ctx.user.id });
-    const periods = ensured.periods.length ? ensured.periods : buildFallbackPeriods(employeeRow, body.startDate);
+    const asOf = vacationToday();
+    const certified = activeCertifiedVacationState(await loadCertifiedVacationStates(supabase, ctx.membership.tenant_id), body.employeeId, asOf);
+    const ensured = { usedFallback: !periodRows?.length };
+    const periods = certified?.periods ?? (periodRows?.length ? periodRows.map(row => mapPeriodRow(row as Record<string, unknown>)) : buildFallbackPeriods(employeeRow, asOf));
     const holidays = safeVacationHolidays(holidayRows as Array<Record<string, unknown>> | null);
     const manualClosed = validateManualClosedDays(body.manualNonWorkingDays, body.startDate, body.endDate || body.startDate, holidays);
     if (manualClosed.error) return domainError(manualClosed.error.toUpperCase(), "El dia inhabil manual debe ser de lunes a viernes, estar dentro del rango y no duplicar un feriado oficial.", 422);
@@ -91,6 +93,8 @@ export async function POST(request: Request) {
       toDate: body.endDate || body.startDate
     });
     const preview = calculateVacationPreview({
+      asOf,
+      annualEntitlementOverride: certified ? certifiedAnnualEntitlement(certified.opening, asOf) : undefined,
       advanceAuthorized: body.advanceAuthorized,
       agreementAccepted: body.fractionationAgreement,
       calendarStatusByYear,

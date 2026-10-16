@@ -26,6 +26,7 @@ import { getBankTefReadiness } from "@/lib/hr/payment-batch";
 import { buildSalaryRows, salaryRowHasNovelty } from "@/lib/hr/salary-data";
 import { SALARY_COLUMN_DEFINITIONS } from "@/lib/hr/salary-export-map";
 import { isCancelledVacationRequest, isOperationalVacationRequest } from "@/lib/hr/vacation-domain";
+import { vacationToday } from "@/lib/hr/vacation-certified";
 import { EmployeeSummary } from "@/components/hr/employee-summary";
 import {
   VacationAccrualForm,
@@ -1393,6 +1394,7 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
   const movements = data.vacationMovements.filter((item) => item.employeeId === employee.id);
   const progressiveRecords = data.vacationProgressiveRecords.filter((item) => item.employeeId === employee.id);
   const operationalVacations = vacations.filter((vacation) => isOperationalVacationRequest(vacation.status));
+  const certifiedCutoff = employee.certifiedVacationOpening?.effectiveCutoffDate;
   async function action(id: string, endpoint: string, body: Record<string, unknown> = {}) {
     const response = await fetch(`/api/hr/vacations/${id}/${endpoint}`, {
       body: JSON.stringify(body),
@@ -1408,6 +1410,12 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
         <h3 className="font-semibold text-brand-900">Vacaciones</h3>
         <p className="mt-2 text-sm text-[#667068]">El sistema calcula dias habiles legales, saldo y FIFO antes de confirmar.</p>
         <VacationSummary employee={employee} periods={periods} />
+        {certifiedCutoff && certifiedCutoff <= vacationToday() ? (
+          <div className="my-4">
+            <h4 className="mb-2 text-sm font-semibold text-brand-900">Movimientos despues del corte</h4>
+            <VacationMovements movements={movements.filter(item => (item.effectiveDate ?? item.createdAt.slice(0, 10)) >= certifiedCutoff)} />
+          </div>
+        ) : null}
         <VacationRequestForm employeeId={employee.id} submitJson={submitJson} />
         <VacationRecentRequests vacations={operationalVacations} />
       </SectionCard>
