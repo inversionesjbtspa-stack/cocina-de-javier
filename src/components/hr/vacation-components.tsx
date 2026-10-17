@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import type { HrDashboardData, HrEmployee } from "@/lib/hr/data";
 import { isCancelledVacationRequest, isOperationalVacationRequest, vacationPeriodIsVested } from "@/lib/hr/vacation-domain";
 import { certifiedVacationSummary, vacationToday } from "@/lib/hr/vacation-certified";
+import { VACATION_CERTIFICATION_REQUIRED_CODE, VACATION_CERTIFICATION_REQUIRED_MESSAGE, VACATION_CERTIFICATION_REQUIRED_REASON } from "@/lib/hr/vacation-certification-policy";
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -190,6 +191,7 @@ function previewReviewReasons(preview: Record<string, unknown> | null) {
 
 function humanVacationReviewReason(reason: string) {
   const labels: Record<string, string> = {
+    [VACATION_CERTIFICATION_REQUIRED_REASON]: VACATION_CERTIFICATION_REQUIRED_MESSAGE,
     advance_exceeds_projected_proportional: "Los dias anticipados superan el proporcional proyectado.",
     advance_vacation_requires_explicit_authorization: "La solicitud requiere vacaciones anticipadas sin autorizacion explicita.",
     continuous_block_would_be_broken: "La solicitud no conserva el bloque continuo minimo protegido del periodo.",
@@ -218,6 +220,7 @@ function humanVacationPreviewMessage(result: Record<string, unknown> | null) {
 
 function humanVacationConfirmMessage(result: Record<string, unknown> | null, status: number) {
   const code = String(result?.error ?? result?.code ?? "");
+  if (code === VACATION_CERTIFICATION_REQUIRED_CODE || code === VACATION_CERTIFICATION_REQUIRED_REASON) return VACATION_CERTIFICATION_REQUIRED_MESSAGE;
   if (status === 401 || code === "unauthorized") return "Tu sesion expiro. Vuelve a iniciar sesion antes de confirmar las vacaciones.";
   if (status === 403 || code === "hr_forbidden" || code === "forbidden") return "No tienes permisos para confirmar vacaciones.";
   if (code === "vacation_overlap" || code === "VACATION_CONFLICT") return "Existe una solicitud de vacaciones superpuesta. No se realizaron cambios.";
@@ -304,6 +307,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
   const previewValidAndCurrent = previewIsCurrent && previewCanConfirm && !preview.error && !preview.loading;
   const previewBusinessDays = previewNumber(preview.data, "businessDays");
   const requiresFractionationAgreement = previewIsCurrent && previewReviewReasons(preview.data).includes("fractionation_agreement_required");
+  const requiresCertifiedBalance = previewIsCurrent && previewReviewReasons(preview.data).includes(VACATION_CERTIFICATION_REQUIRED_REASON);
   const isFractionedPreview = typeof previewBusinessDays === "number" && previewBusinessDays > 0 && previewBusinessDays < 10;
 
   async function confirmVacation(event: FormEvent<HTMLFormElement>) {
@@ -385,9 +389,9 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
         <div className="rounded-lg border border-brand-100 bg-brand-50 p-4 text-sm text-brand-900">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="font-semibold">Resumen de vacaciones</h4>
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${previewCanConfirm ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{previewCanConfirm ? "LISTO PARA CONFIRMAR" : requiresFractionationAgreement ? "REQUIERE ACUERDO DE FRACCIONAMIENTO" : "REVISAR"}</span>
+            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${previewCanConfirm ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{requiresCertifiedBalance ? "REQUIERE SALDO CERTIFICADO" : previewCanConfirm ? "LISTO PARA CONFIRMAR" : requiresFractionationAgreement ? "REQUIERE ACUERDO DE FRACCIONAMIENTO" : "REVISAR"}</span>
           </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {!requiresCertifiedBalance ? <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <MiniMetric label="Desde" value={formatDate(startDate)} />
             <MiniMetric label="Hasta" value={formatDate(endDate)} />
             <MiniMetric label="Dias corridos" value={String(previewNumber(preview.data, "calendarDays") ?? "-")} />
@@ -400,7 +404,7 @@ export function VacationRequestForm({ employeeId, submitJson }: { employeeId: st
             <MiniMetric label="Saldo antes" value={formatDays(previewNumber(preview.data, "totalAvailable"))} />
             <MiniMetric label="Dias a descontar" value={formatDays(previewNumber(preview.data, "businessDays"))} />
             <MiniMetric label="Saldo despues" value={formatDays(previewNumber(preview.data, "totalAfterRequest"))} />
-          </div>
+          </div> : null}
           {preview.data.scheduleReviewRequired ? <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">No hay politica empresa ni override individual valido para calcular esta solicitud.</p> : null}
           {requiresFractionationAgreement ? (
             <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">

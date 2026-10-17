@@ -8,6 +8,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { activeCertifiedVacationState, loadCertifiedVacationStates } from "@/lib/hr/vacation-certified-server";
 import { certifiedAnnualEntitlement, vacationToday } from "@/lib/hr/vacation-certified";
+import { vacationCertificationBlock, VACATION_CERTIFICATION_REQUIRED_CODE, VACATION_CERTIFICATION_REQUIRED_REASON } from "@/lib/hr/vacation-certification-policy";
 
 export const runtime = "nodejs";
 
@@ -39,10 +40,12 @@ function vacationErrorStatus(error: string) {
   if (error === "unauthorized") return 401;
   if (error === "hr_forbidden") return 403;
   if (error === "vacation_overlap") return 409;
+  if (error === VACATION_CERTIFICATION_REQUIRED_REASON) return 409;
   return 422;
 }
 
 function vacationErrorCode(stage: "create" | "approval", error: string) {
+  if (error === VACATION_CERTIFICATION_REQUIRED_REASON) return VACATION_CERTIFICATION_REQUIRED_CODE;
   if (error === "vacation_overlap") return "VACATION_CONFLICT";
   if (error === "insufficient_vacation_balance") return "VACATION_BALANCE_CHANGED";
   if (error === "unauthorized") return "unauthorized";
@@ -103,6 +106,10 @@ export async function POST(request: Request) {
   const checked = assertEmployeeInTenant(employee, ctx.membership.tenant_id);
   if (!checked.ok) return NextResponse.json({ ok: false, error: checked.error }, { status: 404 });
   const employeeRow = checked.employee as Record<string, unknown> & { hire_date?: string | null; id: string; tenant_id?: string | null };
+  const asOf = vacationToday();
+  const certified = activeCertifiedVacationState(await loadCertifiedVacationStates(supabase, ctx.membership.tenant_id), body.employeeId, asOf);
+  const certificationBlock = vacationCertificationBlock(asOf, Boolean(certified));
+  if (certificationBlock) return NextResponse.json({ ok: false, error: certificationBlock.code, ...certificationBlock }, { status: 409 });
   if (!employeeRow.hire_date) return NextResponse.json({ ok: false, error: "employee_hire_date_required" }, { status: 422 });
 
   const holidays = safeVacationHolidays(holidayRows as Array<Record<string, unknown>> | null);
@@ -110,8 +117,6 @@ export async function POST(request: Request) {
   if (manualClosed.error) return NextResponse.json({ ok: false, error: manualClosed.error }, { status: 422 });
   const progressiveRecords = (progressiveRows ?? []).map((row) => mapProgressiveRecord(row as Record<string, unknown>));
   const calendarStatusByYear = Object.fromEntries((calendarRows ?? []).map((row) => [String(row.calendar_year), String(row.verification_status) as HolidayCalendarStatus]));
-  const asOf = vacationToday();
-  const certified = activeCertifiedVacationState(await loadCertifiedVacationStates(supabase, ctx.membership.tenant_id), body.employeeId, asOf);
   const ensured = certified ? { periods: certified.periods, usedFallback: false } : periodRows?.length
     ? { periods: periodRows.map((row) => mapPeriodRow(row as Record<string, unknown>)), usedFallback: false }
     : await ensureVacationPeriodsForEmployee({ asOf, employee: employeeRow, progressiveRecords, supabase, userId: ctx.user.id });

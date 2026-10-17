@@ -6,6 +6,7 @@ import { resolveEmployeeWorkingCalendar } from "@/lib/hr/vacation-calendar-serve
 import { assertEmployeeInTenant, buildFallbackPeriods, mapPeriodRow, mapProgressiveRecord, safeVacationHolidays } from "@/lib/hr/vacation-server";
 import { activeCertifiedVacationState, loadCertifiedVacationStates } from "@/lib/hr/vacation-certified-server";
 import { certifiedAnnualEntitlement, vacationToday } from "@/lib/hr/vacation-certified";
+import { uncertifiedVacationPreview, vacationCertificationBlock } from "@/lib/hr/vacation-certification-policy";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -71,12 +72,14 @@ export async function POST(request: Request) {
     const checked = assertEmployeeInTenant(employee, ctx.membership.tenant_id);
     if (!checked.ok) return domainError("EMPLOYEE_NOT_FOUND", "No se encontro el trabajador en este tenant.", 404);
     const employeeRow = checked.employee as Record<string, unknown> & { hire_date?: string | null; id: string; tenant_id?: string | null };
+    const asOf = vacationToday();
+    const certified = activeCertifiedVacationState(await loadCertifiedVacationStates(supabase, ctx.membership.tenant_id), body.employeeId, asOf);
+    const certificationBlock = vacationCertificationBlock(asOf, Boolean(certified));
+    if (certificationBlock) return NextResponse.json(uncertifiedVacationPreview(certificationBlock));
     if (!employeeRow.hire_date) return domainError("EMPLOYEE_HIRE_DATE_REQUIRED", "No se puede calcular porque falta la fecha de ingreso del trabajador.");
 
     const progressiveRecords = (progressiveRows ?? []).map((row) => mapProgressiveRecord(row as Record<string, unknown>));
     const calendarStatusByYear = Object.fromEntries((calendarRows ?? []).map((row) => [String(row.calendar_year), String(row.verification_status) as HolidayCalendarStatus]));
-    const asOf = vacationToday();
-    const certified = activeCertifiedVacationState(await loadCertifiedVacationStates(supabase, ctx.membership.tenant_id), body.employeeId, asOf);
     const ensured = { usedFallback: !periodRows?.length };
     const periods = certified?.periods ?? (periodRows?.length ? periodRows.map(row => mapPeriodRow(row as Record<string, unknown>)) : buildFallbackPeriods(employeeRow, asOf));
     const holidays = safeVacationHolidays(holidayRows as Array<Record<string, unknown>> | null);
