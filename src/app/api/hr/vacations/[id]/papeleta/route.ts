@@ -4,6 +4,7 @@ import { requireHrContext } from "@/lib/hr/auth";
 import { buildVacationReceiptModel, renderVacationReceiptHtml, renderVacationReceiptPdf, vacationReceiptHash } from "@/lib/hr/vacation-receipt";
 import { fetchVacationReceiptAllocations } from "@/lib/hr/vacation-server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { upsertVacationReceiptMetadata } from "@/lib/hr/vacation-document-metadata";
 
 export const runtime = "nodejs";
 
@@ -90,8 +91,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       contentType: "application/pdf",
       upsert: true
     });
-    if (!upload.error) {
-      await supabase.from("hr_vacation_documents").upsert({
+    if (upload.error) return NextResponse.json({ ok: false, error: "vacation_receipt_storage_failed" }, { status: 422 });
+    const metadata = await upsertVacationReceiptMetadata(supabase, {
         document_status: data.receipt_status ?? "vigente",
         document_type: "comprobante_feriado",
         employee_id: employee?.id,
@@ -105,8 +106,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         storage_path: storagePath,
         tenant_id: ctx.membership.tenant_id,
         vacation_request_id: id
-      }, { onConflict: "tenant_id,vacation_request_id,document_type" });
-    }
+      });
+    if (metadata.error) return NextResponse.json({ ok: false, error: "vacation_receipt_metadata_failed" }, { status: 422 });
   }
   return new NextResponse(pdf, {
     headers: {

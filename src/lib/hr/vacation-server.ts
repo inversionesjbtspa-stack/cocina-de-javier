@@ -12,6 +12,7 @@ import {
 } from "./vacation-domain.ts";
 import { buildVacationReceiptModel, renderVacationReceiptPdf, vacationReceiptHash, type VacationPeriodAllocation } from "./vacation-receipt.ts";
 import { previewVacationPeriodBackfill } from "./vacation-persistence.ts";
+import { upsertVacationReceiptMetadata, type VacationReceiptMetadataClient } from "./vacation-document-metadata.ts";
 
 export type HrVacationContext = {
   companyId: string;
@@ -217,10 +218,9 @@ type ReceiptSelectBuilder = {
 
 type ReceiptTableBuilder = {
   select: (columns: string) => ReceiptSelectBuilder;
-  upsert: (payload: Record<string, unknown>, options: { onConflict: string }) => PromiseLike<{ error?: { message: string } | null }>;
 };
 
-export type VacationReceiptPersistenceClient = {
+export type VacationReceiptPersistenceClient = VacationReceiptMetadataClient & {
   from: (table: string) => ReceiptTableBuilder;
   storage: {
     from: (bucket: string) => {
@@ -352,7 +352,7 @@ export async function persistVacationReceiptForRequest(input: {
     upsert: true
   });
   if (upload.error) return { ok: false as const, error: upload.error.message };
-  const document = await input.supabase.from("hr_vacation_documents").upsert({
+  const document = await upsertVacationReceiptMetadata(input.supabase, {
     document_status: data.receipt_status ?? "vigente",
     document_type: "comprobante_feriado",
     employee_id: employee?.id,
@@ -366,7 +366,7 @@ export async function persistVacationReceiptForRequest(input: {
     storage_path: storagePath,
     tenant_id: input.tenantId,
     vacation_request_id: input.requestId
-  }, { onConflict: "tenant_id,vacation_request_id,document_type" });
+  });
   if (document.error) return { ok: false as const, error: document.error.message };
   return { ok: true as const, filename: model.filename, storagePath };
 }
