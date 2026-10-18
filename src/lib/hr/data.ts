@@ -77,7 +77,8 @@ export type HrPayslip = {
 
 export type HrVacationRequest = {
   openingBalanceId?: string | null;
-  administrativeCancellation?: { cancelledAt: string; cancelledBy: string; reason: string; balanceEffect: number } | null;
+  administrativeCancellation?: { cancelledAt: string; cancelledBy: string; reason: string; balanceEffect: number;
+    credit?: { movementId: string; days: number; balanceBefore: number; balanceAfter: number; createdAt: string } | null } | null;
   id: string;
   employeeId: string;
   employeeName: string;
@@ -536,6 +537,11 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
     .eq("tenant_id", ctx.tenantId);
   if (adminCancellations.error) throw new Error("hr_vacation_administrative_state_unavailable");
   const cancellationByRequest = new Map((adminCancellations.data ?? []).map(row => [row.request_id, row]));
+  const adminCredits = await supabase.from("hr_vacation_movements")
+    .select("id,request_id,days,previous_balance,resulting_balance,created_at")
+    .eq("tenant_id", ctx.tenantId).eq("movement_type", "administrative_cancellation_credit");
+  if (adminCredits.error) throw new Error("hr_vacation_administrative_credit_unavailable");
+  const creditByRequest = new Map((adminCredits.data ?? []).map(row => [row.request_id, row]));
   const employees = ((employeeRows ?? []) as RawEmployee[]).map(row => ({ ...mapEmployee(row),
     certifiedVacationOpening: certifiedStates.find(state => state.opening.employeeId === row.id)?.opening }));
   const productiveEmployees = employees.filter(isProductiveHrEmployee);
@@ -566,7 +572,14 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
       cancelledAt: cancellationByRequest.get(row.id)!.administrative_cancelled_at,
       cancelledBy: cancellationByRequest.get(row.id)!.administrative_cancelled_by,
       reason: cancellationByRequest.get(row.id)!.administrative_cancel_reason,
-      balanceEffect: Number(cancellationByRequest.get(row.id)!.balance_effect)
+      balanceEffect: Number(cancellationByRequest.get(row.id)!.balance_effect),
+      credit: creditByRequest.has(row.id) ? {
+        movementId: creditByRequest.get(row.id)!.id,
+        days: Number(creditByRequest.get(row.id)!.days),
+        balanceBefore: Number(creditByRequest.get(row.id)!.previous_balance),
+        balanceAfter: Number(creditByRequest.get(row.id)!.resulting_balance),
+        createdAt: creditByRequest.get(row.id)!.created_at
+      } : null
     } : null,
     advanceDays: Number(row.advance_days ?? 0),
     businessDays: Number(row.business_days ?? 0),

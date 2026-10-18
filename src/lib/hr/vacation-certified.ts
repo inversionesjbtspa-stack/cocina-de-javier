@@ -73,6 +73,7 @@ export function certifiedVacationSummary(opening: CertifiedOpeningBalance, persi
   if (!periods) return { isActive: false as const, nextAnniversary: nextVacationAnniversary(opening.hireDate, opening.effectiveCutoffDate) };
   const available = periods.reduce((sum, p) => sum + (p.availableBalance ?? 0), 0);
   return { isActive: true as const, periods, available: Math.round(available * 10000) / 10000,
+    adjustments: Math.round((periods.reduce((s,p) => s + (p.positiveAdjustments ?? 0) - (p.negativeAdjustments ?? 0), 0) - opening.balanceDays) * 10000) / 10000,
     opening: opening.balanceDays, accrued: periods.slice(1).reduce((s,p) => s + p.baseDays + (p.progressiveDays ?? 0), 0),
     used: periods.reduce((s,p) => s + (p.usedDays ?? 0), 0), reserved: periods.reduce((s,p) => s + (p.reservedDays ?? 0), 0),
     annual: certifiedAnnualEntitlement(opening, asOf), nextAnniversary: nextVacationAnniversary(opening.hireDate, asOf) };

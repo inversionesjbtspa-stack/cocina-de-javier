@@ -123,5 +123,5 @@ test("metadata migration preserves legacy duplicates, RLS, grants and conflict p
 
 test("tracked changes remain limited to HR vacation remediation, never Trading or bank modules",()=>{
   const files=execFileSync("git",["diff","HEAD","--name-only"],{encoding:"utf8"}).trim().split("\n").filter(Boolean);
-  for(const file of files)assert.match(file,/^(src\/app\/api\/hr\/vacations\/|src\/components\/hr\/(vacation-components|hr-dashboard-client)\.tsx$|src\/lib\/hr\/data\.ts$|src\/lib\/hr\/vacation-|tests\/vacation-|scripts\/validate-vacation-|supabase\/migrations\/20261017|supabase\/migrations\/202610180001_hr_vacation_administrative_cancellation\.sql$|reports\/hr_vacation_)/);
+  for(const file of files)assert.match(file,/^(src\/app\/api\/hr\/vacations\/|src\/components\/hr\/(vacation-components|hr-dashboard-client)\.tsx$|src\/lib\/hr\/data\.ts$|src\/lib\/hr\/vacation-|tests\/vacation-|scripts\/validate-vacation-|supabase\/migrations\/20261017|supabase\/migrations\/20261018000[12]_hr_vacation_administrative_(cancellation|credit)\.sql$|reports\/hr_vacation_)/);
 });

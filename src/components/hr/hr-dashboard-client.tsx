@@ -28,7 +28,8 @@ import { SALARY_COLUMN_DEFINITIONS } from "@/lib/hr/salary-export-map";
 import { isCancelledVacationRequest, isOperationalVacationRequest } from "@/lib/hr/vacation-domain";
 import { classifyVacationMovement, LEGACY_VACATION_REVIEW_MESSAGE, vacationActionMessage, vacationCancellationMode } from "@/lib/hr/vacation-history";
 
-type CancelVacationAction = (id: string, administrative?: boolean) => Promise<string | null>;
+type AdministrativeVacationOptions = { returnDays: boolean; reason: string };
+type CancelVacationAction = (id: string, administrative?: boolean, options?: AdministrativeVacationOptions) => Promise<string | null>;
 import { vacationToday } from "@/lib/hr/vacation-certified";
 import { EmployeeSummary } from "@/components/hr/employee-summary";
 import {
@@ -814,13 +815,14 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
     setMessage(blocked ? `Envio controlado revisado: ${blocked} liquidacion(es) quedaron pendientes/bloqueadas.` : "Liquidaciones enviadas.");
   }
 
-  async function cancelVacationRequest(id: string, administrative = false): Promise<string | null> {
-    const reason = window.prompt(administrative ? "Motivo de anulación administrativa (sin devolución de días)" : "Motivo de anulacion de la solicitud de vacaciones");
+  async function cancelVacationRequest(id: string, administrative = false, options?: AdministrativeVacationOptions): Promise<string | null> {
+    if (administrative && !options) return "Selecciona explícitamente si deseas devolver los días.";
+    const reason = administrative ? options!.reason : window.prompt("Motivo de anulacion de la solicitud de vacaciones");
     if (reason === null) return null;
     if (administrative && !reason.trim()) return "Indica un motivo para registrar la gestión administrativa.";
-    if (!window.confirm(administrative ? "Marcar anulado administrativamente, sin cambiar saldo, FIFO ni PDF histórico?" : "Anular esta solicitud sin eliminar su historial?")) return null;
+    if (!administrative && !window.confirm("Anular esta solicitud sin eliminar su historial?")) return null;
     const response = await fetch(`/api/hr/vacations/${id}${administrative ? "/administrative-cancel" : ""}`, {
-      body: JSON.stringify(administrative ? { reason } : { reason, status: "anulada" }),
+      body: JSON.stringify(administrative ? { reason, returnDays: options!.returnDays } : { reason, status: "anulada" }),
       headers: { "content-type": "application/json" },
       method: administrative ? "POST" : "PATCH"
     });
@@ -830,7 +832,11 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
       setMessage(message);
       return message;
     }
-    const message = payload?.result?.already_cancelled ? "La solicitud ya se encontraba anulada." : administrative ? "Anulación administrativa registrada. Saldo y PDF histórico sin cambios." : "Solicitud de vacaciones anulada y auditada.";
+    const credit = payload?.result?.credit;
+    const message = administrative
+      ? credit ? credit.already_credited ? "Los días ya fueron devueltos. No se duplicó el abono." : `Devolución registrada: +${credit.days} días. Saldo disponible: ${credit.balance_after} días. Certificado y PDF histórico sin cambios.`
+        : "Anulación administrativa sin devolución de días. Saldo y PDF histórico sin cambios."
+      : payload?.result?.already_cancelled ? "La solicitud ya se encontraba anulada." : "Solicitud de vacaciones anulada y auditada.";
     setMessage(message);
     router.refresh();
     return message;
@@ -1399,6 +1405,9 @@ function EmployeeBankTab({ employee, onSubmit, payments }: { employee: HrEmploye
 function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJson, vacations }: { cancelVacationRequest: CancelVacationAction; data: HrDashboardData; employee: HrEmployee; submitJson: (event: FormEvent<HTMLFormElement>, endpoint: string, success: string) => void; vacations: HrDashboardData["vacations"] }) {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [busyRequest, setBusyRequest] = useState<string | null>(null);
+  const [administrativeTarget, setAdministrativeTarget] = useState<HrDashboardData["vacations"][number] | null>(null);
+  const [returnMode, setReturnMode] = useState<"none" | "credit" | null>(null);
+  const [administrativeReason, setAdministrativeReason] = useState("");
   const ledger = data.vacationLedger.filter((item) => item.employeeId === employee.id);
   const periods = data.vacationPeriods.filter((item) => item.employeeId === employee.id);
   const movements = data.vacationMovements.filter((item) => item.employeeId === employee.id);
@@ -1410,12 +1419,24 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
   const operationalMovements = activeOpening ? movements.filter(item => classifyVacationMovement(item, activeOpening) === "operational") : movements;
   const historicalMovements = activeOpening ? movements.filter(item => ["historical", "absorbed"].includes(classifyVacationMovement(item, activeOpening))) : [];
   const unclassifiedMovements = activeOpening ? movements.filter(item => classifyVacationMovement(item, activeOpening) === "review") : [];
-  async function cancel(id: string, administrative: boolean) {
+  function openAdministrative(vacation: HrDashboardData["vacations"][number]) {
+    setAdministrativeTarget(vacation);
+    setReturnMode(null);
+    setAdministrativeReason("");
+    setActionMessage(null);
+  }
+  async function cancel(id: string, administrative: boolean, options?: AdministrativeVacationOptions) {
     setBusyRequest(id);
     setActionMessage(null);
-    try { setActionMessage(await cancelVacationRequest(id, administrative)); }
+    try { setActionMessage(await cancelVacationRequest(id, administrative, options)); }
     catch { setActionMessage("No se pudo verificar el resultado. Recarga la ficha antes de volver a intentar."); }
     finally { setBusyRequest(null); }
+  }
+  async function submitAdministrative(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!administrativeTarget || !returnMode || !administrativeReason.trim()) return;
+    await cancel(administrativeTarget.id, true, { returnDays: returnMode === "credit", reason: administrativeReason });
+    setAdministrativeTarget(null);
   }
   async function action(id: string, endpoint: string, body: Record<string, unknown> = {}) {
     const response = await fetch(`/api/hr/vacations/${id}/${endpoint}`, {
@@ -1483,13 +1504,13 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
                   {!["aprobada", "rechazada"].includes(vacation.status) && !isCancelledVacationRequest(vacation.status) ? <button className="min-h-9 w-full rounded-md border border-amber-300 px-2.5 py-1.5 text-xs font-semibold text-amber-700" onClick={() => action(vacation.id, "reject", { reason: "Rechazo registrado desde RRHH" })} type="button">Rechazar</button> : null}
                   <button
                     className={`min-h-9 min-w-0 w-full rounded-md border border-rose-300 px-2.5 py-1.5 text-xs font-semibold leading-tight text-rose-700 [overflow-wrap:anywhere] disabled:cursor-not-allowed disabled:opacity-50 ${vacationCancellationMode(vacation, activeOpening, vacationToday()) !== "economic" ? "sm:col-span-2" : ""}`}
-                    disabled={isCancelledVacationRequest(vacation.status) || Boolean(busyRequest) || vacationCancellationMode(vacation, activeOpening, vacationToday()) === "historical_review"}
-                    onClick={() => cancel(vacation.id, vacationCancellationMode(vacation, activeOpening, vacationToday()) === "administrative")}
+                    disabled={(isCancelledVacationRequest(vacation.status) && !(vacation.administrativeCancellation && !vacation.administrativeCancellation.credit)) || Boolean(busyRequest) || vacationCancellationMode(vacation, activeOpening, vacationToday()) === "historical_review"}
+                    onClick={() => vacationCancellationMode(vacation, activeOpening, vacationToday()) === "economic" ? cancel(vacation.id, false) : openAdministrative(vacation)}
                     type="button"
-                  >{vacation.administrativeCancellation ? "Anulado administrativamente" : isCancelledVacationRequest(vacation.status) ? "Solicitud anulada" : busyRequest === vacation.id ? "Registrando…" : vacationCancellationMode(vacation, activeOpening, vacationToday()) === "administrative" ? "ANULAR ADMINISTRATIVAMENTE" : vacationCancellationMode(vacation, activeOpening, vacationToday()) === "historical_review" ? "REQUIERE GESTIÓN HISTÓRICA" : "Anular solicitud"}</button>
+                  >{vacation.administrativeCancellation?.credit ? "DÍAS DEVUELTOS" : busyRequest === vacation.id ? "Registrando…" : vacation.administrativeCancellation ? "GESTIONAR DEVOLUCIÓN DE DÍAS" : isCancelledVacationRequest(vacation.status) ? "Solicitud anulada" : vacationCancellationMode(vacation, activeOpening, vacationToday()) === "administrative" ? "ANULAR ADMINISTRATIVAMENTE" : vacationCancellationMode(vacation, activeOpening, vacationToday()) === "historical_review" ? "REQUIERE GESTIÓN HISTÓRICA" : "Anular solicitud"}</button>
                 </div>
                 {["administrative", "historical_review"].includes(vacationCancellationMode(vacation, activeOpening, vacationToday())) ? <p className="mt-2 text-xs text-[#667068]">{LEGACY_VACATION_REVIEW_MESSAGE}</p> : null}
-                {vacation.administrativeCancellation ? <p className="mt-2 break-words text-xs text-[#667068]">{vacation.administrativeCancellation.cancelledAt} · Usuario: {vacation.administrativeCancellation.cancelledBy} · {vacation.administrativeCancellation.reason} · Efecto en saldo: 0 días. PDF original conservado.</p> : null}
+                {vacation.administrativeCancellation ? <div className="mt-2 break-words text-xs text-[#667068]"><p>{vacation.administrativeCancellation.cancelledAt} · Usuario: {vacation.administrativeCancellation.cancelledBy} · {vacation.administrativeCancellation.reason} · Efecto inicial en saldo: 0 días. PDF original conservado.</p>{vacation.administrativeCancellation.credit ? <p className="mt-2 font-semibold text-brand-700">Devolución posterior registrada: +{vacation.administrativeCancellation.credit.days.toFixed(2)} días · {vacation.administrativeCancellation.credit.balanceBefore.toFixed(2)} → {vacation.administrativeCancellation.credit.balanceAfter.toFixed(2)} · Movimiento {vacation.administrativeCancellation.credit.movementId}</p> : <p className="mt-2">Sin devolución de días registrada.</p>}</div> : null}
               </div>
             ))}
             {!vacations.length ? <p className="rounded-md border border-dashed border-[#dfe4dd] p-4 text-sm text-[#667068]">Sin comprobantes de feriado para este trabajador.</p> : null}
@@ -1520,6 +1541,22 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
           </div>
         </details>
       </SectionCard>
+      {administrativeTarget ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="administrative-vacation-title">
+        <form className="max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-lg bg-white p-5 shadow-xl" onSubmit={submitAdministrative}>
+          <h3 className="text-lg font-semibold text-brand-900" id="administrative-vacation-title">Gestión administrativa · {administrativeTarget.documentNumber}</h3>
+          <fieldset className="space-y-3">
+            <legend className="mb-3 font-semibold text-brand-900">¿Desea devolver los días de esta vacación al saldo disponible?</legend>
+            <label className="flex items-start gap-2 rounded-md border p-3 text-sm"><input className="mt-1" name="returnDays" required type="radio" checked={returnMode === "none"} onChange={() => setReturnMode("none")} value="false" />NO, SOLO ANULAR DOCUMENTO</label>
+            <label className="flex items-start gap-2 rounded-md border p-3 text-sm"><input className="mt-1" name="returnDays" required type="radio" checked={returnMode === "credit"} onChange={() => setReturnMode("credit")} value="true" />SÍ, ANULAR Y DEVOLVER DÍAS</label>
+          </fieldset>
+          <p className="text-sm text-[#667068]">{returnMode === "credit" ? `Se registrará una devolución post-corte de ${administrativeTarget.businessDays} días, una sola vez.` : "Sin devolución de días, el saldo disponible no cambia."} El certificado, el FIFO histórico y el PDF original se conservan intactos.</p>
+          <label className="block text-sm font-semibold text-brand-900">Motivo<textarea className="mt-1 min-h-24 w-full rounded-md border p-2 font-normal" required maxLength={800} value={administrativeReason} onChange={event => setAdministrativeReason(event.target.value)} /></label>
+          <div className="flex flex-wrap justify-end gap-2">
+            <button className="rounded-md border px-3 py-2 text-sm" disabled={Boolean(busyRequest)} onClick={() => setAdministrativeTarget(null)} type="button">Volver sin cambios</button>
+            <button className="rounded-md bg-brand-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={!returnMode || !administrativeReason.trim() || Boolean(busyRequest)} type="submit">{busyRequest ? "Registrando…" : "Confirmar gestión administrativa"}</button>
+          </div>
+        </form>
+      </div> : null}
     </div>
   );
 }

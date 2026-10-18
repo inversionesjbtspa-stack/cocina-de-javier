@@ -43,6 +43,7 @@ export function VacationSummary({ employee, periods }: { employee: HrEmployee; p
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <MiniMetric label={`Saldo certificado al ${formatDate(employee.certifiedVacationOpening.effectiveCutoffDate)}`} value={formatDays(certified.opening)} />
         <MiniMetric label="Devengados despues del corte" value={formatDays(certified.accrued)} />
+        <MiniMetric label="Ajustes posteriores al corte" value={`${certified.adjustments > 0 ? "+" : ""}${formatDays(certified.adjustments)}`} />
         <MiniMetric label="Utilizados despues del corte" value={formatDays(certified.used)} />
         <MiniMetric label="Reservados" value={formatDays(certified.reserved)} />
         <MiniMetric label="Feriado base" value="15 dias" />
@@ -148,10 +149,10 @@ export function VacationMovements({ movements, absorbedRequestIds = [] }: { move
       {movements.map((movement) => (
         <div className="rounded-md border border-[#dfe4dd] bg-white p-3 text-sm" key={movement.id}>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="font-semibold text-brand-900">{movement.movementType}</p>
+            <p className="font-semibold text-brand-900">{movement.movementType === "administrative_cancellation_credit" ? "Devolución por anulación administrativa" : movement.movementType}</p>
             <span className="text-xs text-[#667068]">{(movement.requestId && absorbedRequestIds.includes(movement.requestId) ? movement.requestStartDate : movement.effectiveDate) ?? movement.requestStartDate ?? movement.periodEarnedOn ?? `Registro: ${movement.createdAt.slice(0, 10)}`}</span>
           </div>
-          <p className="mt-1 text-xs text-[#667068]">{movement.days} dias / saldo {movement.previousBalance} {"->"} {movement.resultingBalance} / origen {movement.source ?? "sistema"}</p>
+          <p className="mt-1 text-xs text-[#667068]">{movement.movementType === "administrative_cancellation_credit" ? `+${movement.days.toFixed(2)}` : movement.days} dias / saldo {movement.previousBalance} {"->"} {movement.resultingBalance} / origen {movement.source ?? "sistema"}</p>
           {movement.requestId ? <p className="mt-1 break-words text-xs text-[#667068]">Solicitud: {movement.requestId} · {movement.documentNumber ?? "Sin FER"} · {movement.requestStatus === "anulada_administrativamente" ? "ANULADO ADMINISTRATIVAMENTE" : movement.requestStatus}</p> : null}
           {movement.periodStart ? <p className="mt-1 text-xs text-[#667068]">Período: {movement.periodStart} → {movement.periodEnd}</p> : null}
           {movement.requestId && absorbedRequestIds.includes(movement.requestId) ? <p className="mt-2 text-xs font-semibold text-brand-700">ABSORBIDO EN SALDO CERTIFICADO</p> : null}

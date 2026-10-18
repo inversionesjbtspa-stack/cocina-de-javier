@@ -22,17 +22,21 @@ export function vacationActionMessage(error: string | null | undefined) {
   if (error === "legacy_vacation_requires_cutoff_review" || error === "vacation_not_absorbed_history") return LEGACY_VACATION_REVIEW_MESSAGE;
   if (error === "hr_forbidden" || error === "forbidden") return "No tienes permisos para realizar esta gestión de RRHH.";
   if (error === "unauthorized") return "Tu sesión ha vencido. Inicia sesión nuevamente antes de continuar.";
+  if (error === "administrative_prior_credit_requires_review") return "Existe una devolución o ajuste previo que requiere revisión. No se ha aplicado un nuevo abono.";
   return error || "No se pudo completar la acción. No se han confirmado cambios.";
 }
 
 export type VacationHistoryMovement = {
   id: string; requestId?: string | null; effectiveDate: string | null;
+  movementType?: string; source?: string | null;
   requestStartDate?: string | null; requestEndDate?: string | null;
   periodEarnedOn?: string | null; periodOpeningBalanceId?: string | null;
 };
 
 // Absorption takes precedence over late registration or a misleading effective date.
 export function classifyVacationMovement(movement: VacationHistoryMovement, opening: HistoryOpening) {
+  if (movement.movementType === "administrative_cancellation_credit" && movement.source === "administrative_cancellation"
+    && movement.periodOpeningBalanceId === opening.id && movement.effectiveDate && movement.effectiveDate >= opening.effectiveCutoffDate) return "operational";
   if (movement.requestId && opening.absorbedRequestIds?.includes(movement.requestId)) return "absorbed";
   const date = movement.effectiveDate ?? movement.requestStartDate ?? movement.periodEarnedOn;
   if (movement.periodOpeningBalanceId === opening.id) return "operational";
