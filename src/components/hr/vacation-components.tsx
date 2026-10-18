@@ -142,16 +142,19 @@ export function VacationProgressiveAudit({ employee, records, submitJson }: { em
   );
 }
 
-export function VacationMovements({ movements }: { movements: HrDashboardData["vacationMovements"] }) {
+export function VacationMovements({ movements, absorbedRequestIds = [] }: { movements: HrDashboardData["vacationMovements"]; absorbedRequestIds?: readonly string[] }) {
   return (
     <div className="space-y-2">
-      {movements.slice(0, 8).map((movement) => (
+      {movements.map((movement) => (
         <div className="rounded-md border border-[#dfe4dd] bg-white p-3 text-sm" key={movement.id}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="font-semibold text-brand-900">{movement.movementType}</p>
-            <span className="text-xs text-[#667068]">{movement.effectiveDate ?? movement.createdAt.slice(0, 10)}</span>
+            <span className="text-xs text-[#667068]">{(movement.requestId && absorbedRequestIds.includes(movement.requestId) ? movement.requestStartDate : movement.effectiveDate) ?? movement.requestStartDate ?? movement.periodEarnedOn ?? `Registro: ${movement.createdAt.slice(0, 10)}`}</span>
           </div>
           <p className="mt-1 text-xs text-[#667068]">{movement.days} dias / saldo {movement.previousBalance} {"->"} {movement.resultingBalance} / origen {movement.source ?? "sistema"}</p>
+          {movement.requestId ? <p className="mt-1 break-words text-xs text-[#667068]">Solicitud: {movement.requestId} · {movement.documentNumber ?? "Sin FER"} · {movement.requestStatus === "anulada_administrativamente" ? "ANULADO ADMINISTRATIVAMENTE" : movement.requestStatus}</p> : null}
+          {movement.periodStart ? <p className="mt-1 text-xs text-[#667068]">Período: {movement.periodStart} → {movement.periodEnd}</p> : null}
+          {movement.requestId && absorbedRequestIds.includes(movement.requestId) ? <p className="mt-2 text-xs font-semibold text-brand-700">ABSORBIDO EN SALDO CERTIFICADO</p> : null}
           {movement.notes ? <p className="mt-1 text-xs text-[#667068]">{movement.notes}</p> : null}
         </div>
       ))}

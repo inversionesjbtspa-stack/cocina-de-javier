@@ -26,6 +26,9 @@ import { getBankTefReadiness } from "@/lib/hr/payment-batch";
 import { buildSalaryRows, salaryRowHasNovelty } from "@/lib/hr/salary-data";
 import { SALARY_COLUMN_DEFINITIONS } from "@/lib/hr/salary-export-map";
 import { isCancelledVacationRequest, isOperationalVacationRequest } from "@/lib/hr/vacation-domain";
+import { classifyVacationMovement, LEGACY_VACATION_REVIEW_MESSAGE, vacationActionMessage, vacationCancellationMode } from "@/lib/hr/vacation-history";
+
+type CancelVacationAction = (id: string, administrative?: boolean) => Promise<string | null>;
 import { vacationToday } from "@/lib/hr/vacation-certified";
 import { EmployeeSummary } from "@/components/hr/employee-summary";
 import {
@@ -811,21 +814,26 @@ export function HrDashboardClient({ data, initialSection }: { data: HrDashboardD
     setMessage(blocked ? `Envio controlado revisado: ${blocked} liquidacion(es) quedaron pendientes/bloqueadas.` : "Liquidaciones enviadas.");
   }
 
-  async function cancelVacationRequest(id: string) {
-    const reason = window.prompt("Motivo de anulacion de la solicitud de vacaciones") ?? "";
-    if (!window.confirm("Anular esta solicitud sin eliminar su historial?")) return;
-    const response = await fetch(`/api/hr/vacations/${id}`, {
-      body: JSON.stringify({ reason, status: "anulada" }),
+  async function cancelVacationRequest(id: string, administrative = false): Promise<string | null> {
+    const reason = window.prompt(administrative ? "Motivo de anulación administrativa (sin devolución de días)" : "Motivo de anulacion de la solicitud de vacaciones");
+    if (reason === null) return null;
+    if (administrative && !reason.trim()) return "Indica un motivo para registrar la gestión administrativa.";
+    if (!window.confirm(administrative ? "Marcar anulado administrativamente, sin cambiar saldo, FIFO ni PDF histórico?" : "Anular esta solicitud sin eliminar su historial?")) return null;
+    const response = await fetch(`/api/hr/vacations/${id}${administrative ? "/administrative-cancel" : ""}`, {
+      body: JSON.stringify(administrative ? { reason } : { reason, status: "anulada" }),
       headers: { "content-type": "application/json" },
-      method: "PATCH"
+      method: administrative ? "POST" : "PATCH"
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
-      setMessage(payload?.error ?? "No se pudo anular la solicitud.");
-      return;
+      const message = vacationActionMessage(payload?.code ?? payload?.error);
+      setMessage(message);
+      return message;
     }
-    setMessage(payload?.result?.already_cancelled ? "La solicitud ya se encontraba anulada." : "Solicitud de vacaciones anulada y auditada.");
+    const message = payload?.result?.already_cancelled ? "La solicitud ya se encontraba anulada." : administrative ? "Anulación administrativa registrada. Saldo y PDF histórico sin cambios." : "Solicitud de vacaciones anulada y auditada.";
+    setMessage(message);
     router.refresh();
+    return message;
   }
 
   return (
@@ -1174,7 +1182,7 @@ function WorkerProfilePanel({
   uploadPayslip,
   vacations
 }: {
-  cancelVacationRequest: (id: string) => void;
+  cancelVacationRequest: CancelVacationAction;
   data: HrDashboardData;
   employee: HrEmployee;
   onClose: () => void;
@@ -1388,13 +1396,27 @@ function EmployeeBankTab({ employee, onSubmit, payments }: { employee: HrEmploye
   );
 }
 
-function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJson, vacations }: { cancelVacationRequest: (id: string) => void; data: HrDashboardData; employee: HrEmployee; submitJson: (event: FormEvent<HTMLFormElement>, endpoint: string, success: string) => void; vacations: HrDashboardData["vacations"] }) {
+function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJson, vacations }: { cancelVacationRequest: CancelVacationAction; data: HrDashboardData; employee: HrEmployee; submitJson: (event: FormEvent<HTMLFormElement>, endpoint: string, success: string) => void; vacations: HrDashboardData["vacations"] }) {
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [busyRequest, setBusyRequest] = useState<string | null>(null);
   const ledger = data.vacationLedger.filter((item) => item.employeeId === employee.id);
   const periods = data.vacationPeriods.filter((item) => item.employeeId === employee.id);
   const movements = data.vacationMovements.filter((item) => item.employeeId === employee.id);
   const progressiveRecords = data.vacationProgressiveRecords.filter((item) => item.employeeId === employee.id);
   const operationalVacations = vacations.filter((vacation) => isOperationalVacationRequest(vacation.status));
   const certifiedCutoff = employee.certifiedVacationOpening?.effectiveCutoffDate;
+  const opening = employee.certifiedVacationOpening;
+  const activeOpening = opening && opening.effectiveCutoffDate <= vacationToday() ? opening : undefined;
+  const operationalMovements = activeOpening ? movements.filter(item => classifyVacationMovement(item, activeOpening) === "operational") : movements;
+  const historicalMovements = activeOpening ? movements.filter(item => ["historical", "absorbed"].includes(classifyVacationMovement(item, activeOpening))) : [];
+  const unclassifiedMovements = activeOpening ? movements.filter(item => classifyVacationMovement(item, activeOpening) === "review") : [];
+  async function cancel(id: string, administrative: boolean) {
+    setBusyRequest(id);
+    setActionMessage(null);
+    try { setActionMessage(await cancelVacationRequest(id, administrative)); }
+    catch { setActionMessage("No se pudo verificar el resultado. Recarga la ficha antes de volver a intentar."); }
+    finally { setBusyRequest(null); }
+  }
   async function action(id: string, endpoint: string, body: Record<string, unknown> = {}) {
     const response = await fetch(`/api/hr/vacations/${id}/${endpoint}`, {
       body: JSON.stringify(body),
@@ -1412,8 +1434,14 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
         <VacationSummary employee={employee} periods={periods} />
         {certifiedCutoff && certifiedCutoff <= vacationToday() ? (
           <div className="my-4">
-            <h4 className="mb-2 text-sm font-semibold text-brand-900">Movimientos despues del corte</h4>
-            <VacationMovements movements={movements.filter(item => (item.effectiveDate ?? item.createdAt.slice(0, 10)) >= certifiedCutoff)} />
+            <h4 className="mb-2 text-sm font-semibold text-brand-900">MOVIMIENTOS OPERATIVOS DESPUÉS DEL CORTE</h4>
+            <VacationMovements movements={operationalMovements} />
+            <details className="mt-4 rounded-md border border-[#dfe4dd] p-3">
+              <summary className="cursor-pointer text-sm font-semibold text-brand-900">HISTORIAL ANTERIOR AL SALDO CERTIFICADO ({historicalMovements.length})</summary>
+              <p className="my-2 text-xs text-[#667068]">Trazabilidad histórica. Estos registros no se descuentan nuevamente del saldo certificado.</p>
+              <div className="max-h-96 overflow-y-auto"><VacationMovements movements={historicalMovements} absorbedRequestIds={activeOpening?.absorbedRequestIds} /></div>
+            </details>
+            {unclassifiedMovements.length ? <details className="mt-3"><summary className="cursor-pointer text-sm">Movimientos sin fecha operativa verificada ({unclassifiedMovements.length})</summary><VacationMovements movements={unclassifiedMovements} /></details> : null}
           </div>
         ) : null}
         <VacationRequestForm employeeId={employee.id} submitJson={submitJson} />
@@ -1429,6 +1457,7 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
         </div>
         <div className="mt-4">
           <p className="mb-2 text-sm font-semibold text-brand-900">Comprobantes recientes</p>
+          {actionMessage ? <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-brand-900" role="status">{actionMessage}</p> : null}
           <div className="max-h-[460px] max-w-full space-y-3 overflow-y-auto pr-1">
             {vacations.map((vacation) => (
               <div className="min-w-0 max-w-full overflow-hidden rounded-md border border-[#dfe4dd] bg-white p-3 text-sm" key={vacation.id}>
@@ -1441,18 +1470,21 @@ function EmployeeVacationsTab({ cancelVacationRequest, data, employee, submitJso
                       <p>Retorno: <span className="font-semibold text-[#3f4a43]">{vacation.returnToWorkDate ?? "por confirmar"}</span></p>
                       <p className="mt-1">Documento:</p>
                       <p className="break-words font-semibold text-brand-900">{vacation.documentNumber ?? "Pendiente"}</p>
+                      {vacationCancellationMode(vacation, activeOpening, vacationToday()) === "administrative" ? <p className="font-semibold text-brand-700">HISTÓRICO · ABSORBIDO EN SALDO CERTIFICADO</p> : null}
                     </div>
                   </div>
-                  <Pill className={statusClass(vacation.status)}>{vacation.status}</Pill>
+                  <Pill className={statusClass(vacation.status)}>{vacation.administrativeCancellation ? "ANULADO ADMINISTRATIVAMENTE" : vacation.status}</Pill>
                 </div>
                 <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <a className="inline-flex min-h-9 w-full items-center justify-center rounded-md border border-brand-700 px-2.5 py-1.5 text-center text-xs font-semibold text-brand-700" href={`/api/hr/vacations/${vacation.id}/papeleta?format=html`} rel="noreferrer" target="_blank">Vista previa</a>
                   <a className="inline-flex min-h-9 w-full items-center justify-center rounded-md border border-brand-700 px-2.5 py-1.5 text-center text-xs font-semibold text-brand-700" href={`/api/hr/vacations/${vacation.id}/papeleta?format=html#print`} rel="noreferrer" target="_blank">Imprimir</a>
                   <a className="inline-flex min-h-9 w-full items-center justify-center gap-1 rounded-md bg-brand-700 px-2.5 py-1.5 text-center text-xs font-semibold text-white" href={`/api/hr/vacations/${vacation.id}/papeleta?format=pdf`} rel="noreferrer" target="_blank">PDF <Download className="h-3.5 w-3.5" /></a>
                   {["borrador", "solicitada", "pendiente"].includes(vacation.status) ? <button className="min-h-9 w-full rounded-md border border-emerald-300 px-2.5 py-1.5 text-xs font-semibold text-emerald-700" onClick={() => action(vacation.id, "approve")} type="button">Aprobar</button> : null}
-                  {!["aprobada", "rechazada", "anulada"].includes(vacation.status) ? <button className="min-h-9 w-full rounded-md border border-amber-300 px-2.5 py-1.5 text-xs font-semibold text-amber-700" onClick={() => action(vacation.id, "reject", { reason: "Rechazo registrado desde RRHH" })} type="button">Rechazar</button> : null}
-                  <button className="min-h-9 w-full rounded-md border border-rose-300 px-2.5 py-1.5 text-xs font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-50" disabled={isCancelledVacationRequest(vacation.status)} onClick={() => cancelVacationRequest(vacation.id)} type="button">{isCancelledVacationRequest(vacation.status) ? "Solicitud anulada" : "Anular solicitud"}</button>
+                  {!["aprobada", "rechazada"].includes(vacation.status) && !isCancelledVacationRequest(vacation.status) ? <button className="min-h-9 w-full rounded-md border border-amber-300 px-2.5 py-1.5 text-xs font-semibold text-amber-700" onClick={() => action(vacation.id, "reject", { reason: "Rechazo registrado desde RRHH" })} type="button">Rechazar</button> : null}
+                  <button className="min-h-9 w-full rounded-md border border-rose-300 px-2.5 py-1.5 text-xs font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-50" disabled={isCancelledVacationRequest(vacation.status) || Boolean(busyRequest) || vacationCancellationMode(vacation, activeOpening, vacationToday()) === "historical_review"} onClick={() => cancel(vacation.id, vacationCancellationMode(vacation, activeOpening, vacationToday()) === "administrative")} type="button">{vacation.administrativeCancellation ? "Anulado administrativamente" : isCancelledVacationRequest(vacation.status) ? "Solicitud anulada" : busyRequest === vacation.id ? "Registrando…" : vacationCancellationMode(vacation, activeOpening, vacationToday()) === "administrative" ? "ANULAR ADMINISTRATIVAMENTE" : vacationCancellationMode(vacation, activeOpening, vacationToday()) === "historical_review" ? "REQUIERE GESTIÓN HISTÓRICA" : "Anular solicitud"}</button>
                 </div>
+                {["administrative", "historical_review"].includes(vacationCancellationMode(vacation, activeOpening, vacationToday())) ? <p className="mt-2 text-xs text-[#667068]">{LEGACY_VACATION_REVIEW_MESSAGE}</p> : null}
+                {vacation.administrativeCancellation ? <p className="mt-2 break-words text-xs text-[#667068]">{vacation.administrativeCancellation.cancelledAt} · Usuario: {vacation.administrativeCancellation.cancelledBy} · {vacation.administrativeCancellation.reason} · Efecto en saldo: 0 días. PDF original conservado.</p> : null}
               </div>
             ))}
             {!vacations.length ? <p className="rounded-md border border-dashed border-[#dfe4dd] p-4 text-sm text-[#667068]">Sin comprobantes de feriado para este trabajador.</p> : null}

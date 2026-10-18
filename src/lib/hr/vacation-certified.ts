@@ -2,6 +2,7 @@ import { ageInCompletedYears, calculateProgressiveDays, type ProgressiveRecord, 
 import { parseVacationDays } from "./vacation-days.ts";
 
 export type CertifiedOpeningBalance = Readonly<{
+  absorbedRequestIds?: readonly string[];
   entitlementChanges?: ReadonlyArray<{ effectiveFrom: string; progressiveDaysCurrent: number; recognizedPreviousYears: number | null; annualEntitlementOverride: number | null }>;
   id: string;
   employeeId: string;
@@ -78,7 +79,7 @@ export function certifiedVacationSummary(opening: CertifiedOpeningBalance, persi
 }
 
 export function mapCertifiedOpening(row: Record<string, unknown>): CertifiedOpeningBalance {
-  return Object.freeze({ entitlementChanges: ((row.entitlement_changes ?? []) as Array<Record<string, unknown>>).map(c => ({effectiveFrom:String(c.effective_from),
+  return Object.freeze({ absorbedRequestIds: (row.absorbed_request_ids ?? []) as string[], entitlementChanges: ((row.entitlement_changes ?? []) as Array<Record<string, unknown>>).map(c => ({effectiveFrom:String(c.effective_from),
     progressiveDaysCurrent:Number(c.progressive_days_current),recognizedPreviousYears:c.recognized_previous_years==null?null:Number(c.recognized_previous_years),
     annualEntitlementOverride:c.annual_entitlement_override==null?null:Number(c.annual_entitlement_override)})),
     id: String(row.id), employeeId: String(row.employee_id), tenantId: String(row.tenant_id),

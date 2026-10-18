@@ -76,6 +76,8 @@ export type HrPayslip = {
 };
 
 export type HrVacationRequest = {
+  openingBalanceId?: string | null;
+  administrativeCancellation?: { cancelledAt: string; cancelledBy: string; reason: string; balanceEffect: number } | null;
   id: string;
   employeeId: string;
   employeeName: string;
@@ -145,6 +147,15 @@ export type HrVacationLedger = {
 };
 
 export type HrVacationMovement = {
+  requestId?: string | null;
+  requestStartDate?: string | null;
+  requestEndDate?: string | null;
+  requestStatus?: string | null;
+  documentNumber?: string | null;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  periodEarnedOn?: string | null;
+  periodOpeningBalanceId?: string | null;
   id: string;
   employeeId: string;
   movementType: string;
@@ -440,7 +451,7 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
       .order("created_at", { ascending: false }),
     supabase
       .from("hr_vacation_requests")
-      .select("id,employee_id,start_date,end_date,business_days,previous_balance,resulting_balance,status,observation,projected_business_days,advance_days,last_counted_vacation_date,effective_rest_end_date,return_to_work_date,document_number,receipt_number,receipt_status,hr_employees(full_name)")
+      .select("id,employee_id,start_date,end_date,business_days,previous_balance,resulting_balance,status,observation,projected_business_days,advance_days,last_counted_vacation_date,effective_rest_end_date,return_to_work_date,document_number,receipt_number,receipt_status,certified_opening_balance_id,hr_employees(full_name)")
       .eq("tenant_id", ctx.tenantId)
       .order("start_date", { ascending: false })
       .limit(80),
@@ -499,7 +510,7 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
     ,
     supabase
       .from("hr_vacation_movements")
-      .select("id,employee_id,movement_type,effective_date,days,previous_balance,resulting_balance,source,source_reference,notes,created_at")
+      .select("id,employee_id,request_id,movement_type,effective_date,days,previous_balance,resulting_balance,source,source_reference,notes,created_at,hr_vacation_requests(start_date,end_date,status,document_number),hr_vacation_periods(period_start,period_end,earned_on,certified_opening_balance_id)")
       .eq("tenant_id", ctx.tenantId)
       .order("created_at", { ascending: false })
       .limit(120)
@@ -520,6 +531,11 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
   ]);
 
   const certifiedStates = await loadCertifiedVacationStates(supabase, ctx.tenantId);
+  const adminCancellations = await supabase.from("hr_vacation_administrative_cancellations")
+    .select("request_id,administrative_cancelled_at,administrative_cancelled_by,administrative_cancel_reason,balance_effect")
+    .eq("tenant_id", ctx.tenantId);
+  if (adminCancellations.error) throw new Error("hr_vacation_administrative_state_unavailable");
+  const cancellationByRequest = new Map((adminCancellations.data ?? []).map(row => [row.request_id, row]));
   const employees = ((employeeRows ?? []) as RawEmployee[]).map(row => ({ ...mapEmployee(row),
     certifiedVacationOpening: certifiedStates.find(state => state.opening.employeeId === row.id)?.opening }));
   const productiveEmployees = employees.filter(isProductiveHrEmployee);
@@ -545,6 +561,13 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
     storagePath: row.storage_path
   }));
   const vacations = (vacationRows ?? []).map((row) => ({
+    openingBalanceId: row.certified_opening_balance_id,
+    administrativeCancellation: cancellationByRequest.has(row.id) ? {
+      cancelledAt: cancellationByRequest.get(row.id)!.administrative_cancelled_at,
+      cancelledBy: cancellationByRequest.get(row.id)!.administrative_cancelled_by,
+      reason: cancellationByRequest.get(row.id)!.administrative_cancel_reason,
+      balanceEffect: Number(cancellationByRequest.get(row.id)!.balance_effect)
+    } : null,
     advanceDays: Number(row.advance_days ?? 0),
     businessDays: Number(row.business_days ?? 0),
     documentNumber: row.document_number ?? row.receipt_number,
@@ -561,7 +584,7 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
     returnToWorkDate: row.return_to_work_date,
     resultingBalance: Number(row.resulting_balance ?? 0),
     startDate: row.start_date,
-    status: row.status
+    status: cancellationByRequest.has(row.id) ? "anulada_administrativamente" : row.status
   }));
   const paymentItems = (paymentRows ?? []).map((row) => ({
     accountNumber: row.account_number ?? null,
@@ -683,19 +706,32 @@ export async function getHrDashboardData(selectedPeriod?: string): Promise<HrDas
       usedDays: period.usedDays ?? 0, reservedDays: period.reservedDays ?? 0, advanceDays: period.advanceDays ?? 0,
       continuousBlockRequired: period.continuousBlockRequired ?? 10, continuousBlockUsed: period.continuousBlockUsed ?? 0, status: period.status ?? "open" });
   }
-  const vacationMovements = (vacationMovementRows ?? []).map((row) => ({
-    createdAt: row.created_at,
-    days: Number(row.days ?? 0),
-    effectiveDate: row.effective_date,
-    employeeId: row.employee_id,
-    id: row.id,
-    movementType: row.movement_type,
-    notes: row.notes,
-    previousBalance: Number(row.previous_balance ?? 0),
-    resultingBalance: Number(row.resulting_balance ?? 0),
-    source: row.source,
-    sourceReference: row.source_reference
-  }));
+  const vacationMovements = (vacationMovementRows ?? []).map((row) => {
+    const request = Array.isArray(row.hr_vacation_requests) ? row.hr_vacation_requests[0] : row.hr_vacation_requests;
+    const period = Array.isArray(row.hr_vacation_periods) ? row.hr_vacation_periods[0] : row.hr_vacation_periods;
+    return {
+      requestId: row.request_id,
+      requestStartDate: request?.start_date,
+      requestEndDate: request?.end_date,
+      requestStatus: cancellationByRequest.has(row.request_id) ? "anulada_administrativamente" : request?.status,
+      documentNumber: request?.document_number,
+      periodStart: period?.period_start,
+      periodEnd: period?.period_end,
+      periodEarnedOn: period?.earned_on,
+      periodOpeningBalanceId: period?.certified_opening_balance_id,
+      createdAt: row.created_at,
+      days: Number(row.days ?? 0),
+      effectiveDate: row.effective_date,
+      employeeId: row.employee_id,
+      id: row.id,
+      movementType: row.movement_type,
+      notes: row.notes,
+      previousBalance: Number(row.previous_balance ?? 0),
+      resultingBalance: Number(row.resulting_balance ?? 0),
+      source: row.source,
+      sourceReference: row.source_reference
+    };
+  });
   const vacationProgressiveRecords = (progressiveRows ?? []).map((row) => ({
     accreditationDate: row.accreditation_date,
     createdAt: row.created_at,

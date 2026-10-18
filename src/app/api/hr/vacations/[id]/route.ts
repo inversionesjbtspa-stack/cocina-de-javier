@@ -4,6 +4,7 @@ import { requireHrContext } from "@/lib/hr/auth";
 import { isCancelledVacationRequest } from "@/lib/hr/vacation-domain";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { vacationActionMessage } from "@/lib/hr/vacation-history";
 
 export const runtime = "nodejs";
 
@@ -65,7 +66,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (isCancelledVacationRequest(current.status) && result.error.message.includes("vacation_already_cancelled")) {
       return NextResponse.json({ ok: true, result: { already_cancelled: true, status: current.status } });
     }
-    return NextResponse.json({ ok: false, error: result.error.message }, { status: 422 });
+    return NextResponse.json({ ok: false, code: result.error.message, error: vacationActionMessage(result.error.message) }, { status: 422 });
   }
   if (!isCancelledVacationRequest(current.status)) {
     return NextResponse.json({ ok: false, error: "vacation_cancel_not_persisted", status: current.status }, { status: 409 });
