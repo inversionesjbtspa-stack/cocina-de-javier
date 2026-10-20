@@ -124,7 +124,7 @@ try {
   const economic=(await db.query('select hr_cancel_vacation_request($1,$2) result',[normalRequest,'Normal fixture'])).rows[0].result;
   check('Normal post-cutoff economic reversal remains functional',Number(economic.reversed_days)===5);
   check('Normal cancellation restores its actual certified bucket',(await db.query('select available_balance from hr_vacation_periods where id=$1',[normalPeriod])).rows[0].available_balance==='27.5');
-  if(process.argv[4]==='--credit') {
+  if(['--credit','--overlap'].includes(process.argv[4])) {
     await db.query(extract(certified,'hr_sync_certified_vacation_periods'));
     await db.query('update hr_vacation_periods set base_days=0,positive_adjustments=27.5,period_start=current_date,period_end=current_date where id=$1',[normalPeriod]);
     const creditMigration=await fs.readFile('supabase/migrations/202610180002_hr_vacation_administrative_credit.sql','utf8');
@@ -191,6 +191,50 @@ try {
     await db.query("insert into hr_vacation_movements(tenant_id,employee_id,request_id,movement_type,days,source,vacation_period_id)values($1,$2,$3,'manual_refund',5,'manual',$4)",[tenant,id(16),id(19),freshBucket[0].id]);
     await rejected(withMode,[id(19),'Must not double prior credit',true],'administrative_prior_credit_requires_review');
     check('Another positive adjustment for the same request blocks automatic credit',true);
+  }
+  if(process.argv[4]==='--overlap') {
+    const migration=await fs.readFile('supabase/migrations/202610200001_hr_vacation_overlap_administrative.sql','utf8');
+    const snapshot=JSON.stringify((await db.query(stateSql)).rows[0].state);
+    await db.query(migration);await db.query(migration);
+    check('Overlap migration is repeatable and changes no business rows',JSON.stringify((await db.query(stateSql)).rows[0].state)===snapshot);
+    const start=(await db.query('select start_date::text as date_value from hr_vacation_requests where id=$1',[request])).rows[0].date_value;
+    const end=(await db.query('select end_date::text as date_value from hr_vacation_requests where id=$1',[request])).rows[0].date_value;
+    const overlap='select hr_vacation_has_overlap($1,$2,$3::date,$4::date,$5) result';
+    const args=[tenant,employee,start,end,null];
+    check('Administratively cancelled original approved request never blocks',(await db.query(overlap,args)).rows[0].result===false);
+    const fixture=id(30);
+    await db.query("insert into hr_vacation_requests(id,tenant_id,employee_id,status,start_date,end_date,certified_opening_balance_id)values($1,$2,$3,'aprobada',$4,$5,$6)",[fixture,tenant,employee,start,end,opening]);
+    for(const status of ['solicitada','pendiente','aprobada','en_curso','finalizada','anulada','rechazada','borrador']) {
+      await db.query('update hr_vacation_requests set status=$1 where id=$2',[status,fixture]);
+      const expected=['solicitada','pendiente','aprobada','en_curso','finalizada'].includes(status);
+      check('Database overlap status '+status+' = '+expected,(await db.query(overlap,args)).rows[0].result===expected);
+    }
+    await db.query("update hr_vacation_requests set status='aprobada' where id=$1",[fixture]);
+    check('Excluding self prevents self-overlap',(await db.query(overlap,[...args.slice(0,4),fixture])).rows[0].result===false);
+    check('Inclusive boundary remains blocking',(await db.query(overlap,[tenant,employee,end,end,null])).rows[0].result===true);
+    check('Adjacent non-overlapping dates allowed',(await db.query('select hr_vacation_has_overlap($1,$2,$3::date+1,$3::date+2,null) result',[tenant,employee,end])).rows[0].result===false);
+    check('Unrelated tenant cannot contribute overlap',(await db.query(overlap,[otherTenant,employee,start,end,null])).rows[0].result===false);
+    const wrapper='select hr_preview_vacation_overlap($1,$2,$3) result';
+    await db.query("select set_config('test.user',$1,false)",[user]);await db.query('set role authenticated');
+    check('Authenticated preview uses same active-overlap result',(await db.query(wrapper,[employee,start,end])).rows[0].result===true);
+    await rejected(wrapper,[employee,end,start],'invalid_vacation_date_range');
+    check('Invalid dates fail closed',true);
+    await db.query('reset role');
+    await db.query("update hr_vacation_requests set status='rechazada' where id=$1",[fixture]);
+    await db.query('set role authenticated');
+    check('Authenticated preview ignores cancelled administrative and rejected requests',(await db.query(wrapper,[employee,start,end])).rows[0].result===false);
+    await db.query('reset role');await db.query("select set_config('test.user',$1,false)",[otherUser]);await db.query('set role authenticated');
+    await rejected(wrapper,[employee,start,end],'employee_not_found');check('Preview denies cross-tenant employee',true);
+    await db.query('reset role');await db.query("select set_config('test.user',$1,false)",[viewer]);await db.query('set role authenticated');
+    await rejected(wrapper,[employee,start,end],'hr_forbidden');check('Preview denies unprivileged actor',true);
+    await db.query('reset role');await db.query("select set_config('test.user','',false)");await db.query('set role authenticated');
+    await rejected(wrapper,[employee,start,end],'unauthorized');check('Preview denies absent identity',true);
+    await db.query('reset role');
+    check('Anonymous and service-role cannot call preview',(await db.query("select not has_function_privilege('anon','hr_preview_vacation_overlap(uuid,date,date)','EXECUTE') and not has_function_privilege('service_role','hr_preview_vacation_overlap(uuid,date,date)','EXECUTE') ok")).rows[0].ok);
+    const beforePreview=JSON.stringify((await db.query(stateSql)).rows[0].state);
+    await db.query("select set_config('test.user',$1,false)",[user]);await db.query('set role authenticated');
+    await db.query(wrapper,[employee,start,end]);await db.query('reset role');
+    check('Preview does not mutate requests, balances, FIFO, certificates or PDFs',JSON.stringify((await db.query(stateSql)).rows[0].state)===beforePreview);
   }
   await fs.mkdir(process.argv[3],{recursive:true});
   const summary={database,target:'127.0.0.1:55439',production:false,passed:checks.length,failed:0,checks,productionCancellations:0};

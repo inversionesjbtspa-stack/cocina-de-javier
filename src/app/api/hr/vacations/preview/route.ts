@@ -8,6 +8,7 @@ import { activeCertifiedVacationState, loadCertifiedVacationStates } from "@/lib
 import { certifiedAnnualEntitlement, vacationToday } from "@/lib/hr/vacation-certified";
 import { uncertifiedVacationPreview, vacationCertificationBlock } from "@/lib/hr/vacation-certification-policy";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
@@ -111,19 +112,16 @@ export async function POST(request: Request) {
       schedule: workingCalendar.schedule,
       startDate: body.startDate
     });
-    const { data: overlappingRequests, error: overlapError } = await supabase
-      .from("hr_vacation_requests")
-      .select("id")
-      .eq("tenant_id", ctx.membership.tenant_id)
-      .eq("employee_id", body.employeeId)
-      .in("status", ["solicitada", "pendiente", "aprobada", "en_curso"])
-      .lte("start_date", preview.effectiveRestEndDate)
-      .gte("end_date", body.startDate)
-      .limit(1);
+    const authenticated = await createClient();
+    const { data: hasOverlap, error: overlapError } = await authenticated.rpc("hr_preview_vacation_overlap", {
+      p_employee_id: body.employeeId,
+      p_start_date: body.startDate,
+      p_end_date: preview.effectiveRestEndDate
+    });
     const routeBlockingWarnings = [
       ...(preview.blockingWarnings ?? []),
-      overlapError ? "vacation_overlap_check_failed" : null,
-      overlappingRequests?.length ? "vacation_overlap" : null
+      overlapError || typeof hasOverlap !== "boolean" ? "vacation_overlap_check_failed" : null,
+      hasOverlap === true ? "vacation_overlap" : null
     ].filter((warning): warning is string => Boolean(warning));
     const uniqueBlockingWarnings = [...new Set(routeBlockingWarnings)];
     const canConfirm = preview.canConfirm && uniqueBlockingWarnings.length === 0;

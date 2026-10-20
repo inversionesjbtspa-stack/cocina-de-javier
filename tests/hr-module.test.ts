@@ -686,8 +686,11 @@ test("HR vacation preview allows separate same-month fractions only with valid a
   const domain = await readFile("src/lib/hr/vacation-domain.ts", "utf8");
   const previewRoute = await readFile("src/app/api/hr/vacations/preview/route.ts", "utf8");
   assert.doesNotMatch(`${domain}\n${previewRoute}`, /sameMonth|existingVacationInMonth|oneVacationPerMonth/);
-  assert.match(previewRoute, /\.lte\("start_date", preview\.effectiveRestEndDate\)/);
-  assert.match(previewRoute, /\.gte\("end_date", body\.startDate\)/);
+  assert.match(previewRoute, /p_end_date: preview\.effectiveRestEndDate/);
+  assert.match(previewRoute, /p_start_date: body\.startDate/);
+  const overlapSql = await readFile("supabase/migrations/202610200001_hr_vacation_overlap_administrative.sql", "utf8");
+  assert.match(overlapSql, /request\.start_date <= p_end_date/);
+  assert.match(overlapSql, /request\.end_date >= p_start_date/);
 });
 
 test("HR vacation fractionation UI and receipt expose actionable agreement state", async () => {
