@@ -86,7 +86,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
   const pdf = renderVacationReceiptPdf(model);
   if (url.searchParams.get("persist") === "1" && data.status === "aprobada") {
-    const storagePath = `tenants/${ctx.membership.tenant_id}/employees/${employee?.id ?? "sin-empleado"}/vacations/${id}/${model.receiptNumber ?? "sin-correlativo"}.pdf`;
+    const correctionId = snapshot?.holidayCorrection?.id;
+    const suffix = correctionId ? `corrections/${correctionId}.pdf` : `${model.receiptNumber ?? "sin-correlativo"}.pdf`;
+    const storagePath = `tenants/${ctx.membership.tenant_id}/employees/${employee?.id ?? "sin-empleado"}/vacations/${id}/${suffix}`;
     const upload = await supabase.storage.from("hr-vacation-documents").upload(storagePath, pdf, {
       contentType: "application/pdf",
       upsert: true

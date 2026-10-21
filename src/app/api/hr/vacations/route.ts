@@ -101,7 +101,8 @@ export async function POST(request: Request) {
   const { data: company } = await supabase.from("companies").select("legal_name,name,rut,address,phone").eq("id", ctx.membership.company_id).maybeSingle();
   const { data: periodRows } = await supabase.from("hr_vacation_periods").select("*").eq("tenant_id", ctx.membership.tenant_id).eq("employee_id", body.employeeId);
   const { data: progressiveRows } = await supabase.from("hr_vacation_progressive_records").select("previous_employer_years,credited_months,accreditation_date,effective_from,recognized_days,status").eq("tenant_id", ctx.membership.tenant_id).eq("employee_id", body.employeeId);
-  const { data: holidayRows } = await supabase.from("hr_holiday_calendar").select("*").eq("status", "active");
+  const { data: holidayRows, error: holidayError } = await supabase.from("hr_holiday_calendar").select("*").eq("status", "active").or(`tenant_id.is.null,tenant_id.eq.${ctx.membership.tenant_id}`);
+  if (holidayError) return NextResponse.json({ ok: false, error: "holiday_calendar_unavailable" }, { status: 503 });
   const { data: calendarRows } = await supabase.from("hr_holiday_calendar_years").select("calendar_year,verification_status").in("calendar_year", calendarYears);
   const checked = assertEmployeeInTenant(employee, ctx.membership.tenant_id);
   if (!checked.ok) return NextResponse.json({ ok: false, error: checked.error }, { status: 404 });

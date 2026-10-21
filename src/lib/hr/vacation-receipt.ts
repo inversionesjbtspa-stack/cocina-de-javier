@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
 import type { HrCompanyConfig } from "./company-config.ts";
-import { businessDaysInclusive } from "./utils.ts";
 
 export type VacationPeriodAllocation = {
   allocatedDays?: number;
@@ -164,7 +163,7 @@ export function buildVacationReceiptModel(input: VacationReceiptInput) {
   return {
     ...input,
     allocations,
-    businessDays: input.businessDays || businessDaysInclusive(input.startDate, input.endDate),
+    businessDays: input.businessDays,
     documentDate,
     filename,
     fractionalVacationLabel: input.fractionalVacation ? "Si" : "No",

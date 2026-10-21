@@ -63,13 +63,14 @@ export async function POST(request: Request) {
     const supabase = createAdminClient();
     const previewEnd = body.endDate || body.startDate;
     const calendarYears = yearsInRange(body.startDate, previewEnd);
-    const [{ data: employee }, { data: periodRows }, { data: progressiveRows }, { data: holidayRows }, { data: calendarRows }] = await Promise.all([
+    const [{ data: employee }, { data: periodRows }, { data: progressiveRows }, { data: holidayRows, error: holidayError }, { data: calendarRows }] = await Promise.all([
       supabase.from("hr_employees").select("id,tenant_id,full_name,rut,hire_date,work_schedule").eq("tenant_id", ctx.membership.tenant_id).eq("id", body.employeeId).maybeSingle(),
       supabase.from("hr_vacation_periods").select("*").eq("tenant_id", ctx.membership.tenant_id).eq("employee_id", body.employeeId),
       supabase.from("hr_vacation_progressive_records").select("previous_employer_years,credited_months,accreditation_date,effective_from,recognized_days,status").eq("tenant_id", ctx.membership.tenant_id).eq("employee_id", body.employeeId),
-      supabase.from("hr_holiday_calendar").select("*").eq("status", "active"),
+      supabase.from("hr_holiday_calendar").select("*").eq("status", "active").or(`tenant_id.is.null,tenant_id.eq.${ctx.membership.tenant_id}`),
       supabase.from("hr_holiday_calendar_years").select("calendar_year,verification_status").in("calendar_year", calendarYears)
     ]);
+    if (holidayError) return domainError("HOLIDAY_CALENDAR_UNAVAILABLE", "No se pudo verificar el calendario legal de feriados.", 503);
     const checked = assertEmployeeInTenant(employee, ctx.membership.tenant_id);
     if (!checked.ok) return domainError("EMPLOYEE_NOT_FOUND", "No se encontro el trabajador en este tenant.", 404);
     const employeeRow = checked.employee as Record<string, unknown> & { hire_date?: string | null; id: string; tenant_id?: string | null };

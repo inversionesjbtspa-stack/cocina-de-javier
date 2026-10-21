@@ -1,6 +1,5 @@
 import { companyConfigFromRow, mergeCompanyConfig } from "./company-config.ts";
 import {
-  CHILE_HOLIDAYS_FIXTURE,
   calculateProjectedProportional,
   calculateProgressiveDays,
   calculateVacationPreview,
@@ -283,6 +282,7 @@ export async function fetchVacationReceiptAllocations(supabase: unknown, tenantI
 }
 
 export async function persistVacationReceiptForRequest(input: {
+  correctionId?: string;
   companyId: string;
   requestId: string;
   supabase: VacationReceiptPersistenceClient;
@@ -346,7 +346,8 @@ export async function persistVacationReceiptForRequest(input: {
     startDate: data.start_date as string
   });
   const pdf = renderVacationReceiptPdf(model);
-  const storagePath = `tenants/${input.tenantId}/employees/${employee?.id ?? "sin-empleado"}/vacations/${input.requestId}/${model.receiptNumber ?? "sin-correlativo"}.pdf`;
+  const suffix = input.correctionId ? `corrections/${input.correctionId}.pdf` : `${model.receiptNumber ?? "sin-correlativo"}.pdf`;
+  const storagePath = `tenants/${input.tenantId}/employees/${employee?.id ?? "sin-empleado"}/vacations/${input.requestId}/${suffix}`;
   const upload = await input.supabase.storage.from("hr-vacation-documents").upload(storagePath, pdf, {
     contentType: "application/pdf",
     upsert: true
@@ -368,11 +369,11 @@ export async function persistVacationReceiptForRequest(input: {
     vacation_request_id: input.requestId
   });
   if (document.error) return { ok: false as const, error: document.error.message };
-  return { ok: true as const, filename: model.filename, storagePath };
+  return { ok: true as const, filename: model.filename, storagePath, hash: vacationReceiptHash(pdf) };
 }
 
 export function safeVacationHolidays(rows: Array<Record<string, unknown>> | null | undefined) {
-  return rows?.length ? rows.map(mapHolidayRow) : CHILE_HOLIDAYS_FIXTURE;
+  return (rows ?? []).map(mapHolidayRow);
 }
 
 export function projectedByEmployee(periods: VacationPeriod[]) {
