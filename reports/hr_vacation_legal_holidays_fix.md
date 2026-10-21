@@ -22,11 +22,13 @@ Fixture: apertura inmutable 15, debito original -7, saldo 8. La correccion calcu
 
 La correccion conserva fecha, rango, progresivos y fraccionamiento, y actualiza conteos, saldo posterior y snapshot con trazabilidad. El PDF nuevo se guarda en corrections/<correction_id>.pdf; el archivo original no se sobrescribe. El mismo document_id recibe el nuevo puntero. Auditoria conserva motivo, hash/ruta anterior y nueva, usuario, timestamp, request y FER. Si falla generacion/documentacion despues del abono, queda pendiente explicito y el reintento no devuelve otro dia. Finalizacion de documento tambien idempotente.
 
+La migracion 202610210003 adapta el contrato estricto de hr_upsert_vacation_receipt_metadata: solo permite la ruta versionada si existe una correccion registrada que coincida en request, tenant, trabajador y correction_id del snapshot. Mantiene la identidad parcial unica, la ruta original para solicitudes no corregidas, bucket privado y EXECUTE exclusivamente del servidor service_role. No permite rutas arbitrarias. Esta integracion se detecto al quedar la primera ejecucion productiva en PDF pendiente; el abono no se repitio.
+
 ## Validacion
 
 - Node 24: typecheck, lint, tests y build.
 - Suite: 153 pass, 2 skipped, 0 failed.
-- PostgreSQL aislado: 20 comprobaciones PASS, 0 FAIL, incluyendo RPC real de creacion/aprobacion, movimiento -6, bloqueo de siete, correccion +1, repeticion cero, PDF auditado y anulacion posterior por seis.
+- PostgreSQL aislado: 23 comprobaciones PASS, 0 FAIL, incluyendo RPC real de creacion/aprobacion y metadata, movimiento -6, bloqueo de siete, correccion +1, repeticion cero, PDF auditado, rutas arbitrarias rechazadas y anulacion posterior por seis.
 - Conteo 09-19 octubre: 11 corridos, 6 habiles, 5 inhabiles; fin de semana y feriados sin doble conteo. Incluye feriado en lunes-viernes, sabado, domingo, inicio/fin feriado y multiples feriados.
 - Evidencia operativa privada, respaldo, auditoria de otros comprobantes y hashes fuera de Git. No aplicar correcciones a otros trabajadores sin autorizacion.
 

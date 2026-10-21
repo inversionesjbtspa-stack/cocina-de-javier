@@ -50,7 +50,8 @@ try{
  await db.query("insert into hr_vacation_allocations(id,tenant_id,employee_id,request_id,vacation_period_id,allocated_days,previous_balance,resulting_balance,allocation_order,allocation_status,allocation_type)values($1,$2,$3,$4,$5,7,15,8,1,'consumed','earned')",[allocation,tenant,employee,request,period]);
  await db.query("insert into hr_vacation_movements(tenant_id,employee_id,request_id,vacation_period_id,movement_type,days,previous_balance,resulting_balance)values($1,$2,$3,$4,'aprobacion',-7,15,8)",[tenant,employee,request,period]);
  await db.query("insert into hr_vacation_documents(tenant_id,employee_id,vacation_request_id,document_type,file_sha256,storage_path)values($1,$2,$3,'comprobante_feriado',repeat('a',64),'original.pdf')",[tenant,employee,request]);
- for(const file of ['202610210001_hr_verified_legal_holidays.sql','202610210002_hr_vacation_holiday_correction.sql']){const sql=await fs.readFile('supabase/migrations/'+file,'utf8');await db.query(sql);await db.query(sql);check(file+' repeatable',true);}
+ await db.query("create unique index hr_vacation_receipt_metadata_identity_uidx on hr_vacation_documents(tenant_id,vacation_request_id,document_type) where document_type='comprobante_feriado'");
+ for(const file of ['202610210001_hr_verified_legal_holidays.sql','202610210002_hr_vacation_holiday_correction.sql','202610210003_hr_holiday_receipt_versioned_path.sql']){const sql=await fs.readFile('supabase/migrations/'+file,'utf8');await db.query(sql);await db.query(sql);check(file+' repeatable',true);}
  check('All sixteen national holidays persisted',(await db.query('select count(distinct holiday_date)::int n from hr_holiday_calendar')).rows[0].n===16);
  check('Legal database count is six',(await db.query("select hr_legal_vacation_business_days($1,'2026-10-09','2026-10-19') n",[tenant])).rows[0].n===6);
  await db.query("select set_config('test.user',$1,false),set_config('test.tenant',$2,false),set_config('test.company',$3,false)",[user,tenant,company]);
@@ -65,9 +66,13 @@ try{
  check('Certificate unchanged',(await db.query('select balance_days from hr_vacation_certified_openings where id=$1',[opening])).rows[0].balance_days==='15.0000');
  check('Request and allocation both six',(await db.query('select business_days=6 and non_business_days=5 and resulting_balance=9 ok from hr_vacation_requests where id=$1',[request])).rows[0].ok&&(await db.query('select allocated_days=6 ok from hr_vacation_allocations where id=$1',[allocation])).rows[0].ok);
  check('Only one correction credit',(await db.query("select count(*)::int n from hr_vacation_movements where movement_type='legal_holiday_correction_credit'")).rows[0].n===1);
- const newPath='fixture/corrections/'+result.id+'.pdf';
+ const newPath=`tenants/${tenant}/employees/${employee}/vacations/${request}/corrections/${result.id}.pdf`;
  await rejected('select hr_complete_vacation_holiday_document($1,$2,$3)',[result.id,'b'.repeat(64),newPath],'holiday_document_mismatch');check('Document finalization rejects unpersisted hash',true);
- await db.query('update hr_vacation_documents set file_sha256=$1,storage_path=$2 where vacation_request_id=$3',['b'.repeat(64),newPath,request]);
+ const metadata={tenant_id:tenant,employee_id:employee,vacation_request_id:request,document_type:'comprobante_feriado',storage_bucket:'hr-vacation-documents',storage_path:newPath,mime_type:'application/pdf',file_sha256:'b'.repeat(64),file_size:1234,file_name:'fixture.pdf',generated_by:user,immutable_snapshot:{businessDays:6,nonBusinessDays:5,resultingBalance:9}};
+ await rejected('select hr_upsert_vacation_receipt_metadata($1)',[{...metadata,storage_path:'arbitrary.pdf'}],'invalid_vacation_receipt_metadata');check('Arbitrary receipt path remains rejected',true);
+ const oldDoc=(await db.query('select id from hr_vacation_documents where vacation_request_id=$1',[request])).rows[0].id;
+ const updatedDoc=(await db.query('select hr_upsert_vacation_receipt_metadata($1) id',[metadata])).rows[0].id;
+ check('Real metadata RPC accepts only registered versioned path and preserves document ID',updatedDoc===oldDoc);
  await db.query('select hr_complete_vacation_holiday_document($1,$2,$3)',[result.id,'b'.repeat(64),newPath]);
  await db.query('select hr_complete_vacation_holiday_document($1,$2,$3)',[result.id,'b'.repeat(64),newPath]);
  check('One document audit preserves old/new hashes, reason and previous path',(await db.query("select count(*)::int n from audit_events where event_type='hr.vacation_holiday_document_corrected' and after_data->>'previous_hash'=$1 and after_data->>'new_hash'=$2",['a'.repeat(64),'b'.repeat(64)])).rows[0].n===1);

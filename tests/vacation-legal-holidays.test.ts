@@ -45,6 +45,9 @@ test("correction preserves opening and old movement, versions document, and canc
   assert.match(sql,/used_days=used_days-delta/);assert.match(sql,/allocated_days=correct_days/);
   assert.doesNotMatch(sql,/update public\.hr_vacation_(?:certified_openings|movements)\b/i);
   assert.match(sql,/previous_hash/);assert.match(sql,/previous_path/);assert.match(sql,/corrected_by/);
+  const metadata=fs.readFileSync("supabase/migrations/202610210003_hr_holiday_receipt_versioned_path.sql","utf8");
+  assert.match(metadata,/c\.request_id=r\.id and c\.tenant_id=r\.tenant_id and c\.employee_id=r\.employee_id/);
+  assert.match(metadata,/storage_path' is distinct from expected_path/);
   const route=fs.readFileSync("src/app/api/hr/vacations/[id]/holiday-correction/route.ts","utf8");
   assert.match(route,/authenticated\.rpc\("hr_correct_vacation_legal_holidays"/);
   assert.doesNotMatch(route,/hr_create_vacation_request|hr_approve_vacation_request/);
