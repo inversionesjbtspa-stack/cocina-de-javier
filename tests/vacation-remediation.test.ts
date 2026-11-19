@@ -121,7 +121,16 @@ test("metadata migration preserves legacy duplicates, RLS, grants and conflict p
   assert.doesNotMatch(sql,/delete from|truncate|disable row level security|grant.*to (public|anon|authenticated)/i);
 });
 
-test("tracked changes remain limited to HR vacation remediation, never Trading or bank modules",()=>{
+test("tracked changes remain limited to HR vacation remediation, never Trading or bank modules",async()=>{
   const files=execFileSync("git",["diff","HEAD","--name-only"],{encoding:"utf8"}).trim().split("\n").filter(Boolean);
-  for(const file of files)assert.match(file,/^(src\/app\/api\/hr\/vacations\/|src\/components\/hr\/(vacation-components|hr-dashboard-client)\.tsx$|src\/lib\/hr\/data\.ts$|src\/lib\/hr\/vacation-|tests\/vacation-|tests\/hr-module\.test\.ts$|scripts\/validate-vacation-|supabase\/migrations\/20261017|supabase\/migrations\/20261018000[12]_hr_vacation_administrative_(cancellation|credit)\.sql$|supabase\/migrations\/202610200001_hr_vacation_overlap_administrative\.sql$|supabase\/migrations\/20261021000[123]_hr_(verified_legal_holidays|vacation_holiday_correction|holiday_receipt_versioned_path)\.sql$|reports\/hr_vacation_)/);
+  for(const file of files){
+    if(file==="vercel.json"){
+      const previous=JSON.parse(execFileSync("git",["show","HEAD:vercel.json"],{encoding:"utf8"}));
+      const current=JSON.parse(await readFile(file,"utf8"));
+      const job={path:"/api/hr/vacations/anniversaries/materialize",schedule:"0 7 * * *"};
+      assert.deepEqual(current,{...previous,crons:[...previous.crons,job]});
+      continue;
+    }
+    assert.match(file,/^(src\/app\/api\/hr\/vacations\/|src\/components\/hr\/(vacation-components|hr-dashboard-client)\.tsx$|src\/lib\/hr\/data\.ts$|src\/lib\/hr\/vacation-|tests\/vacation-|tests\/fixtures\/vacation-anniversaries-integration\.sql$|tests\/hr-module\.test\.ts$|scripts\/validate-vacation-|supabase\/migrations\/20261017|supabase\/migrations\/20261018000[12]_hr_vacation_administrative_(cancellation|credit)\.sql$|supabase\/migrations\/202610200001_hr_vacation_overlap_administrative\.sql$|supabase\/migrations\/20261021000[123]_hr_(verified_legal_holidays|vacation_holiday_correction|holiday_receipt_versioned_path)\.sql$|supabase\/migrations\/202611180001_hr_materialize_certified_anniversaries\.sql$|reports\/hr_vacation_)/);
+  }
 });
