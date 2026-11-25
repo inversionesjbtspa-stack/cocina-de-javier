@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import type { HrDashboardData, HrEmployee } from "@/lib/hr/data";
 import { isCancelledVacationRequest, isOperationalVacationRequest, vacationPeriodIsVested } from "@/lib/hr/vacation-domain";
-import { certifiedVacationSummary, vacationToday } from "@/lib/hr/vacation-certified";
-import { VACATION_CERTIFICATION_REQUIRED_CODE, VACATION_CERTIFICATION_REQUIRED_MESSAGE, VACATION_CERTIFICATION_REQUIRED_REASON } from "@/lib/hr/vacation-certification-policy";
+import { vacationToday } from "@/lib/hr/vacation-certified";
+import { getVacationBalanceSummary } from "@/lib/hr/vacation-balance-summary";
+import { vacationCertificationBlock, VACATION_CERTIFICATION_REQUIRED_CODE, VACATION_CERTIFICATION_REQUIRED_MESSAGE, VACATION_CERTIFICATION_REQUIRED_REASON } from "@/lib/hr/vacation-certification-policy";
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -35,23 +36,29 @@ function formatDays(value: number | null | undefined) {
 
 export function VacationSummary({ employee, periods }: { employee: HrEmployee; periods: HrDashboardData["vacationPeriods"] }) {
   const asOf = vacationToday();
-  const certified = employee.certifiedVacationOpening ? certifiedVacationSummary(employee.certifiedVacationOpening, periods.map(p => ({ ...p, status: p.status as "open" | "closed" | "future" })), asOf) : null;
-  if (certified?.isActive && employee.certifiedVacationOpening) return (
+  const certified = getVacationBalanceSummary({ employeeId: employee.id, asOf, opening: employee.certifiedVacationOpening, periods: periods.map(p => ({ ...p, status: p.status as "open" | "closed" | "future" })) });
+  if (vacationCertificationBlock(asOf, certified.status === "CERTIFICADO")) return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+      <p className="text-sm font-semibold text-amber-900">REQUIERE SALDO CERTIFICADO</p>
+      <p className="mt-2 text-xs text-amber-900">{VACATION_CERTIFICATION_REQUIRED_MESSAGE}</p>
+    </div>
+  );
+  if (certified.status === "CERTIFICADO" && employee.certifiedVacationOpening) return (
     <div className="rounded-lg border border-brand-100 bg-brand-50 p-4">
       <p className="text-xs font-semibold uppercase text-[#667068]">Saldo disponible</p>
-      <p className="mt-1 text-3xl font-semibold text-brand-900">{formatDays(certified.available)}</p>
+      <p className="mt-1 text-3xl font-semibold text-brand-900">{formatDays(certified.availableBalance)}</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <MiniMetric label={`Saldo certificado al ${formatDate(employee.certifiedVacationOpening.effectiveCutoffDate)}`} value={formatDays(certified.opening)} />
-        <MiniMetric label="Devengados despues del corte" value={formatDays(certified.accrued)} />
-        <MiniMetric label="Ajustes posteriores al corte" value={`${certified.adjustments > 0 ? "+" : ""}${formatDays(certified.adjustments)}`} />
+        <MiniMetric label={`Saldo certificado al ${formatDate(employee.certifiedVacationOpening.effectiveCutoffDate)}`} value={formatDays(certified.certifiedBalance)} />
+        <MiniMetric label="Devengados despues del corte" value={formatDays(certified.accruedPostCutoff)} />
+        <MiniMetric label="Ajustes posteriores al corte" value={`${(certified.adjustments ?? 0) > 0 ? "+" : ""}${formatDays(certified.adjustments)}`} />
         <MiniMetric label="Utilizados despues del corte" value={formatDays(certified.used)} />
         <MiniMetric label="Reservados" value={formatDays(certified.reserved)} />
-        <MiniMetric label="Feriado base" value="15 dias" />
-        <MiniMetric label="Feriado progresivo" value={formatDays(certified.annual - 15)} />
-        <MiniMetric label="Derecho anual actual" value={formatDays(certified.annual)} />
+        <MiniMetric label="Feriado base" value={formatDays(certified.baseDays)} />
+        <MiniMetric label="Feriado progresivo" value={formatDays(certified.progressiveDays)} />
+        <MiniMetric label="Derecho anual actual" value={formatDays(certified.annualEntitlement)} />
         <MiniMetric label="Proxima anualidad" value={formatDate(certified.nextAnniversary)} />
       </div>
-      {certified.opening < 0 ? <p className="mt-2 text-xs text-amber-800">SALDO NEGATIVO CERTIFICADO</p> : null}
+      {(certified.certifiedBalance ?? 0) < 0 ? <p className="mt-2 text-xs text-amber-800">SALDO NEGATIVO CERTIFICADO</p> : null}
       {employee.certifiedVacationOpening.internalAlert ? <p className="mt-2 text-xs text-amber-800">{employee.certifiedVacationOpening.internalAlert}</p> : null}
     </div>
   );

@@ -4,12 +4,13 @@ import { toVacationPeriod, type VacationPeriodRowLike } from "./vacation-persist
 
 export type CertifiedVacationState = { opening: CertifiedOpeningBalance; periods: ReturnType<typeof toVacationPeriod>[] };
 
-export async function loadCertifiedVacationStates(client: Pick<SupabaseClient, "rpc">, tenantId: string) {
+export async function loadCertifiedVacationStates(client: Pick<SupabaseClient, "rpc">, tenantId: string, options: { required?: boolean } = {}) {
   const result = await client.rpc("hr_certified_vacation_states", { p_tenant_id: tenantId });
   if (result.error) {
-    if (result.error.code === "PGRST202" || result.error.code === "42883") return [] as CertifiedVacationState[];
+    if (!options.required && (result.error.code === "PGRST202" || result.error.code === "42883")) return [] as CertifiedVacationState[];
     throw new Error("certified_vacation_state_unavailable");
   }
+  if (options.required && !Array.isArray(result.data)) throw new Error("certified_vacation_state_unavailable");
   return ((result.data ?? []) as Array<{ opening: Record<string, unknown>; periods: VacationPeriodRowLike[] }>).map(state => ({
     opening: mapCertifiedOpening(state.opening), periods: state.periods.map(toVacationPeriod)
   }));

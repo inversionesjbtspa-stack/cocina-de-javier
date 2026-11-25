@@ -1,4 +1,6 @@
-import type { VacationAllocation, VacationPeriod } from "./vacation-domain.ts";
+import type { VacationAllocation } from "./vacation-domain.ts";
+import type { VacationBalanceSummary } from "./vacation-balance-summary.ts";
+import { isProductiveHrEmployee } from "./employee-filters.ts";
 
 export type VacationExportEmployee = {
   area?: string | null;
@@ -32,32 +34,56 @@ export type VacationExportMovement = {
 
 export type VacationExportData = {
   allocations?: VacationAllocation[];
+  asOf: string;
   employees: VacationExportEmployee[];
   movements: VacationExportMovement[];
-  periods: VacationPeriod[];
-  projectedByEmployee?: Map<string, number>;
+  summaries: ReadonlyMap<string, VacationBalanceSummary>;
   requests: VacationExportRequest[];
 };
 
-function cell(value: string | number | null | undefined) {
-  const text = String(value ?? "");
-  const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const type = typeof value === "number" ? "Number" : "String";
-  return `<Cell><Data ss:Type="${type}">${escaped}</Data></Cell>`;
+export function isVacationExportEmployee(employee: VacationExportEmployee) {
+  const name = employee.fullName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+  return employee.status === "activo" && isProductiveHrEmployee(employee)
+    && !/\b(CODEX|FIXTURE|FICTICIO|SYNTHETIC|TEST|PRUEBA)\b/.test(name);
 }
 
-function row(values: Array<string | number | null | undefined>) {
-  return `<Row>${values.map(cell).join("")}</Row>`;
+export const VACATION_SUMMARY_HEADERS = [
+  "Trabajador", "RUT", "Cargo", "Area", "Centro costo", "Ingreso", "Saldo certificado",
+  "Devengados post-corte", "Ajustes post-corte", "Utilizados post-corte", "Reservados",
+  "Saldo disponible", "Derecho anual", "Progresivos", "Proxima anualidad",
+  "Proporcional proyectado (dias/mes; no disponible)", "Anticipados", "Periodos informativos", "Alertas", "Estado saldo"
+];
+
+function cell(value: string | number | null | undefined, style?: string) {
+  if (value == null) return "<Cell/>";
+  if (typeof value === "number" && !Number.isFinite(value)) throw new Error("vacation_export_invalid_number");
+  const text = String(value);
+  const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const type = typeof value === "number" ? "Number" : "String";
+  return `<Cell ss:StyleID="${style ?? "Text"}"><Data ss:Type="${type}">${escaped}</Data></Cell>`;
+}
+
+function row(values: Array<string | number | null | undefined>, header = false) {
+  return `<Row${header ? ' ss:Height="48"' : ' ss:AutoFitHeight="1"'}>${values.map((value, index) => cell(value, header ? "Header" : typeof value === "number" ? (index === 15 ? "Projection" : index === 17 ? "Count" : "Days") : undefined)).join("")}</Row>`;
 }
 
 function sheet(name: string, headers: string[], rows: Array<Array<string | number | null | undefined>>) {
-  return `<Worksheet ss:Name="${name}"><Table>${row(headers)}${rows.map(row).join("")}</Table><WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>1</SplitHorizontal><TopRowBottomPane>1</TopRowBottomPane></WorksheetOptions><AutoFilter x:Range="R1C1:R1C${headers.length}" xmlns="urn:schemas-microsoft-com:office:excel"/></Worksheet>`;
+  const columns = headers.map((_, index) => `<Column ss:Width="${index === 0 ? 230 : index === 18 ? 260 : index === 19 ? 185 : index === 15 ? 145 : 110}"/>`).join("");
+  return `<Worksheet ss:Name="${name}"><Table>${columns}${row(headers, true)}${rows.map(values => row(values)).join("")}</Table><WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>1</SplitHorizontal><TopRowBottomPane>1</TopRowBottomPane></WorksheetOptions><AutoFilter x:Range="R1C1:R${rows.length + 1}C${headers.length}" xmlns="urn:schemas-microsoft-com:office:excel"/></Worksheet>`;
 }
 
 export function buildVacationExcelXml(data: VacationExportData) {
-  const employeeById = new Map(data.employees.map((employee) => [employee.id, employee]));
-  const periodRows = data.periods.map((period) => {
+  const employees = data.employees.filter(isVacationExportEmployee);
+  const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
+  if (employeeById.size !== employees.length) throw new Error("vacation_export_duplicate_employee");
+  const summaries = employees.map(employee => {
+    const summary = data.summaries.get(employee.id);
+    if (!summary || summary.employeeId !== employee.id || summary.asOf !== data.asOf) throw new Error("vacation_export_summary_mismatch");
+    return summary;
+  });
+  const periodRows = summaries.flatMap(summary => summary.periods).map((period) => {
     const employee = period.employeeId ? employeeById.get(period.employeeId) : null;
+    if (!employee) throw new Error("vacation_export_period_owner_missing");
     return [
       employee?.fullName ?? "",
       employee?.rut ?? "",
@@ -72,15 +98,13 @@ export function buildVacationExcelXml(data: VacationExportData) {
       period.availableBalance ?? 0,
       period.continuousBlockRequired ?? 10,
       period.continuousBlockUsed ?? 0,
-      period.status ?? "open"
+      period.status ?? "open",
+      period.openingBalanceId ? "Saldo certificado / anualidad post-corte" : "Periodo operativo",
+      period.earnedOn ?? ""
     ];
   });
-  const summaryRows = data.employees.map((employee) => {
-    const periods = data.periods.filter((period) => period.employeeId === employee.id);
-    const earned = periods.reduce((sum, period) => sum + (period.availableBalance ?? 0), 0);
-    const reserved = periods.reduce((sum, period) => sum + (period.reservedDays ?? 0), 0);
-    const advance = periods.reduce((sum, period) => sum + (period.advanceDays ?? 0), 0);
-    const progressive = periods.reduce((sum, period) => sum + (period.progressiveDays ?? 0), 0);
+  const summaryRows = employees.map((employee, index) => {
+    const summary = summaries[index];
     return [
       employee.fullName,
       employee.rut,
@@ -88,28 +112,36 @@ export function buildVacationExcelXml(data: VacationExportData) {
       employee.area ?? "",
       employee.costCenter ?? "",
       employee.hireDate ?? "",
-      earned,
-      data.projectedByEmployee?.get(employee.id) ?? 0,
-      progressive,
-      reserved,
-      advance,
-      periods.length,
-      earned >= 30 ? "Dos periodos o mas pendientes" : ""
+      summary.certifiedBalance,
+      summary.accruedPostCutoff,
+      summary.adjustments,
+      summary.used,
+      summary.reserved,
+      summary.availableBalance,
+      summary.annualEntitlement,
+      summary.progressiveDays,
+      summary.nextAnniversary,
+      summary.projectedProportional,
+      summary.advanceDays,
+      summary.informativePeriods,
+      summary.alerts.join("; "),
+      summary.status
     ];
   });
-  const movementRows = data.movements.map((movement) => {
+  const movementRows = data.movements.filter(movement => employeeById.has(movement.employeeId)).map((movement) => {
     const employee = employeeById.get(movement.employeeId);
     return [employee?.fullName ?? "", employee?.rut ?? "", movement.period, movement.movementType, movement.days, movement.balanceAfter];
   });
-  const requestRows = data.requests.map((request) => {
+  const requestRows = data.requests.filter(request => employeeById.has(request.employeeId)).map((request) => {
     const employee = employeeById.get(request.employeeId);
     return [employee?.fullName ?? "", employee?.rut ?? "", request.startDate, request.endDate, request.businessDays, request.status, request.resultingBalance, request.documentNumber ?? ""];
   });
-  return `<?xml version="1.0"?>
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <?mso-application progid="Excel.Sheet"?>
 <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-${sheet("RESUMEN", ["Trabajador", "RUT", "Cargo", "Area", "Centro costo", "Ingreso", "Saldo devengado", "Proporcional proyectado", "Progresivos", "Reservados", "Anticipados", "Periodos", "Alertas"], summaryRows)}
-${sheet("DETALLE POR PERIODO", ["Trabajador", "RUT", "Periodo desde", "Periodo hasta", "Base", "Progresivos", "Ajustes", "Usados", "Reservados", "Anticipados", "Saldo", "Bloque requerido", "Bloque usado", "Estado"], periodRows)}
+<Styles><Style ss:ID="Text"><Alignment ss:Vertical="Center" ss:WrapText="1"/></Style><Style ss:ID="Header"><Font ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#245344" ss:Pattern="Solid"/><Alignment ss:Vertical="Center" ss:WrapText="1"/></Style><Style ss:ID="Days"><NumberFormat ss:Format="0.00"/></Style><Style ss:ID="Projection"><NumberFormat ss:Format="0.000000"/></Style><Style ss:ID="Count"><NumberFormat ss:Format="0"/></Style></Styles>
+${sheet("RESUMEN", VACATION_SUMMARY_HEADERS, summaryRows)}
+${sheet("DETALLE POR PERIODO", ["Trabajador", "RUT", "Periodo desde", "Periodo hasta", "Base", "Progresivos", "Ajustes", "Usados", "Reservados", "Anticipados", "Saldo", "Bloque requerido", "Bloque usado", "Estado", "Origen", "Devengado el"], periodRows)}
 ${sheet("MOVIMIENTOS", ["Trabajador", "RUT", "Periodo", "Tipo", "Dias", "Saldo posterior"], movementRows)}
 ${sheet("SOLICITUDES", ["Trabajador", "RUT", "Inicio", "Termino", "Dias habiles", "Estado", "Saldo posterior", "Documento"], requestRows)}
 </Workbook>`;

@@ -15,6 +15,7 @@ import { SALARY_EXPORT_COLUMNS, SALARY_PRESERVED_SHEETS, SALARY_TEMPLATE } from 
 import { sanitizePayslipFilename, validatePayslipUploadBatch, validatePayslipUploadFile } from "../src/lib/hr/payslip-upload-policy.ts";
 import { businessDaysInclusive, accruedVacationDays } from "../src/lib/hr/utils.ts";
 import { buildVacationExcelXml } from "../src/lib/hr/vacation-export.ts";
+import { getVacationBalanceSummary } from "../src/lib/hr/vacation-balance-summary.ts";
 import { parseVacationImportFile, previewVacationImport, sha256 } from "../src/lib/hr/vacation-import.ts";
 import { calculateVacationBalanceAt, previewVacationPeriodBackfill } from "../src/lib/hr/vacation-persistence.ts";
 import {
@@ -809,10 +810,10 @@ test("HR vacation FIFO considers progressive days available", () => {
 
 test("HR vacation export workbook contains separated projected proportional columns", () => {
   const xml = buildVacationExcelXml({
+    asOf: "2026-11-25",
     employees: [{ fullName: "Trabajador Demo", hireDate: "2024-07-23", id: "emp-1", rut: "12.345.678-5", status: "activo" }],
     movements: [{ balanceAfter: 13, days: -7, employeeId: "emp-1", movementType: "aprobacion", period: "2026-07" }],
-    periods: [{ availableBalance: 13, baseDays: 15, employeeId: "emp-1", periodEnd: "2026-07-22", periodStart: "2025-07-23", progressiveDays: 0, reservedDays: 0, status: "open", usedDays: 2 }],
-    projectedByEmployee: new Map([["emp-1", 1.25]]),
+    summaries: new Map([["emp-1", getVacationBalanceSummary({ employeeId: "emp-1", asOf: "2026-11-25", periods: [] })]]),
     requests: [{ businessDays: 7, documentNumber: "FER-2026-000001", employeeId: "emp-1", endDate: "2026-07-31", id: "req-1", resultingBalance: 13, startDate: "2026-07-23", status: "aprobada" }]
   });
   assert.match(xml, /RESUMEN/);

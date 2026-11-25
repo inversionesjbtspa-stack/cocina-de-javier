@@ -11,6 +11,7 @@ import {
 export type VacationPeriodRowLike = {
   id?: string;
   employee_id?: string;
+  tenant_id?: string;
   period_start: string;
   period_end: string;
   base_days?: number | string | null;
@@ -100,6 +101,8 @@ export function previewVacationPeriodBackfill(input: {
 
 export function toVacationPeriod(row: VacationPeriodRowLike): VacationPeriod {
   return {
+    employeeId: row.employee_id,
+    tenantId: row.tenant_id,
     earnedOn: row.earned_on ?? undefined,
     openingBalanceId: row.certified_opening_balance_id ?? undefined,
     advanceDays: num(row.advance_days),
