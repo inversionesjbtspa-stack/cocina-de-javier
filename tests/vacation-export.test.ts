@@ -53,21 +53,21 @@ test("Stefano-like canonical fixture preserves certified 22.25, used 5 and avail
   assert.equal(s.certifiedBalance, 22.25); assert.equal(s.used, 5); assert.equal(s.availableBalance, 17.25);
   const row = summaryRow(input);
   assert.equal(row["Saldo certificado"], 22.25); assert.equal(row["Utilizados post-corte"], 5);
-  assert.equal(row["Saldo disponible"], 17.25); assert.equal(row["Proxima anualidad"], "2027-04-01");
+  assert.equal(row["SALDO DISPONIBLE"], 17.25); assert.equal(row["Proxima anualidad"], "2027-04-01");
 });
 
 test("Meliza-like physical anniversary exports opening 31 plus accrued 15 equals 46", () => {
   const o = opening({ balanceDays: 31, hireDate: "2020-11-01" });
   const input = data(o, [bucket(o, { usedDays: 0, availableBalance: 31 }), bucket(o, { id: "annuity-local", earnedOn: "2026-11-01", baseDays: 15, positiveAdjustments: 0, usedDays: 0, availableBalance: 15 })]);
   const row = summaryRow(input);
-  assert.equal(row["Saldo certificado"], 31); assert.equal(row["Devengados post-corte"], 15); assert.equal(row["Saldo disponible"], 46);
+  assert.equal(row["Saldo certificado"], 31); assert.equal(row["Devengados post-corte"], 15); assert.equal(row["SALDO DISPONIBLE"], 46);
   assert.equal(row["Periodos informativos"], 1);
 });
 
 test("Egliany-like opening adjustment and later usage remain distinct", () => {
   const o = opening({ balanceDays: 27.5 });
   const row = summaryRow(data(o, [bucket(o, { positiveAdjustments: 32.5, availableBalance: 27.5 })]));
-  assert.equal(row["Ajustes post-corte"], 5); assert.equal(row["Utilizados post-corte"], 5); assert.equal(row["Saldo disponible"], 27.5);
+  assert.equal(row["Ajustes post-corte"], 5); assert.equal(row["Utilizados post-corte"], 5); assert.equal(row["SALDO DISPONIBLE"], 27.5);
 });
 
 test("Louis-like corrected net usage is not credited a second time", () => {
@@ -75,20 +75,20 @@ test("Louis-like corrected net usage is not credited a second time", () => {
   const input = data(o, [bucket(o, { usedDays: 6, availableBalance: 9 })]);
   input.movements.push({ employeeId: o.employeeId, movementType: "holiday_correction", days: 1, balanceAfter: 9, period: asOf });
   const row = summaryRow(input);
-  assert.equal(row["Ajustes post-corte"], 0); assert.equal(row["Utilizados post-corte"], 6); assert.equal(row["Saldo disponible"], 9);
+  assert.equal(row["Ajustes post-corte"], 0); assert.equal(row["Utilizados post-corte"], 6); assert.equal(row["SALDO DISPONIBLE"], 9);
 });
 
 test("Molero-like negative certified balance stays numeric and negative", () => {
   const row = summaryRow(data(opening({ balanceDays: -1.25 })));
-  assert.equal(row["Saldo certificado"], -1.25); assert.equal(row["Saldo disponible"], -1.25);
+  assert.equal(row["Saldo certificado"], -1.25); assert.equal(row["SALDO DISPONIBLE"], -1.25);
   assert.match(row.Alertas, /NEGATIVO/);
 });
 
-test("uncertified balance is blank and explicitly different from a real zero", () => {
+test("uncertified balance is N/D and explicitly different from a real zero", () => {
   const unknown = summaryRow(data(null)); const zero = summaryRow(data(opening({ balanceDays: 0 })));
-  assert.equal(unknown["Saldo disponible"], null); assert.equal(unknown["Saldo certificado"], null);
+  assert.equal(unknown["SALDO DISPONIBLE"], "N/D"); assert.equal(unknown["Saldo certificado"], "N/D");
   assert.equal(unknown["Estado saldo"], "REQUIERE SALDO CERTIFICADO");
-  assert.equal(zero["Saldo disponible"], 0); assert.equal(zero["Estado saldo"], "CERTIFICADO");
+  assert.equal(zero["SALDO DISPONIBLE"], 0); assert.equal(zero["Estado saldo"], "CERTIFICADO");
 });
 
 test("CODEX, test fixtures and inactive employees are excluded from every export sheet", () => {
@@ -109,20 +109,20 @@ test("projected proportional does not add to available or accrue future annual 1
     const o = opening({ annualEntitlementOverride: override, progressiveDaysCurrent: 2, hireDate: "2020-04-01" });
     const row = summaryRow(data(o));
     assert.equal(row["Derecho anual"], 17); assert.equal(row["Devengados post-corte"], 0);
-    assert.equal(row["Saldo disponible"], 22.25);
+    assert.equal(row["SALDO DISPONIBLE"], 22.25);
     assert.equal(row["Proporcional proyectado (dias/mes; no disponible)"], 17 / 12);
   }
 });
 
 test("opening balance does not depend on physical vacation periods", () => {
-  const o = opening(); assert.equal(summaryRow(data(o))["Saldo disponible"], 22.25);
+  const o = opening(); assert.equal(summaryRow(data(o))["SALDO DISPONIBLE"], 22.25);
 });
 
 test("absorbed legacy periods cannot create pending period alerts", () => {
   const o = opening({ balanceDays: 90 });
   const legacy = Array.from({ length: 7 }, (_, i) => ({ id: `legacy-${i}`, employeeId: o.employeeId, periodStart: `201${i}-01-01`, periodEnd: `201${i}-12-31`, baseDays: 15, availableBalance: 15 }));
   const row = summaryRow(data(o, legacy));
-  assert.equal(row["Saldo disponible"], 90); assert.equal(row["Periodos informativos"], 0);
+  assert.equal(row["SALDO DISPONIBLE"], 90); assert.equal(row["Periodos informativos"], 0);
   assert.doesNotMatch(row.Alertas ?? "", /periodos|anualidades/i);
 });
 
@@ -131,7 +131,7 @@ test("every exported fixture balance equals canonical domain and preview input b
     const o = opening({ balanceDays }); const input = data(o); const s = input.summaries.get(o.employeeId)!;
     const canonical = certifiedVacationSummary(o, [], asOf);
     const preview = calculateVacationPreview({ asOf, hireDate: o.hireDate, startDate: "2026-11-26", endDate: "2026-11-26", agreementAccepted: true, periods: s.periods });
-    assert.equal(s.availableBalance, canonical.available); assert.equal(summaryRow(input)["Saldo disponible"], canonical.available);
+    assert.equal(s.availableBalance, canonical.available); assert.equal(summaryRow(input)["SALDO DISPONIBLE"], canonical.available);
     assert.equal(preview.totalAvailable, canonical.available);
   }
 });
@@ -145,7 +145,7 @@ test("global export total equals canonical summaries, including decimals and neg
   }));
   const rows = parse(buildVacationExcelXml(input)).Worksheet[0].Table.Row.slice(1);
   const exported = rows.reduce((sum: number, r: { Cell: { Data: { "#text": string; "@_ss:Type": string } }[] }) => {
-    assert.equal(r.Cell[11].Data["@_ss:Type"], "Number"); return sum + Number(r.Cell[11].Data["#text"]);
+    assert.equal(r.Cell[6].Data["@_ss:Type"], "Number"); return sum + Number(r.Cell[6].Data["#text"]);
   }, 0);
   assert.equal(exported, amounts.reduce((a, b) => a + b, 0));
 });

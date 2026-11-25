@@ -2,10 +2,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadCertifiedVacationStates } from "./vacation-certified-server.ts";
 import { getVacationBalanceSummary } from "./vacation-balance-summary.ts";
 import { isVacationExportEmployee, type VacationExportData } from "./vacation-export.ts";
+import { vacationCertificationReviewAlert } from "./vacation-certification-review.ts";
 
 type EmployeeRow = { id: string; tenant_id: string; full_name: string; rut: string; position: string | null; area: string | null; cost_center: string | null; hire_date: string | null; status: string };
 type RequestRow = { id: string; employee_id: string; start_date: string; end_date: string; business_days: number; status: string; resulting_balance: number; document_number: string | null; receipt_number: string | null };
 type MovementRow = { id: string; employee_id: string; movement_type: string; days: number; resulting_balance: number; created_at: string };
+type IdentityAntecedentRow = { id: string; employee_id: string | null; full_name: string | null; employee_name: string | null; rut: string };
 
 async function readAll<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>) {
   const rows: T[] = [];
@@ -18,7 +20,7 @@ async function readAll<T>(page: (from: number, to: number) => PromiseLike<{ data
 }
 
 export async function loadVacationExportData(client: SupabaseClient, tenantId: string, asOf: string): Promise<VacationExportData> {
-  const [employeeRows, states, requestRows, movementRows] = await Promise.all([
+  const [employeeRows, states, requestRows, movementRows, identityRows] = await Promise.all([
     readAll<EmployeeRow>((from, to) => client.from("hr_employees")
       .select("id,tenant_id,full_name,rut,position,area,cost_center,hire_date,status").eq("tenant_id", tenantId).eq("status", "activo")
       .order("full_name", { ascending: true }).order("id").range(from, to)),
@@ -28,16 +30,23 @@ export async function loadVacationExportData(client: SupabaseClient, tenantId: s
       .eq("tenant_id", tenantId).order("start_date", { ascending: false }).order("id").range(from, to)),
     readAll<MovementRow>((from, to) => client.from("hr_vacation_movements")
       .select("id,employee_id,movement_type,days,resulting_balance,created_at")
-      .eq("tenant_id", tenantId).order("created_at", { ascending: false }).order("id").range(from, to))
+      .eq("tenant_id", tenantId).order("created_at", { ascending: false }).order("id").range(from, to)),
+    readAll<IdentityAntecedentRow>((from, to) => client.from("hr_accountant_data_rows")
+      .select("id,employee_id,full_name,employee_name,rut").eq("tenant_id", tenantId).order("id").range(from, to))
   ]);
   const employees = employeeRows.map(employee => ({
     id: employee.id, fullName: employee.full_name, rut: employee.rut, hireDate: employee.hire_date,
     position: employee.position, area: employee.area, costCenter: employee.cost_center, status: employee.status
   })).filter(isVacationExportEmployee);
+  const antecedents = identityRows.map(row => ({ employeeId: row.employee_id, fullName: row.full_name || row.employee_name || "", rut: row.rut || "" }));
   const summaries = new Map(employees.map(employee => {
     const state = states.find(item => item.opening.employeeId === employee.id);
     if (state && state.opening.tenantId !== tenantId) throw new Error("vacation_summary_owner_mismatch");
-    return [employee.id, getVacationBalanceSummary({ employeeId: employee.id, asOf, opening: state?.opening, periods: state?.periods ?? [] })];
+    const summary = getVacationBalanceSummary({ employeeId: employee.id, asOf, opening: state?.opening, periods: state?.periods ?? [] });
+    if (summary.status === "REQUIERE SALDO CERTIFICADO") {
+      summary.alerts = [vacationCertificationReviewAlert(employee, antecedents), ...summary.alerts];
+    }
+    return [employee.id, summary];
   }));
   const ids = new Set(employees.map(employee => employee.id));
   return {
