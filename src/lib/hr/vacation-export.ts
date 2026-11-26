@@ -65,9 +65,7 @@ function cell(value: string | number | null | undefined, style?: string) {
 
 function row(values: Array<string | number | null | undefined>, headers: string[], header = false) {
   return `<Row${header ? ' ss:Height="48"' : ' ss:AutoFitHeight="1"'}>${values.map((value, index) => {
-    const primary = headers[index] === "SALDO DISPONIBLE";
-    const style = header ? (primary ? "PrimaryHeader" : "Header") : value === "N/D" ? "Missing"
-      : primary ? "AvailableBalance" : typeof value === "number"
+    const style = header ? "Header" : typeof value === "number"
         ? headers[index]?.startsWith("Proporcional proyectado") ? "Projection" : headers[index] === "Periodos informativos" ? "Count" : "Days" : "Text";
     return cell(value, style);
   }).join("")}</Row>`;
@@ -145,7 +143,7 @@ export function buildVacationExcelXml(data: VacationExportData) {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <?mso-application progid="Excel.Sheet"?>
 <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-<Styles><Style ss:ID="Text"><Alignment ss:Vertical="Center" ss:WrapText="1"/></Style><Style ss:ID="Header"><Font ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#245344" ss:Pattern="Solid"/><Alignment ss:Vertical="Center" ss:WrapText="1"/></Style><Style ss:ID="PrimaryHeader" ss:Parent="Header"><Interior ss:Color="#163E31" ss:Pattern="Solid"/></Style><Style ss:ID="AvailableBalance"><Font ss:Bold="1" ss:Color="#163E31"/><Interior ss:Color="#E5F0EB" ss:Pattern="Solid"/><NumberFormat ss:Format="0.00"/></Style><Style ss:ID="Missing"><Font ss:Bold="1" ss:Color="#805500"/><Interior ss:Color="#FFF4D6" ss:Pattern="Solid"/></Style><Style ss:ID="Days"><NumberFormat ss:Format="0.00"/></Style><Style ss:ID="Projection"><NumberFormat ss:Format="0.000000"/></Style><Style ss:ID="Count"><NumberFormat ss:Format="0"/></Style></Styles>
+<Styles><Style ss:ID="Text"><Alignment ss:Vertical="Center" ss:WrapText="1"/></Style><Style ss:ID="Header"><Font ss:Bold="1"/><Alignment ss:Vertical="Center" ss:WrapText="1"/></Style><Style ss:ID="Days"><NumberFormat ss:Format="0.00"/></Style><Style ss:ID="Projection"><NumberFormat ss:Format="0.000000"/></Style><Style ss:ID="Count"><NumberFormat ss:Format="0"/></Style></Styles>
 ${sheet("RESUMEN", VACATION_SUMMARY_HEADERS, summaryRows)}
 ${sheet("DETALLE POR PERIODO", ["Trabajador", "RUT", "Periodo desde", "Periodo hasta", "Base", "Progresivos", "Ajustes", "Usados", "Reservados", "Anticipados", "Saldo", "Bloque requerido", "Bloque usado", "Estado", "Origen", "Devengado el"], periodRows)}
 ${sheet("MOVIMIENTOS", ["Trabajador", "RUT", "Periodo", "Tipo", "Dias", "Saldo posterior"], movementRows)}

@@ -60,11 +60,13 @@ test("29 active fixture rows stay canonical, unknown N/D, conflict explicit, COD
   assert.equal(sheet.Table.Row.length, 30);
   const used = sheet.Table.Row[1].Cell;
   assert.equal(used[6].Data["#text"], "17.25"); assert.equal(used[6].Data["@_ss:Type"], "Number");
-  assert.equal(used[6]["@_ss:StyleID"], "AvailableBalance"); assert.equal(used[7].Data["#text"], "22.25");
+  assert.equal(used[6]["@_ss:StyleID"], "Days"); assert.equal(used[7].Data["#text"], "22.25");
   const unknown = sheet.Table.Row[2].Cell;
   assert.equal(unknown[6].Data["#text"], "N/D"); assert.equal(unknown[7].Data["#text"], "N/D");
   assert.match(unknown[18].Data["#text"], /CONFLICTO DE RUT/);
   assert.doesNotMatch(xml, /CODEX/);
+  assert.doesNotMatch(xml, /<Interior|ss:Color=|AvailableBalance|PrimaryHeader|Missing/);
+  assert.match(xml, /<FreezePanes\/>/); assert.match(xml, /<AutoFilter/);
 });
 
 test("certification preserves documentary source metadata in its existing audit contract", async () => {
